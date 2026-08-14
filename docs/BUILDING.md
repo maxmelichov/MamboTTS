@@ -1,6 +1,6 @@
 # Building and reinstalling
 
-MamboRambo packages a Tauri desktop application with a Rust inference sidecar. Use `pnpm` for the desktop and Cargo for the Rust workspace.
+MamboBlue packages a Tauri desktop application with a Rust inference sidecar. Use `pnpm` for the desktop and Cargo for the Rust workspace.
 
 ## Prerequisites
 
@@ -15,7 +15,7 @@ On Linux, install `patchelf`; it is required to package ONNX Runtime correctly.
 
 ```console
 pnpm install
-cd mamborambo-desktop
+cd mamboblue-desktop
 pnpm install
 ```
 
@@ -24,16 +24,16 @@ pnpm install
 Run the desktop application with hot reload:
 
 ```console
-cd mamborambo-desktop
+cd mamboblue-desktop
 pnpm tauri dev
 ```
 
-The pre-build hook compiles the matching `mamborambo-server` sidecar and stages ONNX Runtime before Tauri starts.
+The pre-build hook compiles the matching `mamboblue-server` sidecar and stages ONNX Runtime before Tauri starts.
 
 ## Build an installable desktop app
 
 ```console
-cd mamborambo-desktop
+cd mamboblue-desktop
 pnpm tauri build
 ```
 
@@ -43,12 +43,12 @@ On macOS, the installer is normally written under:
 src-tauri/target/release/bundle/dmg/
 ```
 
-Open the generated `.dmg`, drag MamboRambo into Applications, and replace the existing copy. If macOS says the app is still running, quit it first. Windows installers and Linux packages are emitted in the corresponding `src-tauri/target/release/bundle/` subdirectories.
+Open the generated `.dmg`, drag MamboBlue into Applications, and replace the existing copy. If macOS says the app is still running, quit it first. Windows installers and Linux packages are emitted in the corresponding `src-tauri/target/release/bundle/` subdirectories.
 
 For a faster local reinstallable debug build:
 
 ```console
-cd mamborambo-desktop
+cd mamboblue-desktop
 pnpm tauri build --debug
 ```
 
@@ -56,8 +56,8 @@ pnpm tauri build --debug
 
 ```console
 cargo test --workspace
-cargo build -p mamborambo-server --release --bin mamborambo-server
-cd mamborambo-desktop
+cargo build -p mamboblue-server --release --bin mamboblue-server
+cd mamboblue-desktop
 pnpm build
 ```
 
@@ -65,11 +65,11 @@ pnpm build
 
 Model files are downloaded on first use into the application-local data directory:
 
-- macOS: `~/Library/Application Support/com.maxmelichov.mamborambo/models`
-- Windows: `%LOCALAPPDATA%\com.maxmelichov.mamborambo\models`
-- Linux: `~/.local/share/com.maxmelichov.mamborambo/models`
+- macOS: `~/Library/Application Support/com.maxmelichov.mamboblue/models`
+- Windows: `%LOCALAPPDATA%\com.maxmelichov.mamboblue\models`
+- Linux: `~/.local/share/com.maxmelichov.mamboblue/models`
 
-The current release provides the BlueTTS model bundle. New models must be registered in `crates/mamborambo-registry` and included in a sidecar build before the desktop will offer them. Full instructions for contributors: [ADDING_MODELS.md](./ADDING_MODELS.md).
+The current release provides the BlueTTS model bundle. New models must be registered in `crates/mamboblue-registry` and included in a sidecar build before the desktop will offer them. Full instructions for contributors: [ADDING_MODELS.md](./ADDING_MODELS.md).
 
 ## Upstream projects
 

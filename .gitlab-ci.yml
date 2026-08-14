@@ -1,4 +1,4 @@
-# Build MamboRambo desktop installers on GitLab.
+# Build MamboBlue desktop installers on GitLab.
 # Run from CI/CD → Pipelines → Run pipeline (web), or manually on main.
 # After jobs finish, download artifacts and upload to GitHub Releases.
 
@@ -26,7 +26,7 @@ windows:desktop:
     key: windows-desktop-v2
     paths:
       - target/
-      - mamborambo-desktop/node_modules/
+      - mamboblue-desktop/node_modules/
     policy: pull-push
   script:
     - |
@@ -64,13 +64,13 @@ windows:desktop:
       Write-Host "PATH=$env:Path"
       Write-Host "LIBCLANG_PATH=$env:LIBCLANG_PATH"
       Get-Command pnpm, uv, rustc, cmake | Format-Table Name, Source
-      pnpm --dir mamborambo-desktop install --frozen-lockfile
+      pnpm --dir mamboblue-desktop install --frozen-lockfile
       uv run scripts/pre_build.py --target x86_64-pc-windows-msvc
       # Build installers separately so NSIS can still archive if MSI fails.
-      pnpm --dir mamborambo-desktop exec tauri build --target x86_64-pc-windows-msvc --bundles nsis
-      pnpm --dir mamborambo-desktop exec tauri build --target x86_64-pc-windows-msvc --bundles msi
+      pnpm --dir mamboblue-desktop exec tauri build --target x86_64-pc-windows-msvc --bundles nsis
+      pnpm --dir mamboblue-desktop exec tauri build --target x86_64-pc-windows-msvc --bundles msi
   artifacts:
-    name: "mamborambo-windows-$CI_COMMIT_SHORT_SHA"
+    name: "mamboblue-windows-$CI_COMMIT_SHORT_SHA"
     when: always
     paths:
       - target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
@@ -96,7 +96,7 @@ linux:desktop:
     key: linux-desktop
     paths:
       - target/
-      - mamborambo-desktop/node_modules/
+      - mamboblue-desktop/node_modules/
     policy: pull-push
   before_script:
     - apt-get update -qq
@@ -116,11 +116,11 @@ linux:desktop:
     - rustup target add x86_64-unknown-linux-gnu
   script:
     - export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
-    - pnpm --dir mamborambo-desktop install --frozen-lockfile
+    - pnpm --dir mamboblue-desktop install --frozen-lockfile
     - uv run scripts/pre_build.py --target x86_64-unknown-linux-gnu
-    - pnpm --dir mamborambo-desktop exec tauri build --target x86_64-unknown-linux-gnu --bundles deb,rpm
+    - pnpm --dir mamboblue-desktop exec tauri build --target x86_64-unknown-linux-gnu --bundles deb,rpm
   artifacts:
-    name: "mamborambo-linux-$CI_COMMIT_SHORT_SHA"
+    name: "mamboblue-linux-$CI_COMMIT_SHORT_SHA"
     paths:
       - target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
       - target/x86_64-unknown-linux-gnu/release/bundle/rpm/*.rpm

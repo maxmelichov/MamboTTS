@@ -111,9 +111,9 @@ monthly signing limit.
 
 ### What gets signed
 
-- `mamborambo.exe` (main app)
-- `mamborambo*setup*.exe` (NSIS installer)
-- `mamborambo-server*.exe` (bundled server sidecar)
+- `mamboblue.exe` (main app)
+- `mamboblue*setup*.exe` (NSIS installer)
+- `mamboblue-server*.exe` (bundled server sidecar)
 
 ### What gets skipped
 
@@ -125,7 +125,7 @@ Set `SIGN_ENABLED=true` to actually sign.
 
 ### Tauri configuration
 
-In `mamborambo-desktop/src-tauri/tauri.windows.conf.json`:
+In `mamboblue-desktop/src-tauri/tauri.windows.conf.json`:
 
 ```json
 {

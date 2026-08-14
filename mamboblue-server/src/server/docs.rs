@@ -15,8 +15,8 @@ use crate::runtime::Language;
 #[derive(OpenApi)]
 #[openapi(
     info(
-        title = "MamboRambo API",
-        description = "Local TTS HTTP API served by mamborambo-server."
+        title = "MamboBlue API",
+        description = "Local TTS HTTP API served by mamboblue-server."
     ),
     paths(
         handlers::state::health,

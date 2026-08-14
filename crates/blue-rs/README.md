@@ -1,6 +1,6 @@
 # blue-rs
 
-Rust ONNX inference for BlueTTS, built for MamboRambo with [Chirp](https://github.com/thewh1teagle/chirp).
+Rust ONNX inference for BlueTTS, built for MamboBlue with [Chirp](https://github.com/thewh1teagle/chirp).
 
 ## Run
 

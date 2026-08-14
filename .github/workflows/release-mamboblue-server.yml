@@ -1,15 +1,15 @@
-name: release mamborambo-server
+name: release mamboblue-server
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release tag (for example: mamborambo-server-v0.1.0)"
+        description: "Release tag (for example: mamboblue-server-v0.1.0)"
         required: true
         type: string
   push:
     tags:
-      - "mamborambo-server-v*"
+      - "mamboblue-server-v*"
 
 permissions:
   contents: write
@@ -25,9 +25,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.VERSION }}
-          name: mamborambo-server ${{ env.VERSION }}
+          name: mamboblue-server ${{ env.VERSION }}
           body: |
-            mamborambo-server sidecar release.
+            mamboblue-server sidecar release.
           generate_release_notes: true
 
   build-and-upload:
@@ -39,22 +39,22 @@ jobs:
           - runner: ubuntu-24.04
             platform: linux-x64
             target: x86_64-unknown-linux-gnu
-            binary: mamborambo-server
+            binary: mamboblue-server
             archive_ext: tar.gz
           - runner: ubuntu-24.04-arm
             platform: linux-arm64
             target: aarch64-unknown-linux-gnu
-            binary: mamborambo-server
+            binary: mamboblue-server
             archive_ext: tar.gz
           - runner: macos-14
             platform: darwin-arm64
             target: aarch64-apple-darwin
-            binary: mamborambo-server
+            binary: mamboblue-server
             archive_ext: tar.gz
           - runner: windows-latest
             platform: windows-x64
             target: x86_64-pc-windows-msvc
-            binary: mamborambo-server.exe
+            binary: mamboblue-server.exe
             archive_ext: zip
     runs-on: ${{ matrix.runner }}
     steps:
@@ -92,32 +92,32 @@ jobs:
           echo "$($sdk.FullName)\Bin" | Out-File -FilePath $env:GITHUB_PATH -Append
           echo "CARGO_TARGET_DIR=D:/t" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: Build mamborambo server
+      - name: Build mamboblue server
         shell: bash
         run: |
-          cargo build -p mamborambo-server --release --bin mamborambo-server --target "${{ matrix.target }}"
-          mkdir -p "dist/mamborambo-server-${{ matrix.platform }}"
+          cargo build -p mamboblue-server --release --bin mamboblue-server --target "${{ matrix.target }}"
+          mkdir -p "dist/mamboblue-server-${{ matrix.platform }}"
           target_dir="${CARGO_TARGET_DIR:-target}"
-          cp "${target_dir}/${{ matrix.target }}/release/${{ matrix.binary }}" "dist/mamborambo-server-${{ matrix.platform }}/${{ matrix.binary }}"
+          cp "${target_dir}/${{ matrix.target }}/release/${{ matrix.binary }}" "dist/mamboblue-server-${{ matrix.platform }}/${{ matrix.binary }}"
 
-      - name: Package mamborambo server
+      - name: Package mamboblue server
         shell: bash
         run: |
           uv run python scripts/package-server.py \
-            --binary "dist/mamborambo-server-${{ matrix.platform }}/${{ matrix.binary }}" \
-            --out "dist/mamborambo-server-${{ matrix.platform }}.${{ matrix.archive_ext }}" \
+            --binary "dist/mamboblue-server-${{ matrix.platform }}/${{ matrix.binary }}" \
+            --out "dist/mamboblue-server-${{ matrix.platform }}.${{ matrix.archive_ext }}" \
             --platform "${{ matrix.platform }}" \
             --version "${VERSION}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: mamborambo-server-${{ matrix.platform }}
-          path: dist/mamborambo-server-${{ matrix.platform }}.${{ matrix.archive_ext }}
+          name: mamboblue-server-${{ matrix.platform }}
+          path: dist/mamboblue-server-${{ matrix.platform }}.${{ matrix.archive_ext }}
           if-no-files-found: error
 
       - name: Upload release asset
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$env:VERSION" "dist/mamborambo-server-${{ matrix.platform }}.${{ matrix.archive_ext }}" --clobber
+        run: gh release upload "$env:VERSION" "dist/mamboblue-server-${{ matrix.platform }}.${{ matrix.archive_ext }}" --clobber

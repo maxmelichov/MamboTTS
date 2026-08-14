@@ -2862,12 +2862,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "mamborambo"
+name = "mamboblue"
 version = "1.0.9"
 dependencies = [
  "flate2",
  "futures-util",
- "mamborambo-registry",
+ "mamboblue-registry",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -2886,7 +2886,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mamborambo-registry"
+name = "mamboblue-registry"
 version = "0.1.0"
 dependencies = [
  "serde",
@@ -2895,7 +2895,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mamborambo-server"
+name = "mamboblue-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -2904,7 +2904,7 @@ dependencies = [
  "clap",
  "futures-util",
  "hound",
- "mamborambo-registry",
+ "mamboblue-registry",
  "serde",
  "serde_json",
  "tempfile",

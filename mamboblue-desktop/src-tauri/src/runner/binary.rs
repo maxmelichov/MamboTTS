@@ -23,10 +23,10 @@ pub fn resolve_runner_binary(app: &tauri::AppHandle) -> Result<PathBuf, String> 
     #[cfg(target_os = "linux")]
     {
         for base in [
-            "/usr/lib/mamborambo",
-            "/usr/lib/mamborambo/binaries",
-            "/opt/mamborambo",
-            "/opt/mamborambo/binaries",
+            "/usr/lib/mamboblue",
+            "/usr/lib/mamboblue/binaries",
+            "/opt/mamboblue",
+            "/opt/mamboblue/binaries",
         ] {
             let path = PathBuf::from(base).join(binary_name);
             if path.exists() {
@@ -39,14 +39,14 @@ pub fn resolve_runner_binary(app: &tauri::AppHandle) -> Result<PathBuf, String> 
         return Ok(path);
     }
 
-    Err("MamboRambo server sidecar not found".to_string())
+    Err("MamboBlue server sidecar not found".to_string())
 }
 
 fn runner_binary_name() -> &'static str {
     if cfg!(target_os = "windows") {
-        "mamborambo-server.exe"
+        "mamboblue-server.exe"
     } else {
-        "mamborambo-server"
+        "mamboblue-server"
     }
 }
 

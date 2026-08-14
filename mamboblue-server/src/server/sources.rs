@@ -1,4 +1,4 @@
-use mamborambo_registry::{RuntimeManifest, runtimes};
+use mamboblue_registry::{RuntimeManifest, runtimes};
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -40,9 +40,9 @@ pub fn model_sources() -> ModelSourcesResponse {
         runtimes: runtimes().iter().map(source_from_manifest).collect(),
         voices_url: "",
         default_paths: vec![
-            "macOS: ~/Library/Application Support/com.maxmelichov.mamborambo/models",
-            "Windows: %LOCALAPPDATA%\\com.maxmelichov.mamborambo\\models",
-            "Linux: ~/.local/share/com.maxmelichov.mamborambo/models",
+            "macOS: ~/Library/Application Support/com.maxmelichov.mamboblue/models",
+            "Windows: %LOCALAPPDATA%\\com.maxmelichov.mamboblue\\models",
+            "Linux: ~/.local/share/com.maxmelichov.mamboblue/models",
         ],
     }
 }
@@ -81,7 +81,7 @@ mod tests {
         let sources = model_sources();
         assert_eq!(
             sources.runtimes.len(),
-            mamborambo_registry::runtimes().len()
+            mamboblue_registry::runtimes().len()
         );
         assert_eq!(sources.runtimes[0].id, "blue");
         assert!(sources.runtimes[0].capabilities.hebrew);

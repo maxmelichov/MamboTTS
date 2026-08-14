@@ -2,14 +2,14 @@
 
 ## Goal
 
-Create a standalone `mamborambo/runtime` project for Qwen3-TTS inference, separate from
-`llama.cpp/tools`, with no top-level `mamborambo/CMakeLists.txt`. The runtime builds
-directly from `mamborambo/runtime` and exposes a simple CLI plus a C API.
+Create a standalone `mamboblue/runtime` project for Qwen3-TTS inference, separate from
+`llama.cpp/tools`, with no top-level `mamboblue/CMakeLists.txt`. The runtime builds
+directly from `mamboblue/runtime` and exposes a simple CLI plus a C API.
 
 ## Repositories And Sources Used
 
 - Local workspace repo:
-  - `/home/yakov/Documents/audio/mamborambo`
+  - `/home/yakov/Documents/audio/mamboblue`
 - Qwen Python/reference implementation:
   - local folder `Qwen3-TTS/`
   - used for understanding prompt formatting, tokenizer behavior, model conversion,
@@ -45,7 +45,7 @@ directly from `mamborambo/runtime` and exposes a simple CLI plus a C API.
 ## Runtime Layout Created
 
 ```text
-mamborambo/
+mamboblue/
   .gitignore
   plans/
     runtime_standalone/
@@ -67,7 +67,7 @@ mamborambo/
       text/
 ```
 
-No CMake files were added at `mamborambo/` top level.
+No CMake files were added at `mamboblue/` top level.
 
 ## How Runtime Was Assembled
 
@@ -75,7 +75,7 @@ No CMake files were added at `mamborambo/` top level.
    - `llama.cpp/tools/qwen3-tts-v2`
 
 2. Copied v2 runtime sources into:
-   - `mamborambo/runtime/src`
+   - `mamboblue/runtime/src`
 
 3. Renamed the public API from v2-specific names to stable names:
    - `qwen3_tts_v2.h` -> `qwen3_tts.h`
@@ -89,8 +89,8 @@ No CMake files were added at `mamborambo/` top level.
    - `src/text/`: native Qwen text tokenizer added later.
 
 5. Copied converter scripts into:
-   - `mamborambo/runtime/scripts/convert_model_to_gguf.py`
-   - `mamborambo/runtime/scripts/convert_codec_to_gguf.py`
+   - `mamboblue/runtime/scripts/convert_model_to_gguf.py`
+   - `mamboblue/runtime/scripts/convert_codec_to_gguf.py`
 
 6. Removed `prepare_inputs.py` after porting both runtime input-preparation
    paths to C++:
@@ -99,7 +99,7 @@ No CMake files were added at `mamborambo/` top level.
 
 ## CMake Setup
 
-`mamborambo/runtime/CMakeLists.txt` is the standalone build entry point.
+`mamboblue/runtime/CMakeLists.txt` is the standalone build entry point.
 
 It uses `FetchContent` for llama.cpp:
 
@@ -148,7 +148,7 @@ FetchContent_Declare(
 The built executable is:
 
 ```text
-mamborambo-runtime
+mamboblue-runtime
 ```
 
 ## C API Added
@@ -156,7 +156,7 @@ mamborambo-runtime
 Public header:
 
 ```text
-mamborambo/runtime/src/qwen3_tts.h
+mamboblue/runtime/src/qwen3_tts.h
 ```
 
 Public functions:
@@ -194,12 +194,12 @@ Return convention:
 The CLI is a thin wrapper over the C API:
 
 ```console
-mamborambo/runtime/build/mamborambo-runtime \
+mamboblue/runtime/build/mamboblue-runtime \
   --model models/qwen3-tts-0.6b-f16.gguf \
   --codec models/qwen3-tts-tokenizer-f16.gguf \
   --text "hello" \
   --ref tmp/refs/female1.wav \
-  --output tmp/mamborambo_runtime.wav
+  --output tmp/mamboblue_runtime.wav
 ```
 
 `--ref` is optional. Without `--ref`, runtime does not invoke Python.
@@ -209,8 +209,8 @@ mamborambo/runtime/build/mamborambo-runtime \
 Native tokenizer added:
 
 ```text
-mamborambo/runtime/src/text/qwen_tokenizer.h
-mamborambo/runtime/src/text/qwen_tokenizer.cpp
+mamboblue/runtime/src/text/qwen_tokenizer.h
+mamboblue/runtime/src/text/qwen_tokenizer.cpp
 ```
 
 It reads tokenizer metadata embedded in the model GGUF:
@@ -233,7 +233,7 @@ Verified native token IDs matched Python for:
 
 - `hello`
 - `Hello from Qwen three TTS.`
-- `Standalone mamborambo runtime test.`
+- `Standalone mamboblue runtime test.`
 
 ## Python Dependency Status
 
@@ -257,8 +257,8 @@ inference.
 Native speaker/x-vector extraction added:
 
 ```text
-mamborambo/runtime/src/speaker/speaker_encoder.h
-mamborambo/runtime/src/speaker/speaker_encoder.cpp
+mamboblue/runtime/src/speaker/speaker_encoder.h
+mamboblue/runtime/src/speaker/speaker_encoder.cpp
 ```
 
 It loads the `spk_enc.*` tensors embedded in the model GGUF and implements the
@@ -297,8 +297,8 @@ resample_linear(...)
 Standalone runtime build:
 
 ```console
-cmake -S mamborambo/runtime -B mamborambo/runtime/build
-cmake --build mamborambo/runtime/build -j 8
+cmake -S mamboblue/runtime -B mamboblue/runtime/build
+cmake --build mamboblue/runtime/build -j 8
 ```
 
 This completed successfully.
@@ -308,12 +308,12 @@ This completed successfully.
 Standalone inference with reference voice:
 
 ```console
-mamborambo/runtime/build/mamborambo-runtime \
+mamboblue/runtime/build/mamboblue-runtime \
   --model models/qwen3-tts-0.6b-f16.gguf \
   --codec models/qwen3-tts-tokenizer-f16.gguf \
-  --text 'Standalone mamborambo runtime test.' \
+  --text 'Standalone mamboblue runtime test.' \
   --ref tmp/refs/female1.wav \
-  --output tmp/mamborambo_runtime_standalone.wav \
+  --output tmp/mamboblue_runtime_standalone.wav \
   --max-tokens 40 \
   --temperature 0 \
   --top-k 1
@@ -322,7 +322,7 @@ mamborambo/runtime/build/mamborambo-runtime \
 Generated:
 
 ```text
-/home/yakov/Documents/audio/mamborambo/tmp/mamborambo_runtime_standalone.wav
+/home/yakov/Documents/audio/mamboblue/tmp/mamboblue_runtime_standalone.wav
 ```
 
 Validation:
@@ -335,11 +335,11 @@ Validation:
 Native-tokenizer no-ref inference:
 
 ```console
-mamborambo/runtime/build/mamborambo-runtime \
+mamboblue/runtime/build/mamboblue-runtime \
   --model models/qwen3-tts-0.6b-f16.gguf \
   --codec models/qwen3-tts-tokenizer-f16.gguf \
   --text 'Native tokenizer test without python.' \
-  --output tmp/mamborambo_native_tokenizer_no_ref.wav \
+  --output tmp/mamboblue_native_tokenizer_no_ref.wav \
   --max-tokens 32 \
   --temperature 0 \
   --top-k 1
@@ -350,12 +350,12 @@ No Python output appeared for this no-ref path, confirming text preparation is n
 Native speaker-reference inference after removing `prepare_inputs.py`:
 
 ```console
-mamborambo/runtime/build/mamborambo-runtime \
+mamboblue/runtime/build/mamboblue-runtime \
   --model models/qwen3-tts-0.6b-f16.gguf \
   --codec models/qwen3-tts-tokenizer-f16.gguf \
-  --text 'Native speaker encoder is now running inside the mamborambo C plus plus runtime.' \
+  --text 'Native speaker encoder is now running inside the mamboblue C plus plus runtime.' \
   --ref tmp/refs/female1.wav \
-  --output tmp/mamborambo_native_speaker_runtime.wav \
+  --output tmp/mamboblue_native_speaker_runtime.wav \
   --max-tokens 48 \
   --temperature 0 \
   --top-k 1
@@ -364,7 +364,7 @@ mamborambo/runtime/build/mamborambo-runtime \
 Generated:
 
 ```text
-/home/yakov/Documents/audio/mamborambo/tmp/mamborambo_native_speaker_runtime.wav
+/home/yakov/Documents/audio/mamboblue/tmp/mamboblue_native_speaker_runtime.wav
 ```
 
 Validation:
@@ -380,12 +380,12 @@ Native speaker-reference inference after replacing custom FFT/resampling with
 `kissfft` and `libsoxr`:
 
 ```console
-mamborambo/runtime/build/mamborambo-runtime \
+mamboblue/runtime/build/mamboblue-runtime \
   --model models/qwen3-tts-0.6b-f16.gguf \
   --codec models/qwen3-tts-tokenizer-f16.gguf \
-  --text 'The mamborambo runtime now uses library based resampling and Fourier transforms.' \
+  --text 'The mamboblue runtime now uses library based resampling and Fourier transforms.' \
   --ref tmp/refs/female1.wav \
-  --output tmp/mamborambo_soxr_kissfft_runtime.wav \
+  --output tmp/mamboblue_soxr_kissfft_runtime.wav \
   --max-tokens 48 \
   --temperature 0 \
   --top-k 1
@@ -394,7 +394,7 @@ mamborambo/runtime/build/mamborambo-runtime \
 Generated:
 
 ```text
-/home/yakov/Documents/audio/mamborambo/tmp/mamborambo_soxr_kissfft_runtime.wav
+/home/yakov/Documents/audio/mamboblue/tmp/mamboblue_soxr_kissfft_runtime.wav
 ```
 
 Validation:
@@ -411,5 +411,5 @@ Validation:
 - `models/qwen3-tts-0.6b-f16.gguf` must include tokenizer metadata.
 - Current converter scripts already embed tokenizer metadata in the model GGUF.
 - The codec GGUF is separate and passed as `--codec`.
-- `mamborambo/.gitignore` ignores runtime build outputs, fetched deps, Python caches,
+- `mamboblue/.gitignore` ignores runtime build outputs, fetched deps, Python caches,
   and generated audio/code/token artifacts.

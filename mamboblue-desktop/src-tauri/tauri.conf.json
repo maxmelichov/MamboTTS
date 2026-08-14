@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "MamboRambo",
+  "productName": "MamboBlue",
   "version": "1.0.9",
-  "identifier": "com.maxmelichov.mamborambo",
+  "identifier": "com.maxmelichov.mamboblue",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "MamboRambo",
+        "title": "MamboBlue",
         "width": 800,
         "height": 600
       }
@@ -40,7 +40,7 @@
       "icons/icon.ico"
     ],
     "externalBin": [
-      "binaries/mamborambo-server"
+      "binaries/mamboblue-server"
     ],
     "resources": {
       "src-tauri/binaries/libonnxruntime.1.23.2.dylib": "libonnxruntime.1.23.2.dylib"

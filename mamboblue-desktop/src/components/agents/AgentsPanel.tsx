@@ -65,7 +65,7 @@ curl -X POST ${apiUrl}/v1/models/load \\
 curl -X POST ${apiUrl}/v1/audio/speech \\
   -H 'Content-Type: application/json' \\
   -o speech.wav \\
-  -d '{"input":"Hello from MamboRambo","language":"auto","response_format":"wav"}'`
+  -d '{"input":"Hello from MamboBlue","language":"auto","response_format":"wav"}'`
     : `curl http://127.0.0.1:<port>/health
 curl http://127.0.0.1:<port>/openapi.json`;
 
@@ -77,7 +77,7 @@ curl http://127.0.0.1:<port>/openapi.json`;
             <div className="min-w-0 space-y-1">
               <p className="flex items-center gap-2 text-base font-semibold tracking-tight text-primary">
                 <Server className="h-4 w-4 text-secondary opacity-40" />
-                MamboRambo HTTP API
+                MamboBlue HTTP API
               </p>
               <p className="text-xs leading-5 text-secondary opacity-50">Swagger docs, OpenAPI schema, and agent-ready examples.</p>
             </div>

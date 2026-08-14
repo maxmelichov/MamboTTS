@@ -22,7 +22,7 @@ export function AgentsPage({ bundle }: { bundle: ModelBundle | null }) {
               </div>
             </div>
             <p className="max-w-[520px] text-base leading-7 text-secondary opacity-60">
-              Start MamboRambo's local HTTP API, open Swagger, and copy agent-ready instructions for using speech synthesis from tools.
+              Start MamboBlue's local HTTP API, open Swagger, and copy agent-ready instructions for using speech synthesis from tools.
             </p>
           </header>
 

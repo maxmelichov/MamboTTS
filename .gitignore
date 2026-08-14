@@ -18,8 +18,8 @@ third_party/
 models/
 target/
 */target/
-mamborambo-desktop/src-tauri/binaries/mamborambo-*
-mamborambo-desktop/src-tauri/binaries/mamborambo-runner-*
+mamboblue-desktop/src-tauri/binaries/mamboblue-*
+mamboblue-desktop/src-tauri/binaries/mamboblue-runner-*
 *.o
 *.a
 *.so
@@ -47,5 +47,5 @@ __pycache__/
 *.swp
 *.swo
 .pnpm-store
-mamborambo-desktop/src-tauri/binaries/libonnxruntime.so.1
-mamborambo-desktop/src-tauri/binaries/libonnxruntime.so.1.23.2
+mamboblue-desktop/src-tauri/binaries/libonnxruntime.so.1
+mamboblue-desktop/src-tauri/binaries/libonnxruntime.so.1.23.2

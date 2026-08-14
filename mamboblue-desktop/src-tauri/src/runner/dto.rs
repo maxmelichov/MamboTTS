@@ -45,7 +45,7 @@ pub struct LoadModelRequest {
 }
 
 fn default_runtime() -> String {
-    mamborambo_registry::DEFAULT_RUNTIME_ID.into()
+    mamboblue_registry::DEFAULT_RUNTIME_ID.into()
 }
 
 #[derive(Debug, Deserialize)]

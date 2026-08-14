@@ -12,7 +12,7 @@ export function StudioPreview() {
             Write, generate, and preview speech in one quiet workspace.
           </h2>
           <p className="mt-4 text-base leading-7 text-muted-foreground sm:text-lg">
-            MamboRambo keeps the flow simple: type the line, generate locally, then
+            MamboBlue keeps the flow simple: type the line, generate locally, then
             play back or export the result without leaving the app.
           </p>
         </div>
@@ -21,7 +21,7 @@ export function StudioPreview() {
           <div className="absolute inset-x-8 bottom-0 -z-10 h-30 rounded-full bg-black/15 blur-3xl" />
           <img
             src={studioPreview}
-            alt="MamboRambo desktop studio with text input, generate button, and audio preview"
+            alt="MamboBlue desktop studio with text input, generate button, and audio preview"
             className="w-full rounded-[1.75rem] border border-white/70 shadow-2xl shadow-black/20 sm:rounded-[2.25rem]"
             loading="lazy"
           />

@@ -1,17 +1,17 @@
 [package]
-name = "mamborambo-server"
+name = "mamboblue-server"
 version = "0.1.0"
 edition = "2024"
 
 [[bin]]
-name = "mamborambo-server"
+name = "mamboblue-server"
 path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0.100"
 axum = "0.8.7"
 blue-rs = { path = "../crates/blue-rs" }
-mamborambo-registry = { path = "../crates/mamborambo-registry" }
+mamboblue-registry = { path = "../crates/mamboblue-registry" }
 futures-util = "0.3"
 clap = { version = "4.5.53", features = ["derive"] }
 hound = "3.5.1"

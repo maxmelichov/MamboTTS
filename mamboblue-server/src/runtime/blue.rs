@@ -130,7 +130,7 @@ model = Phonikud(sys.argv[2])
 text = sys.stdin.read()
 vocalized = model.add_diacritics(text)
 print(vocalized if sys.argv[1] == "diacritize" else phonemize(vocalized))"#;
-        let uv = std::env::var("MAMBORAMBO_UV_PATH").unwrap_or_else(|_| {
+        let uv = std::env::var("MAMBOBLUE_UV_PATH").unwrap_or_else(|_| {
             let homebrew_uv = Path::new("/opt/homebrew/bin/uv");
             if homebrew_uv.is_file() {
                 homebrew_uv.display().to_string()

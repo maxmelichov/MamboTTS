@@ -1,6 +1,6 @@
 {
   "bundle": {
-    "externalBin": ["binaries/mamborambo-server"],
+    "externalBin": ["binaries/mamboblue-server"],
     "resources": [
       "binaries/onnxruntime*.dll"
     ]

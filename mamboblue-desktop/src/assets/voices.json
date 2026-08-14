@@ -1,6 +1,6 @@
 {
-  "version": "mamborambo-voices-v0.1.0",
-  "source": "MamboRambo Voice Library",
+  "version": "mamboblue-voices-v0.1.0",
+  "source": "MamboBlue Voice Library",
   "text": "Failure doesn't mean you are a failure it just means you haven't succeeded yet.",
   "voices": [
     {
@@ -8,196 +8,196 @@
       "name": "Heart",
       "description": "American female reference voice.",
       "language": "English",
-      "url": "https://github.com/maxmelichov/MamboRambo/releases/download/mamborambo-voices-v0.1.0/american_f_heart.wav"
+      "url": "https://github.com/maxmelichov/MamboBlue/releases/download/mamboblue-voices-v0.1.0/american_f_heart.wav"
     },
     {
       "id": "american_f_bella",
       "name": "Bella",
       "description": "American female reference voice.",
       "language": "English",
-      "url": "https://github.com/maxmelichov/MamboRambo/releases/download/mamborambo-voices-v0.1.0/american_f_bella.wav"
+      "url": "https://github.com/maxmelichov/MamboBlue/releases/download/mamboblue-voices-v0.1.0/american_f_bella.wav"
     },
     {
       "id": "american_f_nicole",
       "name": "Nicole",
       "description": "American female reference voice.",
       "language": "English",
-      "url": "https://github.com/maxmelichov/MamboRambo/releases/download/mamborambo-voices-v0.1.0/american_f_nicole.wav"
+      "url": "https://github.com/maxmelichov/MamboBlue/releases/download/mamboblue-voices-v0.1.0/american_f_nicole.wav"
     },
     {
       "id": "american_f_aoede",
       "name": "Aoede",
       "description": "American female reference voice.",
       "language": "English",
-      "url": "https://github.com/maxmelichov/MamboRambo/releases/download/mamborambo-voices-v0.1.0/american_f_aoede.wav"
+      "url": "https://github.com/maxmelichov/MamboBlue/releases/download/mamboblue-voices-v0.1.0/american_f_aoede.wav"
     },
     {
       "id": "american_f_kore",
       "name": "Kore",
       "description": "American female reference voice.",
       "language": "English",
-      "url": "https://github.com/maxmelichov/MamboRambo/releases/download/mamborambo-voices-v0.1.0/american_f_kore.wav"
+      "url": "https://github.com/maxmelichov/MamboBlue/releases/download/mamboblue-voices-v0.1.0/american_f_kore.wav"
     },
     {
       "id": "american_f_sarah",
       "name": "Sarah",
       "description": "American female reference voice.",
       "language": "English",
-      "url": "https://github.com/maxmelichov/MamboRambo/releases/download/mamborambo-voices-v0.1.0/american_f_sarah.wav"
+      "url": "https://github.com/maxmelichov/MamboBlue/releases/download/mamboblue-voices-v0.1.0/american_f_sarah.wav"
     },
     {
       "id": "american_f_nova",
       "name": "Nova",
       "description": "American female reference voice.",
       "language": "English",
-      "url": "https://github.com/maxmelichov/MamboRambo/releases/download/mamborambo-voices-v0.1.0/american_f_nova.wav"
+      "url": "https://github.com/maxmelichov/MamboBlue/releases/download/mamboblue-voices-v0.1.0/american_f_nova.wav"
     },
     {
       "id": "american_f_sky",
       "name": "Sky",
       "description": "American female reference voice.",
       "language": "English",
-      "url": "https://github.com/maxmelichov/MamboRambo/releases/download/mamborambo-voices-v0.1.0/american_f_sky.wav"
+      "url": "https://github.com/maxmelichov/MamboBlue/releases/download/mamboblue-voices-v0.1.0/american_f_sky.wav"
     },
     {
       "id": "american_f_alloy",
       "name": "Alloy",
       "description": "American female reference voice.",
       "language": "English",
-      "url": "https://github.com/maxmelichov/MamboRambo/releases/download/mamborambo-voices-v0.1.0/american_f_alloy.wav"
+      "url": "https://github.com/maxmelichov/MamboBlue/releases/download/mamboblue-voices-v0.1.0/american_f_alloy.wav"
     },
     {
       "id": "american_f_jessica",
       "name": "Jessica",
       "description": "American female reference voice.",
       "language": "English",
-      "url": "https://github.com/maxmelichov/MamboRambo/releases/download/mamborambo-voices-v0.1.0/american_f_jessica.wav"
+      "url": "https://github.com/maxmelichov/MamboBlue/releases/download/mamboblue-voices-v0.1.0/american_f_jessica.wav"
     },
     {
       "id": "american_f_river",
       "name": "River",
       "description": "American female reference voice.",
       "language": "English",
-      "url": "https://github.com/maxmelichov/MamboRambo/releases/download/mamborambo-voices-v0.1.0/american_f_river.wav"
+      "url": "https://github.com/maxmelichov/MamboBlue/releases/download/mamboblue-voices-v0.1.0/american_f_river.wav"
     },
     {
       "id": "american_m_michael",
       "name": "Michael",
       "description": "American male reference voice.",
       "language": "English",
-      "url": "https://github.com/maxmelichov/MamboRambo/releases/download/mamborambo-voices-v0.1.0/american_m_michael.wav"
+      "url": "https://github.com/maxmelichov/MamboBlue/releases/download/mamboblue-voices-v0.1.0/american_m_michael.wav"
     },
     {
       "id": "american_m_fenrir",
       "name": "Fenrir",
       "description": "American male reference voice.",
       "language": "English",
-      "url": "https://github.com/maxmelichov/MamboRambo/releases/download/mamborambo-voices-v0.1.0/american_m_fenrir.wav"
+      "url": "https://github.com/maxmelichov/MamboBlue/releases/download/mamboblue-voices-v0.1.0/american_m_fenrir.wav"
     },
     {
       "id": "american_m_puck",
       "name": "Puck",
       "description": "American male reference voice.",
       "language": "English",
-      "url": "https://github.com/maxmelichov/MamboRambo/releases/download/mamborambo-voices-v0.1.0/american_m_puck.wav"
+      "url": "https://github.com/maxmelichov/MamboBlue/releases/download/mamboblue-voices-v0.1.0/american_m_puck.wav"
     },
     {
       "id": "american_m_echo",
       "name": "Echo",
       "description": "American male reference voice.",
       "language": "English",
-      "url": "https://github.com/maxmelichov/MamboRambo/releases/download/mamborambo-voices-v0.1.0/american_m_echo.wav"
+      "url": "https://github.com/maxmelichov/MamboBlue/releases/download/mamboblue-voices-v0.1.0/american_m_echo.wav"
     },
     {
       "id": "american_m_eric",
       "name": "Eric",
       "description": "American male reference voice.",
       "language": "English",
-      "url": "https://github.com/maxmelichov/MamboRambo/releases/download/mamborambo-voices-v0.1.0/american_m_eric.wav"
+      "url": "https://github.com/maxmelichov/MamboBlue/releases/download/mamboblue-voices-v0.1.0/american_m_eric.wav"
     },
     {
       "id": "american_m_liam",
       "name": "Liam",
       "description": "American male reference voice.",
       "language": "English",
-      "url": "https://github.com/maxmelichov/MamboRambo/releases/download/mamborambo-voices-v0.1.0/american_m_liam.wav"
+      "url": "https://github.com/maxmelichov/MamboBlue/releases/download/mamboblue-voices-v0.1.0/american_m_liam.wav"
     },
     {
       "id": "american_m_onyx",
       "name": "Onyx",
       "description": "American male reference voice.",
       "language": "English",
-      "url": "https://github.com/maxmelichov/MamboRambo/releases/download/mamborambo-voices-v0.1.0/american_m_onyx.wav"
+      "url": "https://github.com/maxmelichov/MamboBlue/releases/download/mamboblue-voices-v0.1.0/american_m_onyx.wav"
     },
     {
       "id": "american_m_santa",
       "name": "Santa",
       "description": "American male reference voice.",
       "language": "English",
-      "url": "https://github.com/maxmelichov/MamboRambo/releases/download/mamborambo-voices-v0.1.0/american_m_santa.wav"
+      "url": "https://github.com/maxmelichov/MamboBlue/releases/download/mamboblue-voices-v0.1.0/american_m_santa.wav"
     },
     {
       "id": "american_m_adam",
       "name": "Adam",
       "description": "American male reference voice.",
       "language": "English",
-      "url": "https://github.com/maxmelichov/MamboRambo/releases/download/mamborambo-voices-v0.1.0/american_m_adam.wav"
+      "url": "https://github.com/maxmelichov/MamboBlue/releases/download/mamboblue-voices-v0.1.0/american_m_adam.wav"
     },
     {
       "id": "british_f_emma",
       "name": "Emma",
       "description": "British female reference voice.",
       "language": "English",
-      "url": "https://github.com/maxmelichov/MamboRambo/releases/download/mamborambo-voices-v0.1.0/british_f_emma.wav"
+      "url": "https://github.com/maxmelichov/MamboBlue/releases/download/mamboblue-voices-v0.1.0/british_f_emma.wav"
     },
     {
       "id": "british_f_isabella",
       "name": "Isabella",
       "description": "British female reference voice.",
       "language": "English",
-      "url": "https://github.com/maxmelichov/MamboRambo/releases/download/mamborambo-voices-v0.1.0/british_f_isabella.wav"
+      "url": "https://github.com/maxmelichov/MamboBlue/releases/download/mamboblue-voices-v0.1.0/british_f_isabella.wav"
     },
     {
       "id": "british_f_alice",
       "name": "Alice",
       "description": "British female reference voice.",
       "language": "English",
-      "url": "https://github.com/maxmelichov/MamboRambo/releases/download/mamborambo-voices-v0.1.0/british_f_alice.wav"
+      "url": "https://github.com/maxmelichov/MamboBlue/releases/download/mamboblue-voices-v0.1.0/british_f_alice.wav"
     },
     {
       "id": "british_f_lily",
       "name": "Lily",
       "description": "British female reference voice.",
       "language": "English",
-      "url": "https://github.com/maxmelichov/MamboRambo/releases/download/mamborambo-voices-v0.1.0/british_f_lily.wav"
+      "url": "https://github.com/maxmelichov/MamboBlue/releases/download/mamboblue-voices-v0.1.0/british_f_lily.wav"
     },
     {
       "id": "british_m_george",
       "name": "George",
       "description": "British male reference voice.",
       "language": "English",
-      "url": "https://github.com/maxmelichov/MamboRambo/releases/download/mamborambo-voices-v0.1.0/british_m_george.wav"
+      "url": "https://github.com/maxmelichov/MamboBlue/releases/download/mamboblue-voices-v0.1.0/british_m_george.wav"
     },
     {
       "id": "british_m_fable",
       "name": "Fable",
       "description": "British male reference voice.",
       "language": "English",
-      "url": "https://github.com/maxmelichov/MamboRambo/releases/download/mamborambo-voices-v0.1.0/british_m_fable.wav"
+      "url": "https://github.com/maxmelichov/MamboBlue/releases/download/mamboblue-voices-v0.1.0/british_m_fable.wav"
     },
     {
       "id": "british_m_lewis",
       "name": "Lewis",
       "description": "British male reference voice.",
       "language": "English",
-      "url": "https://github.com/maxmelichov/MamboRambo/releases/download/mamborambo-voices-v0.1.0/british_m_lewis.wav"
+      "url": "https://github.com/maxmelichov/MamboBlue/releases/download/mamboblue-voices-v0.1.0/british_m_lewis.wav"
     },
     {
       "id": "british_m_daniel",
       "name": "Daniel",
       "description": "British male reference voice.",
       "language": "English",
-      "url": "https://github.com/maxmelichov/MamboRambo/releases/download/mamborambo-voices-v0.1.0/british_m_daniel.wav"
+      "url": "https://github.com/maxmelichov/MamboBlue/releases/download/mamboblue-voices-v0.1.0/british_m_daniel.wav"
     }
   ]
 }

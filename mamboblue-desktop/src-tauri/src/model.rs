@@ -10,19 +10,19 @@ use tauri::{Emitter, Manager};
 use tokio::io::AsyncWriteExt;
 
 use crate::analytics;
-use mamborambo_registry::runtimes;
+use mamboblue_registry::runtimes;
 
-const MODELS_TAG: &str = "mamborambo-models-v0.1.3";
-const MODEL_DIR: &str = "mamborambo-models-q5_0";
+const MODELS_TAG: &str = "mamboblue-models-v0.1.3";
+const MODEL_DIR: &str = "mamboblue-models-q5_0";
 const MODEL_FILE: &str = "qwen3-tts-model.gguf";
 const CODEC_FILE: &str = "qwen3-tts-codec.gguf";
 const MODEL_BASE_URL: &str = "https://huggingface.co/thewh1teagle/qwen3-tts-gguf/resolve/main";
 const KOKORO_MODELS_TAG: &str = "kokoro-v1.0";
-const KOKORO_MODEL_DIR: &str = "mamborambo-kokoro-models-kokoro-v1.0";
+const KOKORO_MODEL_DIR: &str = "mamboblue-kokoro-models-kokoro-v1.0";
 const KOKORO_MODEL_FILE: &str = "kokoro-v1.0.onnx";
 const KOKORO_VOICES_FILE: &str = "voices-v1.0.bin";
 const KOKORO_ESPEAK_DIR: &str = "espeak-ng-data";
-const KOKORO_BUNDLE_URL: &str = "https://huggingface.co/maxmelichov/MamboRambo-kokoro-models/resolve/main/mamborambo-kokoro-models-kokoro-v1.0.tar.gz";
+const KOKORO_BUNDLE_URL: &str = "https://huggingface.co/maxmelichov/MamboBlue-kokoro-models/resolve/main/mamboblue-kokoro-models-kokoro-v1.0.tar.gz";
 const BLUE_MODELS_TAG: &str = "blue-onnx-v2";
 const BLUE_MODEL_DIR: &str = "blue-onnx-v2";
 const BLUE_MODEL_BASE_URL: &str = "https://huggingface.co/notmax123/blue-onnx-v2/resolve/main";
@@ -352,9 +352,9 @@ fn model_sources() -> ModelSources {
             .collect(),
         voices_url: String::new(),
         default_paths: vec![
-            "macOS: ~/Library/Application Support/com.maxmelichov.mamborambo/models".to_string(),
-            "Windows: %LOCALAPPDATA%\\com.maxmelichov.mamborambo\\models".to_string(),
-            "Linux: ~/.local/share/com.maxmelichov.mamborambo/models".to_string(),
+            "macOS: ~/Library/Application Support/com.maxmelichov.mamboblue/models".to_string(),
+            "Windows: %LOCALAPPDATA%\\com.maxmelichov.mamboblue\\models".to_string(),
+            "Linux: ~/.local/share/com.maxmelichov.mamboblue/models".to_string(),
         ],
     }
 }
@@ -379,7 +379,7 @@ async fn download_kokoro_bundle(app: tauri::AppHandle) -> Result<ModelBundle, St
     tokio::fs::create_dir_all(&models_root)
         .await
         .map_err(|err| format!("failed to create {}: {err}", models_root.display()))?;
-    let archive_path = models_root.join("mamborambo-kokoro-models-kokoro-v1.0.tar.gz.part");
+    let archive_path = models_root.join("mamboblue-kokoro-models-kokoro-v1.0.tar.gz.part");
     let client = reqwest::Client::builder()
         .no_proxy()
         .build()

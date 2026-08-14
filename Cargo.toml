@@ -1,13 +1,13 @@
 [workspace]
 members = [
-    "mamborambo-desktop/src-tauri",
-    "mamborambo-server",
+    "mamboblue-desktop/src-tauri",
+    "mamboblue-server",
     "crates/espeak-rs",
     "crates/espeak-rs-sys",
     "crates/ggml-rs-sys",
     "crates/blue-rs",
     "crates/renikud-plus-rs",
-    "crates/mamborambo-registry",
+    "crates/mamboblue-registry",
 ]
 resolver = "2"
 

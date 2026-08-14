@@ -76,7 +76,7 @@ export function OnboardPage({ bundle, setBundle }: PageProps) {
       setRuntime(nextRuntime);
       const existing = bundles[nextRuntime];
       const selected = existing?.installed ? existing : await invoke<ModelBundle>("download_model_bundle", { runtime: nextRuntime });
-      localStorage.setItem("mamborambo.runtime", selected.runtime);
+      localStorage.setItem("mamboblue.runtime", selected.runtime);
       setBundles((current) => ({ ...current, [selected.runtime]: selected }));
       await invoke("stop_runner").catch(() => undefined);
       setBundle(selected);

@@ -25,9 +25,9 @@ def dir_size(path: Path) -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Package Kokoro runtime model files")
-    parser.add_argument("--model", type=Path, default=Path("/tmp/mamborambo-kokoro-c-assets/kokoro-v1.0.onnx"))
-    parser.add_argument("--voices", type=Path, default=Path("/tmp/mamborambo-kokoro-c-assets/voices-v1.0.bin"))
-    parser.add_argument("--espeak-data", type=Path, default=Path("/tmp/mamborambo-kokoro-c-assets/espeak-ng-data"))
+    parser.add_argument("--model", type=Path, default=Path("/tmp/mamboblue-kokoro-c-assets/kokoro-v1.0.onnx"))
+    parser.add_argument("--voices", type=Path, default=Path("/tmp/mamboblue-kokoro-c-assets/voices-v1.0.bin"))
+    parser.add_argument("--espeak-data", type=Path, default=Path("/tmp/mamboblue-kokoro-c-assets/espeak-ng-data"))
     parser.add_argument("--version", default="kokoro-v1.0")
     parser.add_argument("--out-dir", type=Path, default=ROOT / "dist")
     args = parser.parse_args()
@@ -35,7 +35,7 @@ def main() -> None:
     if not args.espeak_data.is_dir():
         raise SystemExit(f"missing espeak-ng-data dir: {args.espeak_data}")
 
-    staging = args.out_dir / f"mamborambo-kokoro-models-{args.version}"
+    staging = args.out_dir / f"mamboblue-kokoro-models-{args.version}"
     if staging.exists():
         shutil.rmtree(staging)
     staging.mkdir(parents=True)

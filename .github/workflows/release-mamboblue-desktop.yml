@@ -1,4 +1,4 @@
-name: release mamborambo-desktop
+name: release mamboblue-desktop
 
 on:
   workflow_dispatch:
@@ -41,14 +41,14 @@ jobs:
         uses: pnpm/action-setup@v4
         with:
           version: 10.15.1
-          package_json_file: mamborambo-desktop/package.json
+          package_json_file: mamboblue-desktop/package.json
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: mamborambo-desktop/pnpm-lock.yaml
+          cache-dependency-path: mamboblue-desktop/pnpm-lock.yaml
 
       - name: Setup uv
         uses: astral-sh/setup-uv@v5
@@ -61,7 +61,7 @@ jobs:
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
-          workspaces: mamborambo-desktop/src-tauri
+          workspaces: mamboblue-desktop/src-tauri
 
       - name: Install Linux Tauri dependencies
         if: runner.os == 'Linux'
@@ -80,7 +80,7 @@ jobs:
 
       - name: Install frontend dependencies
         run: pnpm install
-        working-directory: mamborambo-desktop
+        working-directory: mamboblue-desktop
 
       - name: Build server sidecar
         run: uv run scripts/pre_build.py --target ${{ matrix.target }}
@@ -99,11 +99,11 @@ jobs:
           ORT_PREFER_DYNAMIC_LINK: "1"
           ORT_LIB_LOCATION: ${{ runner.os == 'macOS' && 'crates/blue-rs/.ort/onnxruntime-osx-arm64-1.23.2' || runner.os == 'Windows' && 'crates/blue-rs/.ort/onnxruntime-win-x64-1.23.2' || 'crates/blue-rs/.ort/onnxruntime-linux-x64-1.23.2' }}
         with:
-          tagName: mamborambo-desktop-v__VERSION__
-          releaseName: MamboRambo Desktop v__VERSION__
-          releaseBody: "MamboRambo desktop builds for macOS, Windows, and Linux."
+          tagName: mamboblue-desktop-v__VERSION__
+          releaseName: MamboBlue Desktop v__VERSION__
+          releaseBody: "MamboBlue desktop builds for macOS, Windows, and Linux."
           prerelease: false
-          projectPath: mamborambo-desktop
+          projectPath: mamboblue-desktop
           tauriScript: pnpm exec tauri
           args: ${{ matrix.args }}
 
@@ -124,10 +124,10 @@ jobs:
           ORT_PREFER_DYNAMIC_LINK: "1"
           ORT_LIB_LOCATION: crates/blue-rs/.ort/onnxruntime-osx-arm64-1.23.2
         with:
-          tagName: mamborambo-desktop-v__VERSION__
-          releaseName: MamboRambo Desktop v__VERSION__
-          releaseBody: "MamboRambo desktop builds for macOS, Windows, and Linux."
+          tagName: mamboblue-desktop-v__VERSION__
+          releaseName: MamboBlue Desktop v__VERSION__
+          releaseBody: "MamboBlue desktop builds for macOS, Windows, and Linux."
           prerelease: false
-          projectPath: mamborambo-desktop
+          projectPath: mamboblue-desktop
           tauriScript: pnpm exec tauri
           args: ${{ matrix.args }}

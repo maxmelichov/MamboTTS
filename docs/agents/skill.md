@@ -1,19 +1,19 @@
-# MamboRambo Agent Skill
+# MamboBlue Agent Skill
 
-MamboRambo is a local, offline TTS server. The current shipped engine is [BlueTTS](https://github.com/maxmelichov/BlueTTS), with Hebrew, English, Spanish, Italian, and German support, streamed WAV output, and fixed voice styles. Hebrew IPA uses [RenikudPlus](https://github.com/maxmelichov/RenikudPlus), with optional [Phonikud](https://github.com/phonikud/phonikud) diacritics controls. It does not support voice cloning or Qwen model files.
+MamboBlue is a local, offline TTS server. The current shipped engine is [BlueTTS](https://github.com/maxmelichov/BlueTTS), with Hebrew, English, Spanish, Italian, and German support, streamed WAV output, and fixed voice styles. Hebrew IPA uses [RenikudPlus](https://github.com/maxmelichov/RenikudPlus), with optional [Phonikud](https://github.com/phonikud/phonikud) diacritics controls. It does not support voice cloning or Qwen model files.
 
 ## Start the server
 
 The server can start without a model and load one through HTTP:
 
 ```console
-mamborambo-server serve --host 127.0.0.1 --port 8080 --exit-with-parent false
+mamboblue-server serve --host 127.0.0.1 --port 8080 --exit-with-parent false
 ```
 
 Or load the Blue bundle immediately:
 
 ```console
-mamborambo-server serve \
+mamboblue-server serve \
   --host 127.0.0.1 \
   --port 8080 \
   --model-dir /path/to/blue-onnx-v2 \
@@ -75,7 +75,7 @@ curl -sS http://127.0.0.1:8080/v1/audio/speech \
   --output output.wav
 ```
 
-Use `language: "auto"` to detect Hebrew or English. Query `/v1/voices` rather than hardcoding a voice list. For streamed requests, the response body uses MamboRambo binary frames instead of a standalone WAV; desktop clients should decode and save the final frame.
+Use `language: "auto"` to detect Hebrew or English. Query `/v1/voices` rather than hardcoding a voice list. For streamed requests, the response body uses MamboBlue binary frames instead of a standalone WAV; desktop clients should decode and save the final frame.
 
 ## Available endpoints
 

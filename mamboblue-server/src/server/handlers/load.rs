@@ -47,18 +47,18 @@ pub async fn model_load(
 }
 
 fn blue_load_params(body: LoadBody) -> Result<LoadParams, &'static str> {
-    if body.runtime != mamborambo_registry::DEFAULT_RUNTIME_ID {
+    if body.runtime != mamboblue_registry::DEFAULT_RUNTIME_ID {
         return Err(
             "unsupported runtime; install a server build that includes the selected runtime",
         );
     }
     let model_path = first_non_empty([
         body.model_path,
-        std::env::var("MAMBORAMBO_BLUE_MODEL_DIR").unwrap_or_default(),
+        std::env::var("MAMBOBLUE_BLUE_MODEL_DIR").unwrap_or_default(),
     ]);
     let renikud_path = first_non_empty([
         body.renikud_path,
-        std::env::var("MAMBORAMBO_RENIKUD_PATH").unwrap_or_default(),
+        std::env::var("MAMBOBLUE_RENIKUD_PATH").unwrap_or_default(),
     ]);
     let hebrew_g2p_engine = if body.hebrew_g2p_engine.is_empty() { "renikud".into() } else { body.hebrew_g2p_engine };
     if !matches!(hebrew_g2p_engine.as_str(), "renikud" | "phonikud") {
@@ -68,7 +68,7 @@ fn blue_load_params(body: LoadBody) -> Result<LoadParams, &'static str> {
         return Err("Blue runtime requires model_path and renikud_path");
     }
     Ok(LoadParams {
-        runtime: mamborambo_registry::DEFAULT_RUNTIME_ID.into(),
+        runtime: mamboblue_registry::DEFAULT_RUNTIME_ID.into(),
         params: RuntimeParams::Blue {
             model_dir: model_path.into(),
             renikud_path: renikud_path.into(),

@@ -10,13 +10,13 @@ use crate::{
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
-const COMMIT: &str = match option_env!("MAMBORAMBO_COMMIT") {
+const COMMIT: &str = match option_env!("MAMBOBLUE_COMMIT") {
     Some(commit) => commit,
     None => "dev",
 };
 
 #[derive(Debug, Parser)]
-#[command(name = "mamborambo-server", version = VERSION, about = "MamboRambo local TTS server")]
+#[command(name = "mamboblue-server", version = VERSION, about = "MamboBlue local TTS server")]
 struct Args {
     #[command(subcommand)]
     command: Command,
@@ -57,7 +57,7 @@ pub async fn run() -> Result<()> {
                 };
                 server
                     .load_model(LoadParams {
-                        runtime: mamborambo_registry::DEFAULT_RUNTIME_ID.into(),
+                        runtime: mamboblue_registry::DEFAULT_RUNTIME_ID.into(),
                         params: RuntimeParams::Blue {
                             model_dir,
                             renikud_path,

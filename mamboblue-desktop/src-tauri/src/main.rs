@@ -3,5 +3,5 @@
 
 #[tokio::main]
 async fn main() {
-    mamborambo_lib::run()
+    mamboblue_lib::run()
 }

@@ -64,7 +64,7 @@ pub fn track_event_handle_with_props(
         _ => serde_json::Map::new(),
     };
     merged
-        .entry("mamborambo_commit")
+        .entry("mamboblue_commit")
         .or_insert_with(|| env!("COMMIT_HASH").into());
     tracing::trace!("analytics track_event '{}' sent", event_name);
     if let Err(error) = app_handle.track_event(event_name, Some(serde_json::Value::Object(merged)))

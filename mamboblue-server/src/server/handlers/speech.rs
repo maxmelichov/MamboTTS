@@ -108,7 +108,7 @@ pub async fn speech(State(server): State<SharedServer>, Json(body): Json<SpeechB
     }
 
     let Ok(tmp) = tempfile::Builder::new()
-        .prefix("mamborambo-speech-")
+        .prefix("mamboblue-speech-")
         .suffix(".wav")
         .tempfile()
     else {
@@ -231,7 +231,7 @@ async fn streaming_wav_response(server: SharedServer, body: SpeechBody) -> Respo
     let mut response = Body::from_stream(body).into_response();
     response.headers_mut().insert(
         header::CONTENT_TYPE,
-        HeaderValue::from_static("application/x-mamborambo-audio-chunks"),
+        HeaderValue::from_static("application/x-mamboblue-audio-chunks"),
     );
     response
         .headers_mut()

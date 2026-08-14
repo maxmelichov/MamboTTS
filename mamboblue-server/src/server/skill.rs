@@ -1,6 +1,6 @@
-const TEMPLATE: &str = r#"# MamboRambo Local TTS API
+const TEMPLATE: &str = r#"# MamboBlue Local TTS API
 
-You are using MamboRambo, a local BlueTTS HTTP API. The shipped runtime supports Hebrew and English, fixed voices, and streaming WAV output. It does not support voice cloning.
+You are using MamboBlue, a local BlueTTS HTTP API. The shipped runtime supports Hebrew and English, fixed voices, and streaming WAV output. It does not support voice cloning.
 
 Hebrew grapheme-to-IPA uses RenikudPlus (`renikud-plus.onnx`) with optional `speaker` / `target_speaker` conditioning (0=unknown, 1=male, 2=female). Phonikud is optional for diacritics when selected.
 
@@ -14,12 +14,12 @@ Before calling the API, fetch the OpenAPI schema from /openapi.json and use it a
 Recommended flow:
 
 1. Call GET /health.
-2. If loaded=false, call GET /v1/models/sources to discover runtimes, model download URLs, and default MamboRambo Desktop model locations.
-3. Check whether the model files already exist in MamboRambo Desktop's default model directory.
+2. If loaded=false, call GET /v1/models/sources to discover runtimes, model download URLs, and default MamboBlue Desktop model locations.
+3. Check whether the model files already exist in MamboBlue Desktop's default model directory.
 4. Call POST /v1/models/load with `runtime`, `model_path`, and `renikud_path` pointing at `renikud-plus.onnx`. Optional: `hebrew_g2p_engine` (`renikud` or `phonikud`), `speaker`, `target_speaker`.
 5. Optional IPA preview: POST /v1/phonemize, then edit phonemes client-side.
 6. Call POST /v1/audio/speech to synthesize speech. For edited IPA, set `input_is_phonemes: true` and `stream: true` (phoneme input requires streaming).
-7. Non-streaming responses return a standalone WAV (`stream: false`). Streaming responses use MamboRambo binary frames.
+7. Non-streaming responses return a standalone WAV (`stream: false`). Streaming responses use MamboBlue binary frames.
 
 Example:
 
@@ -49,7 +49,7 @@ Useful endpoints for the desktop Phoneme editor:
 - POST /v1/diacritize → Hebrew diacritics (Phonikud only)
 - POST /v1/audio/speech with `input_is_phonemes: true` and `stream: true` to speak edited IPA
 
-If the API returns no_model, ask the user to install the MamboRambo model in the desktop app first.
+If the API returns no_model, ask the user to install the MamboBlue model in the desktop app first.
 "#;
 
 pub fn render_skill(host: &str) -> String {

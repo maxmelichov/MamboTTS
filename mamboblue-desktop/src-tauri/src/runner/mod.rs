@@ -165,7 +165,7 @@ fn ensure_runner(app: &tauri::AppHandle, state: &State<'_, RunnerState>) -> Resu
             analytics::track_error(
                 app,
                 analytics::events::ERROR_RUNNER_REQUEST_FAILED,
-                format!("MamboRambo server exited; recent stderr: {}", stderr.trim()),
+                format!("MamboBlue server exited; recent stderr: {}", stderr.trim()),
                 serde_json::json!({"operation": "ensure_runner"}),
             );
         }
@@ -200,7 +200,7 @@ pub(crate) fn default_output_path() -> String {
         .map(|duration| duration.as_millis())
         .unwrap_or_default();
     env::temp_dir()
-        .join(format!("mamborambo-speech-{millis}.wav"))
+        .join(format!("mamboblue-speech-{millis}.wav"))
         .as_os_str()
         .to_string_lossy()
         .into_owned()

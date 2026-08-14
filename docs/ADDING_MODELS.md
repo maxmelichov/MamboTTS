@@ -1,6 +1,6 @@
-# Adding open-source models to MamboRambo
+# Adding open-source models to MamboBlue
 
-MamboRambo downloads model assets at runtime, but **inference engines are compiled into the app**. There is no plugin/DLL loader for third-party TTS engines. New open-source models ship only after they are registered in the repo and merged through a pull request.
+MamboBlue downloads model assets at runtime, but **inference engines are compiled into the app**. There is no plugin/DLL loader for third-party TTS engines. New open-source models ship only after they are registered in the repo and merged through a pull request.
 
 This guide covers two levels of contribution:
 
@@ -12,18 +12,18 @@ If you only want to try a model locally without publishing it, see [Local experi
 ## How model delivery works
 
 ```text
-crates/mamborambo-registry   ← catalog: names, sizes, download URLs, capabilities
+crates/mamboblue-registry   ← catalog: names, sizes, download URLs, capabilities
         ↓
 desktop downloader (Tauri)   ← fetches files into the app data `models/` folder
         ↓
-mamborambo-server sidecar    ← loads files through a compiled Runtime adapter
+mamboblue-server sidecar    ← loads files through a compiled Runtime adapter
         ↓
 React UI                     ← picks a runtime from the catalog, then synthesizes
 ```
 
 Important consequences:
 
-- Updating a download URL or file list means changing `mamborambo-registry` and usually cutting a new app release.
+- Updating a download URL or file list means changing `mamboblue-registry` and usually cutting a new app release.
 - Adding a brand-new engine also means Rust server work and packaging native dependencies with the sidecar.
 - Dynamic native plugins are intentionally unsupported (code signing, ABI drift, and dependency resolution across macOS/Windows/Linux). See [ARCHITECTURE.md](./ARCHITECTURE.md).
 
@@ -31,9 +31,9 @@ Model files land on disk in:
 
 | Platform | Directory |
 | --- | --- |
-| macOS | `~/Library/Application Support/com.maxmelichov.mamborambo/models` |
-| Windows | `%LOCALAPPDATA%\com.maxmelichov.mamborambo\models` |
-| Linux | `~/.local/share/com.maxmelichov.mamborambo/models` |
+| macOS | `~/Library/Application Support/com.maxmelichov.mamboblue/models` |
+| Windows | `%LOCALAPPDATA%\com.maxmelichov.mamboblue\models` |
+| Linux | `~/.local/share/com.maxmelichov.mamboblue/models` |
 
 ## Requirements before you open a PR
 
@@ -45,16 +45,16 @@ Your contribution must meet all of these:
 4. **Offline use after download** — no phone-home inference API. Optional analytics in the desktop shell do not replace a local model.
 5. **Cross-platform story** — macOS (Apple Silicon at minimum), Windows, and Linux, or an explicit limitation called out in the PR.
 6. **Hebrew / multilingual claims must be honest** — set registry capabilities (`hebrew`, `streaming`, `voice_reference`, `fixed_voices`) to match real behavior.
-7. **No license washing** — do not re-host incompatible weights under MamboRambo’s name. If upstream forbids redistribution, do not propose bundling them.
+7. **No license washing** — do not re-host incompatible weights under MamboBlue’s name. If upstream forbids redistribution, do not propose bundling them.
 
 Maintainers may reject models that are too large for the desktop UX, require proprietary runtimes, or cannot be signed/packaged safely.
 
 ## Contribution path (summary)
 
-1. Fork [maxmelichov/MamboRambo](https://github.com/maxmelichov/MamboRambo) and create a branch (`feat/add-<runtime-id>`).
+1. Fork [maxmelichov/MamboBlue](https://github.com/maxmelichov/MamboBlue) and create a branch (`feat/add-<runtime-id>`).
 2. Host or point to open-source model files with stable URLs.
-3. Register the model in `crates/mamborambo-registry`.
-4. Wire load + inference in `mamborambo-server` (new runtime) or verify paths still load (asset-only change).
+3. Register the model in `crates/mamboblue-registry`.
+4. Wire load + inference in `mamboblue-server` (new runtime) or verify paths still load (asset-only change).
 5. Teach the desktop downloader / onboard flow about the files if needed.
 6. Update docs (`README.md`, this file, [ARCHITECTURE.md](./ARCHITECTURE.md) when capabilities change).
 7. Run the checks in [Validation](#validation).
@@ -71,15 +71,15 @@ Use this when you are not introducing a new engine. Examples:
 ### Steps
 
 1. **Publish the files** under a public repo (Hugging Face or GitHub Releases) with an open-source license and a model card.
-2. **Edit** [`crates/mamborambo-registry/src/lib.rs`](../crates/mamborambo-registry/src/lib.rs):
+2. **Edit** [`crates/mamboblue-registry/src/lib.rs`](../crates/mamboblue-registry/src/lib.rs):
    - Add or change entries in `BLUE_FILES` (`name` = relative path under the install directory, `url` = direct download).
    - Keep `BLUE_REQUIRED_FILES` in sync so install detection stays correct.
    - Bump `version` / `size` / `description` on the `BLUE` manifest when the bundle meaningfully changes.
-3. **Keep desktop paths aligned** if the desktop still hardcodes Blue filenames or helper URLs (see [`mamborambo-desktop/src-tauri/src/model.rs`](../mamborambo-desktop/src-tauri/src/model.rs)). Prefer reading from the registry where possible; if a temporary constant remains, update it in the same PR.
+3. **Keep desktop paths aligned** if the desktop still hardcodes Blue filenames or helper URLs (see [`mamboblue-desktop/src-tauri/src/model.rs`](../mamboblue-desktop/src-tauri/src/model.rs)). Prefer reading from the registry where possible; if a temporary constant remains, update it in the same PR.
 4. **Server loading** — if filenames change, update Blue load validation and any path defaults in:
-   - [`mamborambo-server/src/server/handlers/load.rs`](../mamborambo-server/src/server/handlers/load.rs)
-   - [`mamborambo-server/src/runtime/blue.rs`](../mamborambo-server/src/runtime/blue.rs)
-   - desktop runner DTOs / load requests under `mamborambo-desktop/src-tauri/src/runner/`
+   - [`mamboblue-server/src/server/handlers/load.rs`](../mamboblue-server/src/server/handlers/load.rs)
+   - [`mamboblue-server/src/runtime/blue.rs`](../mamboblue-server/src/runtime/blue.rs)
+   - desktop runner DTOs / load requests under `mamboblue-desktop/src-tauri/src/runner/`
 5. **UI** — only if users need a new control (for example a new voice name or G2P option). Fixed voices are usually discovered from the loaded runtime’s voice list.
 6. **Document** the upstream project in `README.md` → “Models and phonemizers” when it is a distinct open-source dependency.
 
@@ -95,7 +95,7 @@ A “runtime” is a full inference backend with a stable string id (Blue’s id
 
 ### 1. Registry manifest
 
-In [`crates/mamborambo-registry/src/lib.rs`](../crates/mamborambo-registry/src/lib.rs):
+In [`crates/mamboblue-registry/src/lib.rs`](../crates/mamboblue-registry/src/lib.rs):
 
 1. Define `ModelFile` slices and `required_files`.
 2. Create a `RuntimeManifest` with:
@@ -114,7 +114,7 @@ The desktop `get_model_sources` command and server `GET /v1/models/sources` both
 
 ### 2. Server `Runtime` adapter
 
-Implement [`Runtime`](../mamborambo-server/src/runtime/mod.rs) in a new module under `mamborambo-server/src/runtime/`, then export it from `runtime/mod.rs`.
+Implement [`Runtime`](../mamboblue-server/src/runtime/mod.rs) in a new module under `mamboblue-server/src/runtime/`, then export it from `runtime/mod.rs`.
 
 You must implement:
 
@@ -127,9 +127,9 @@ You must implement:
 | `synthesize_phonemes_streaming` | Advanced-mode phoneme synthesis |
 | `synthesize_to_file` | Non-streaming export |
 
-Add a `RuntimeParams` variant for the paths/config your loader needs, and branch on it in [`Server::load_model`](../mamborambo-server/src/server/state.rs).
+Add a `RuntimeParams` variant for the paths/config your loader needs, and branch on it in [`Server::load_model`](../mamboblue-server/src/server/state.rs).
 
-Update [`POST /v1/models/load`](../mamborambo-server/src/server/handlers/load.rs) so the new `runtime` id is accepted and validated (Blue-only checks must become a match on runtime id).
+Update [`POST /v1/models/load`](../mamboblue-server/src/server/handlers/load.rs) so the new `runtime` id is accepted and validated (Blue-only checks must become a match on runtime id).
 
 If you introduce a Rust crate for the engine (like `crates/blue-rs`), keep ONNX / native deps explicit and document packaging needs for `scripts/pre_build.py`.
 
@@ -137,16 +137,16 @@ If you introduce a Rust crate for the engine (like `crates/blue-rs`), keep ONNX 
 
 Minimum desktop work:
 
-1. [`mamborambo-desktop/src-tauri/src/model.rs`](../mamborambo-desktop/src-tauri/src/model.rs) — implement download for the new runtime id (today Blue is special-cased; generalize or add a clear branch). Respect `InstallKind::Files` vs archive extraction.
+1. [`mamboblue-desktop/src-tauri/src/model.rs`](../mamboblue-desktop/src-tauri/src/model.rs) — implement download for the new runtime id (today Blue is special-cased; generalize or add a clear branch). Respect `InstallKind::Files` vs archive extraction.
 2. Runner client / DTOs — send the correct load payload (`runtime`, `model_path`, and any engine-specific fields).
-3. TypeScript types in [`mamborambo-desktop/src/lib/types.ts`](../mamborambo-desktop/src/lib/types.ts) if new fields appear.
-4. Onboard / settings UI — the catalog cards come from registry sources; ensure selecting the new runtime downloads, persists `mamborambo.runtime`, and reloads the sidecar.
+3. TypeScript types in [`mamboblue-desktop/src/lib/types.ts`](../mamboblue-desktop/src/lib/types.ts) if new fields appear.
+4. Onboard / settings UI — the catalog cards come from registry sources; ensure selecting the new runtime downloads, persists `mamboblue.runtime`, and reloads the sidecar.
 
 Do not hardcode a one-off marketing card that disagrees with the registry.
 
 ### 4. Packaging native dependencies
 
-Runtimes are compiled into `mamborambo-server` and bundled as a Tauri sidecar. If your engine needs extra shared libraries (ONNX Runtime, espeak data, etc.):
+Runtimes are compiled into `mamboblue-server` and bundled as a Tauri sidecar. If your engine needs extra shared libraries (ONNX Runtime, espeak data, etc.):
 
 1. Extend [`scripts/pre_build.py`](../scripts/pre_build.py) (and Linux/Windows CI if needed) so those libraries ship beside the sidecar.
 2. Confirm macOS codesigning / Windows/Linux packaging still work. See [BUILDING.md](./BUILDING.md) and `docs/code-signing/`.
@@ -184,7 +184,7 @@ PR description should include:
 - Confirm redistributable under an OSI-friendly license
 
 ## Implementation
-- [ ] Registry manifest updated (`crates/mamborambo-registry`)
+- [ ] Registry manifest updated (`crates/mamboblue-registry`)
 - [ ] Server load + Runtime path works
 - [ ] Desktop download + onboard selection works
 - [ ] Docs updated
@@ -209,8 +209,8 @@ From the repo root (see also [BUILDING.md](./BUILDING.md)):
 
 ```console
 cargo test --workspace
-cargo build -p mamborambo-server --release --bin mamborambo-server
-cd mamborambo-desktop
+cargo build -p mamboblue-server --release --bin mamboblue-server
+cd mamboblue-desktop
 pnpm install
 pnpm build
 pnpm tauri dev
@@ -228,7 +228,7 @@ Manual smoke test:
 You can prototype without a PR:
 
 1. Build the server/desktop from a private branch.
-2. Point load paths at local ONNX/GGUF files via the load API fields or environment variables currently recognized by the Blue loader (`MAMBORAMBO_BLUE_MODEL_DIR`, `MAMBORAMBO_RENIKUD_PATH`, etc.).
+2. Point load paths at local ONNX/GGUF files via the load API fields or environment variables currently recognized by the Blue loader (`MAMBOBLUE_BLUE_MODEL_DIR`, `MAMBOBLUE_RENIKUD_PATH`, etc.).
 3. Keep proprietary or non-redistributable weights off the public registry.
 
 Local success is not enough for merge — public URLs, license clarity, and packaging still required.
@@ -245,12 +245,12 @@ Local success is not enough for merge — public URLs, license clarity, and pack
 
 | Concern | Primary location |
 | --- | --- |
-| Catalog / URLs / capabilities | `crates/mamborambo-registry/src/lib.rs` |
-| HTTP sources API | `mamborambo-server/src/server/sources.rs` |
-| Load API | `mamborambo-server/src/server/handlers/load.rs` |
-| Runtime trait + params | `mamborambo-server/src/runtime/mod.rs` |
-| Blue reference adapter | `mamborambo-server/src/runtime/blue.rs` |
-| Downloads | `mamborambo-desktop/src-tauri/src/model.rs` |
+| Catalog / URLs / capabilities | `crates/mamboblue-registry/src/lib.rs` |
+| HTTP sources API | `mamboblue-server/src/server/sources.rs` |
+| Load API | `mamboblue-server/src/server/handlers/load.rs` |
+| Runtime trait + params | `mamboblue-server/src/runtime/mod.rs` |
+| Blue reference adapter | `mamboblue-server/src/runtime/blue.rs` |
+| Downloads | `mamboblue-desktop/src-tauri/src/model.rs` |
 | Sidecar packaging | `scripts/pre_build.py` |
 | Architecture overview | [ARCHITECTURE.md](./ARCHITECTURE.md) |
 | Build / reinstall | [BUILDING.md](./BUILDING.md) |

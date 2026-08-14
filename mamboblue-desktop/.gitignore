@@ -11,8 +11,8 @@ node_modules
 dist
 dist-ssr
 *.local
-src-tauri/binaries/mamborambo-*
-src-tauri/binaries/mamborambo-runner-*
+src-tauri/binaries/mamboblue-*
+src-tauri/binaries/mamboblue-runner-*
 
 # Editor directories and files
 .vscode/*

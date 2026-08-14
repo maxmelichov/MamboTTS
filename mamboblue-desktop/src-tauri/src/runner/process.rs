@@ -31,10 +31,10 @@ impl RunnerProcess {
             .stderr(Stdio::piped());
         if let Ok(bundle) = model::model_bundle(app) {
             if bundle.installed {
-                cmd.env("MAMBORAMBO_RUNTIME", &bundle.runtime);
-                cmd.env("MAMBORAMBO_BLUE_MODEL_DIR", &bundle.model_path);
+                cmd.env("MAMBOBLUE_RUNTIME", &bundle.runtime);
+                cmd.env("MAMBOBLUE_BLUE_MODEL_DIR", &bundle.model_path);
                 if !bundle.codec_path.is_empty() {
-                    cmd.env("MAMBORAMBO_RENIKUD_PATH", &bundle.codec_path);
+                    cmd.env("MAMBOBLUE_RENIKUD_PATH", &bundle.codec_path);
                 }
             }
         }
@@ -48,7 +48,7 @@ impl RunnerProcess {
 
         let mut child = cmd.spawn().map_err(|err| {
             format!(
-                "failed to spawn MamboRambo server at {}: {err}",
+                "failed to spawn MamboBlue server at {}: {err}",
                 binary_path.display()
             )
         })?;
@@ -57,7 +57,7 @@ impl RunnerProcess {
         let stdout = child
             .stdout
             .take()
-            .ok_or_else(|| "failed to capture MamboRambo server stdout".to_string())?;
+            .ok_or_else(|| "failed to capture MamboBlue server stdout".to_string())?;
         let mut reader = std::io::BufReader::new(stdout);
         let mut line = String::new();
 
@@ -86,7 +86,7 @@ impl RunnerProcess {
         if signal.status != "ready" {
             kill_child(&mut child);
             return Err(format!(
-                "unexpected MamboRambo server status: {}",
+                "unexpected MamboBlue server status: {}",
                 signal.status
             ));
         }

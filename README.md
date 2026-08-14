@@ -1,18 +1,18 @@
 <p align="center">
-  <a target="_blank" href="https://maxmelichov.github.io/MamboRambo/">
-    <img width="240" alt="MamboRambo logo" src="./mamborambo-desktop/src/assets/mamborambo-logo.png" />
+  <a target="_blank" href="https://maxmelichov.github.io/MamboBlue/">
+    <img width="240" alt="MamboBlue logo" src="./mamboblue-desktop/src/assets/mamboblue-logo.png" />
   </a>
 </p>
 
-<h1 align="center">MamboRambo</h1>
+<h1 align="center">MamboBlue</h1>
 
 <p align="center">
   <strong>Native offline BlueTTS for desktop</strong>
 </p>
 
 <p align="center">
-  <a target="_blank" href="https://maxmelichov.github.io/MamboRambo/">
-    🔗 Download MamboRambo
+  <a target="_blank" href="https://maxmelichov.github.io/MamboBlue/">
+    🔗 Download MamboBlue
   </a>
   &nbsp; | &nbsp; Give it a Star ⭐ | &nbsp;
   <a target="_blank" href="https://github.com/sponsors/maxmelichov">Support the project 🤝</a>
@@ -21,8 +21,8 @@
 <hr />
 
 <p align="center">
-  <a target="_blank" href="https://maxmelichov.github.io/MamboRambo/">
-    <img width="800" alt="MamboRambo desktop screenshot" src="./docs/images/mamborambo-studio.png" />
+  <a target="_blank" href="https://maxmelichov.github.io/MamboBlue/">
+    <img width="800" alt="MamboBlue desktop screenshot" src="./docs/images/mamboblue-studio.png" />
   </a>
 </p>
 
@@ -40,7 +40,7 @@
 
 ## Models and phonemizers
 
-MamboRambo builds on these open-source projects:
+MamboBlue builds on these open-source projects:
 
 - [BlueTTS](https://github.com/maxmelichov/BlueTTS) — local ONNX text-to-speech runtime
 - [RenikudPlus](https://github.com/maxmelichov/RenikudPlus) — Hebrew grapheme-to-IPA conversion with speaker conditioning
@@ -52,7 +52,7 @@ See [BUILDING.md](docs/BUILDING.md).
 
 ## Adding models
 
-Want to ship another open-source TTS model or voice bundle with MamboRambo? See [docs/ADDING_MODELS.md](docs/ADDING_MODELS.md) for licensing, registry wiring, server/desktop steps, and the PR checklist.
+Want to ship another open-source TTS model or voice bundle with MamboBlue? See [docs/ADDING_MODELS.md](docs/ADDING_MODELS.md) for licensing, registry wiring, server/desktop steps, and the PR checklist.
 
 ---
 

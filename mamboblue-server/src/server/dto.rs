@@ -65,7 +65,7 @@ pub struct LoadBody {
 impl Default for LoadBody {
     fn default() -> Self {
         Self {
-            runtime: mamborambo_registry::DEFAULT_RUNTIME_ID.into(),
+            runtime: mamboblue_registry::DEFAULT_RUNTIME_ID.into(),
             model_path: String::new(),
             renikud_path: String::new(),
             hebrew_g2p_engine: "renikud".into(),
@@ -77,7 +77,7 @@ impl Default for LoadBody {
 }
 
 fn default_runtime() -> String {
-    mamborambo_registry::DEFAULT_RUNTIME_ID.into()
+    mamboblue_registry::DEFAULT_RUNTIME_ID.into()
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
