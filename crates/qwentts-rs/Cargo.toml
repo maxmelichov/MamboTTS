@@ -1,0 +1,18 @@
+[package]
+name = "qwentts-rs"
+version = "0.1.0"
+edition = "2021"
+links = "qwen"
+
+[features]
+default = []
+metal = []
+vulkan = []
+cuda = []
+
+[dependencies]
+anyhow = "1.0.100"
+
+[build-dependencies]
+bindgen = "0.71.1"
+cmake = "0.1.54"

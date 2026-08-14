@@ -63,6 +63,25 @@ impl Server {
                 model_dir,
                 renikud_path,
             ),
+            #[cfg(feature = "qwen")]
+            RuntimeParams::QwenHe {
+                talker_path,
+                codec_path,
+                renikud_path,
+            } => (
+                Box::new(crate::runtime::QwenRuntime::load(
+                    talker_path.clone(),
+                    codec_path.clone(),
+                    renikud_path,
+                )?),
+                talker_path,
+                codec_path,
+            ),
+            #[cfg(not(feature = "qwen"))]
+            RuntimeParams::QwenHe { .. } => anyhow::bail!(
+                "this server build does not include the QwenTTS runtime; \
+                 rebuild mamboblue-server with --features qwen"
+            ),
         };
         inner.ctx = Some(ctx);
         inner.runtime = params.runtime;

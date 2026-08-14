@@ -25,7 +25,7 @@ pub async fn model_load(
     body: Option<Json<LoadBody>>,
 ) -> Response {
     let body = body.map(|Json(body)| body).unwrap_or_default();
-    let params = match blue_load_params(body) {
+    let params = match load_params(body) {
         Ok(params) => params,
         Err(message) => return write_error(StatusCode::BAD_REQUEST, "invalid_request", message),
     };
@@ -46,12 +46,47 @@ pub async fn model_load(
     .into_response()
 }
 
-fn blue_load_params(body: LoadBody) -> Result<LoadParams, &'static str> {
-    if body.runtime != mamboblue_registry::DEFAULT_RUNTIME_ID {
-        return Err(
-            "unsupported runtime; install a server build that includes the selected runtime",
-        );
+/// Routes a load request to the parameter builder for its runtime id.
+fn load_params(body: LoadBody) -> Result<LoadParams, &'static str> {
+    match body.runtime.as_str() {
+        mamboblue_registry::DEFAULT_RUNTIME_ID => blue_load_params(body),
+        mamboblue_registry::QWEN_HE_RUNTIME_ID => qwen_load_params(body),
+        _ => Err("unsupported runtime; install a server build that includes the selected runtime"),
     }
+}
+
+/// QwenTTS needs both GGUFs plus RenikudPlus, since the checkpoint reads
+/// stressed IPA rather than Hebrew script.
+fn qwen_load_params(body: LoadBody) -> Result<LoadParams, &'static str> {
+    let talker_path = first_non_empty([
+        body.talker_path,
+        std::env::var("MAMBOBLUE_QWEN_TALKER_PATH").unwrap_or_default(),
+    ]);
+    let codec_path = first_non_empty([
+        body.codec_path,
+        std::env::var("MAMBOBLUE_QWEN_CODEC_PATH").unwrap_or_default(),
+    ]);
+    let renikud_path = first_non_empty([
+        body.renikud_path,
+        std::env::var("MAMBOBLUE_RENIKUD_PATH").unwrap_or_default(),
+    ]);
+    if talker_path.is_empty() || codec_path.is_empty() {
+        return Err("QwenTTS runtime requires talker_path and codec_path");
+    }
+    if renikud_path.is_empty() {
+        return Err("QwenTTS runtime requires renikud_path for Hebrew phonemes");
+    }
+    Ok(LoadParams {
+        runtime: mamboblue_registry::QWEN_HE_RUNTIME_ID.into(),
+        params: RuntimeParams::QwenHe {
+            talker_path: talker_path.into(),
+            codec_path: codec_path.into(),
+            renikud_path: renikud_path.into(),
+        },
+    })
+}
+
+fn blue_load_params(body: LoadBody) -> Result<LoadParams, &'static str> {
     let model_path = first_non_empty([
         body.model_path,
         std::env::var("MAMBOBLUE_BLUE_MODEL_DIR").unwrap_or_default(),
@@ -82,23 +117,59 @@ fn blue_load_params(body: LoadBody) -> Result<LoadParams, &'static str> {
 
 #[cfg(test)]
 mod tests {
-    use super::blue_load_params;
+    use super::load_params;
+    use crate::runtime::RuntimeParams;
     use crate::server::dto::LoadBody;
+
+    fn blue(model_path: &str, renikud_path: &str) -> LoadBody {
+        LoadBody {
+            runtime: "blue".into(),
+            model_path: model_path.into(),
+            renikud_path: renikud_path.into(),
+            hebrew_g2p_engine: "renikud".into(),
+            ..LoadBody::default()
+        }
+    }
+
+    fn qwen(talker_path: &str, codec_path: &str, renikud_path: &str) -> LoadBody {
+        LoadBody {
+            runtime: "qwen_he".into(),
+            talker_path: talker_path.into(),
+            codec_path: codec_path.into(),
+            renikud_path: renikud_path.into(),
+            ..LoadBody::default()
+        }
+    }
 
     #[test]
     fn blue_load_requires_model_and_renikud_paths() {
-        assert!(blue_load_params(LoadBody::default()).is_err());
+        assert!(load_params(LoadBody::default()).is_err());
+        assert!(load_params(blue("/models/blue", "/models/renikud-plus.onnx")).is_ok());
+        assert!(load_params(blue("", "/models/renikud-plus.onnx")).is_err());
+    }
+
+    #[test]
+    fn qwen_load_requires_both_ggufs_and_renikud() {
+        let params =
+            load_params(qwen("/m/talker.gguf", "/m/codec.gguf", "/m/renikud-plus.onnx")).unwrap();
+        assert_eq!(params.runtime, "qwen_he");
+        assert!(matches!(params.params, RuntimeParams::QwenHe { .. }));
+
+        assert!(load_params(qwen("", "/m/codec.gguf", "/m/renikud-plus.onnx")).is_err());
+        assert!(load_params(qwen("/m/talker.gguf", "", "/m/renikud-plus.onnx")).is_err());
+        // The model reads IPA, so a missing G2P is a load-time failure
+        // rather than a surprise at the first Hebrew request.
+        assert!(load_params(qwen("/m/talker.gguf", "/m/codec.gguf", "")).is_err());
+    }
+
+    #[test]
+    fn unknown_runtimes_are_rejected() {
         assert!(
-            blue_load_params(LoadBody {
-                runtime: "blue".into(),
-                model_path: "/models/blue".into(),
-                renikud_path: "/models/renikud-plus.onnx".into(),
-                hebrew_g2p_engine: "renikud".into(),
-                phonikud_path: String::new(),
-                speaker: 0,
-                target_speaker: 0,
+            load_params(LoadBody {
+                runtime: "kokoro".into(),
+                ..LoadBody::default()
             })
-            .is_ok()
+            .is_err()
         );
     }
 }

@@ -75,7 +75,9 @@ export function HomePage({ bundle, setBundle, studio, setStudio, advancedMode, h
           request: {
             runtime: currentBundle.runtime,
             model_path: currentBundle.model_path,
-            renikud_path: currentBundle.codec_path,
+            renikud_path: currentBundle.renikud_path,
+            talker_path: currentBundle.model_path,
+            codec_path: currentBundle.codec_path,
             hebrew_g2p_engine: hebrewG2pEngine,
             phonikud_path: phonikudPath,
             speaker,
@@ -110,7 +112,9 @@ export function HomePage({ bundle, setBundle, studio, setStudio, advancedMode, h
       request: {
         runtime: current.runtime,
         model_path: current.model_path,
-        renikud_path: current.codec_path,
+        renikud_path: current.renikud_path,
+        talker_path: current.model_path,
+        codec_path: current.codec_path,
             hebrew_g2p_engine: hebrewG2pEngine,
             phonikud_path: phonikudPath,
             speaker,
@@ -157,7 +161,9 @@ export function HomePage({ bundle, setBundle, studio, setStudio, advancedMode, h
         request: {
           runtime: current.runtime,
           model_path: current.model_path,
-          renikud_path: current.codec_path,
+          renikud_path: current.renikud_path,
+          talker_path: current.model_path,
+          codec_path: current.codec_path,
             hebrew_g2p_engine: hebrewG2pEngine,
             phonikud_path: phonikudPath,
             speaker,

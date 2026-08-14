@@ -2905,6 +2905,7 @@ dependencies = [
  "futures-util",
  "hound",
  "mamboblue-registry",
+ "qwentts-rs",
  "serde",
  "serde_json",
  "tempfile",
@@ -4243,6 +4244,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "41f2619966050689382d2b44f664f4bc593e129785a36d6ee376ddf37259b924"
 dependencies = [
  "proc-macro2",
+]
+
+[[package]]
+name = "qwentts-rs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bindgen 0.71.1",
+ "cmake",
 ]
 
 [[package]]

@@ -60,6 +60,12 @@ pub struct LoadBody {
     pub speaker: u8,
     #[serde(default)]
     pub target_speaker: u8,
+    /// Qwen talker GGUF. Ignored by the Blue runtime.
+    #[serde(default)]
+    pub talker_path: String,
+    /// Qwen codec GGUF. Ignored by the Blue runtime.
+    #[serde(default)]
+    pub codec_path: String,
 }
 
 impl Default for LoadBody {
@@ -72,6 +78,8 @@ impl Default for LoadBody {
             phonikud_path: String::new(),
             speaker: 0,
             target_speaker: 0,
+            talker_path: String::new(),
+            codec_path: String::new(),
         }
     }
 }

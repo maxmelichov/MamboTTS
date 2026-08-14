@@ -68,6 +68,15 @@ pub async fn diacritize(
     }
 }
 
+/// Whether the loaded runtime can clone a voice from a reference
+/// recording, read from the registry so the answer tracks the manifest
+/// rather than a hardcoded runtime name.
+async fn supports_voice_reference(server: &SharedServer) -> bool {
+    let runtime = server.inner.lock().await.runtime.clone();
+    mamboblue_registry::runtime(&runtime)
+        .is_some_and(|manifest| manifest.capabilities.voice_reference)
+}
+
 #[utoipa::path(
     post,
     path = "/v1/audio/speech",
@@ -89,11 +98,12 @@ pub async fn speech(State(server): State<SharedServer>, Json(body): Json<SpeechB
             "only wav response_format is supported",
         );
     }
-    if !body.voice_reference.is_empty() {
+    if !body.voice_reference.is_empty() && !supports_voice_reference(&server).await {
         return write_error(
             StatusCode::BAD_REQUEST,
             "invalid_request",
-            "BlueTTS supports only the saved Rotem and Roi voices; voice cloning is unavailable",
+            "the loaded runtime supports only its saved voices; \
+             load a runtime with voice cloning to use voice_reference",
         );
     }
     if body.stream {
@@ -120,7 +130,7 @@ pub async fn speech(State(server): State<SharedServer>, Json(body): Json<SpeechB
     };
 
     let out_path = tmp.path().to_path_buf();
-    let voice = first_non_empty([body.voice]);
+    let voice = first_non_empty([body.voice_reference.clone(), body.voice.clone()]);
     {
         let mut inner = server.inner.lock().await;
         let Some(ctx) = inner.ctx.as_mut() else {
@@ -171,7 +181,7 @@ async fn streaming_wav_response(server: SharedServer, body: SpeechBody) -> Respo
         }
     }
 
-    let voice = first_non_empty([body.voice]);
+    let voice = first_non_empty([body.voice_reference.clone(), body.voice.clone()]);
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(2);
     tokio::task::spawn_blocking(move || {
         let mut inner = server.inner.blocking_lock();

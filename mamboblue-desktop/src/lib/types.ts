@@ -3,6 +3,8 @@ export type ModelBundle = {
   runtime: string;
   model_path: string;
   codec_path: string;
+  /** Hebrew G2P model; both runtimes read IPA rather than Hebrew script. */
+  renikud_path: string;
   voices_path?: string;
   espeak_data_path?: string;
   model_dir: string;

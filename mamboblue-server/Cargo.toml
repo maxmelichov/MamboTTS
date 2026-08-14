@@ -7,8 +7,19 @@ edition = "2024"
 name = "mamboblue-server"
 path = "src/main.rs"
 
+[features]
+default = []
+# Compiles the Qwen3-TTS Hebrew runtime into the sidecar. Off by default
+# because it builds qwentts.cpp and GGML from source, which is a long
+# build and pulls native artifacts the Blue-only sidecar does not need.
+qwen = ["dep:qwentts-rs"]
+metal = ["qwentts-rs/metal"]
+vulkan = ["qwentts-rs/vulkan"]
+cuda = ["qwentts-rs/cuda"]
+
 [dependencies]
 anyhow = "1.0.100"
+qwentts-rs = { path = "../crates/qwentts-rs", optional = true }
 axum = "0.8.7"
 blue-rs = { path = "../crates/blue-rs" }
 mamboblue-registry = { path = "../crates/mamboblue-registry" }

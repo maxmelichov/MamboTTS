@@ -8,6 +8,7 @@ members = [
     "crates/blue-rs",
     "crates/renikud-plus-rs",
     "crates/mamboblue-registry",
+    "crates/qwentts-rs",
 ]
 resolver = "2"
 

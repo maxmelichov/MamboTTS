@@ -114,7 +114,56 @@ const BLUE: RuntimeManifest = RuntimeManifest {
     },
 };
 
-const RUNTIMES: &[RuntimeManifest] = &[BLUE];
+/// Stable id for the Qwen3-TTS Hebrew runtime.
+pub const QWEN_HE_RUNTIME_ID: &str = "qwen_he";
+
+// Two GGUFs drive qwentts.cpp: the talker turns stressed IPA into 12 Hz
+// codec frames, the tokenizer decodes those frames to 24 kHz audio. The
+// talker carries the merged Hebrew LoRA; the tokenizer is the stock
+// upstream codec. RenikudPlus rides along because this model is fed IPA,
+// never Hebrew script.
+const QWEN_HE_FILES: &[ModelFile] = &[
+    ModelFile {
+        name: "qwen-talker-1.7b-base-Q4_K_M.gguf",
+        url: "https://huggingface.co/notmax123/QwenTTS-he-1.7B-GGUF/resolve/main/qwen-talker-1.7b-base-Q4_K_M.gguf",
+    },
+    ModelFile {
+        name: "qwen-tokenizer-12hz-Q4_K_M.gguf",
+        url: "https://huggingface.co/notmax123/QwenTTS-he-1.7B-GGUF/resolve/main/qwen-tokenizer-12hz-Q4_K_M.gguf",
+    },
+    ModelFile {
+        name: "renikud-plus.onnx",
+        url: RENIKUD_URL,
+    },
+];
+
+const QWEN_HE_REQUIRED_FILES: &[&str] = &[
+    "qwen-talker-1.7b-base-Q4_K_M.gguf",
+    "qwen-tokenizer-12hz-Q4_K_M.gguf",
+    "renikud-plus.onnx",
+];
+
+const QWEN_HE: RuntimeManifest = RuntimeManifest {
+    id: QWEN_HE_RUNTIME_ID,
+    name: "QwenTTS Hebrew",
+    version: "qwentts-he-1.7b",
+    size: "~1.5 GB",
+    description: "Hebrew voice cloning from a short reference recording.",
+    directory: "qwentts-he-1.7b",
+    install_kind: InstallKind::Files,
+    files: QWEN_HE_FILES,
+    required_files: QWEN_HE_REQUIRED_FILES,
+    capabilities: RuntimeCapabilities {
+        hebrew: true,
+        streaming: true,
+        voice_reference: true,
+        fixed_voices: false,
+    },
+};
+
+// Blue stays first and stays the default: it is the small, fast bundle
+// most users want. Qwen is the heavyweight opt-in beside it.
+const RUNTIMES: &[RuntimeManifest] = &[BLUE, QWEN_HE];
 
 pub fn runtimes() -> &'static [RuntimeManifest] {
     RUNTIMES
@@ -131,6 +180,44 @@ pub fn blue_model_base_url() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn qwen_manifest_ships_both_ggufs_and_a_hebrew_g2p() {
+        let qwen = runtime(QWEN_HE_RUNTIME_ID).expect("Qwen manifest");
+        assert!(qwen.capabilities.hebrew);
+        assert!(qwen.capabilities.voice_reference);
+        // The model is fed stressed IPA, so the G2P model is not optional.
+        assert!(qwen.required_files.contains(&"renikud-plus.onnx"));
+        assert_eq!(
+            qwen.required_files
+                .iter()
+                .filter(|file| file.ends_with(".gguf"))
+                .count(),
+            2,
+            "qwentts.cpp needs a talker and a codec GGUF"
+        );
+        assert_eq!(qwen.files.len(), qwen.required_files.len());
+    }
+
+    #[test]
+    fn blue_stays_the_default_runtime() {
+        assert_eq!(DEFAULT_RUNTIME_ID, "blue");
+        assert_eq!(runtimes()[0].id, DEFAULT_RUNTIME_ID);
+        assert!(runtimes().len() >= 2, "Qwen is additive, not a replacement");
+    }
+
+    #[test]
+    fn every_runtime_has_a_unique_id_and_directory() {
+        for (index, manifest) in runtimes().iter().enumerate() {
+            for other in &runtimes()[index + 1..] {
+                assert_ne!(manifest.id, other.id);
+                assert_ne!(
+                    manifest.directory, other.directory,
+                    "bundles would overwrite each other on disk"
+                );
+            }
+        }
+    }
 
     #[test]
     fn blue_manifest_has_the_complete_hebrew_bundle() {

@@ -5,8 +5,12 @@ use serde::Serialize;
 use utoipa::ToSchema;
 
 mod blue;
+#[cfg(feature = "qwen")]
+mod qwen;
 
 pub use blue::BlueRuntime;
+#[cfg(feature = "qwen")]
+pub use qwen::QwenRuntime;
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct Language {
@@ -52,6 +56,14 @@ pub enum RuntimeParams {
         phonikud_path: Option<PathBuf>,
         speaker: u8,
         target_speaker: u8,
+    },
+    /// Qwen3-TTS with the Hebrew LoRA merged in. The talker GGUF holds
+    /// the language model, the codec GGUF decodes its frames to audio,
+    /// and RenikudPlus supplies the stressed IPA the model reads.
+    QwenHe {
+        talker_path: PathBuf,
+        codec_path: PathBuf,
+        renikud_path: PathBuf,
     },
 }
 

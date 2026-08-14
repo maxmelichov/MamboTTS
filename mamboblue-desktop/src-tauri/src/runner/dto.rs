@@ -38,6 +38,8 @@ pub struct LoadModelRequest {
     pub runtime: String,
     pub model_path: String,
     pub renikud_path: String,
+    pub talker_path: Option<String>,
+    pub codec_path: Option<String>,
     pub hebrew_g2p_engine: Option<String>,
     pub phonikud_path: Option<String>,
     pub speaker: Option<u8>,

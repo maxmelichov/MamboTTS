@@ -42,7 +42,9 @@
 
 MamboBlue builds on these open-source projects:
 
-- [BlueTTS](https://github.com/maxmelichov/BlueTTS) — local ONNX text-to-speech runtime
+- [BlueTTS](https://github.com/maxmelichov/BlueTTS) — local ONNX text-to-speech runtime, shipped by default
+- [QwenTTS-he-1.7B](https://huggingface.co/notmax123/QwenTTS-he-1.7B) — Hebrew LoRA over [Qwen3-TTS](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base), an opt-in runtime with reference-audio voice cloning
+- [qwentts.cpp](https://github.com/ServeurpersoCom/qwentts.cpp) — GGML inference for Qwen3-TTS, wrapped by the `qwentts-rs` crate
 - [RenikudPlus](https://github.com/maxmelichov/RenikudPlus) — Hebrew grapheme-to-IPA conversion with speaker conditioning
 - [Phonikud](https://github.com/phonikud/phonikud) — Hebrew vocalization and diacritics-aware IPA tools
 

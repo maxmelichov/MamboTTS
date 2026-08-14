@@ -1,32 +1,18 @@
-use flate2::read::GzDecoder;
 use futures_util::StreamExt;
 use serde::Serialize;
 use std::{
-    fs,
     path::{Path, PathBuf},
 };
-use tar::Archive;
 use tauri::{Emitter, Manager};
 use tokio::io::AsyncWriteExt;
 
 use crate::analytics;
 use mamboblue_registry::runtimes;
 
-const MODELS_TAG: &str = "mamboblue-models-v0.1.3";
-const MODEL_DIR: &str = "mamboblue-models-q5_0";
-const MODEL_FILE: &str = "qwen3-tts-model.gguf";
-const CODEC_FILE: &str = "qwen3-tts-codec.gguf";
-const MODEL_BASE_URL: &str = "https://huggingface.co/thewh1teagle/qwen3-tts-gguf/resolve/main";
-const KOKORO_MODELS_TAG: &str = "kokoro-v1.0";
-const KOKORO_MODEL_DIR: &str = "mamboblue-kokoro-models-kokoro-v1.0";
-const KOKORO_MODEL_FILE: &str = "kokoro-v1.0.onnx";
-const KOKORO_VOICES_FILE: &str = "voices-v1.0.bin";
-const KOKORO_ESPEAK_DIR: &str = "espeak-ng-data";
-const KOKORO_BUNDLE_URL: &str = "https://huggingface.co/maxmelichov/MamboBlue-kokoro-models/resolve/main/mamboblue-kokoro-models-kokoro-v1.0.tar.gz";
-const BLUE_MODELS_TAG: &str = "blue-onnx-v2";
 const BLUE_MODEL_DIR: &str = "blue-onnx-v2";
 const BLUE_MODEL_BASE_URL: &str = "https://huggingface.co/notmax123/blue-onnx-v2/resolve/main";
-const RENIKUD_URL: &str = "https://huggingface.co/notmax123/RenikudPlus/resolve/main/model.onnx";
+const QWEN_HE_BASE_URL: &str =
+    "https://huggingface.co/notmax123/QwenTTS-he-1.7B-GGUF/resolve/main";
 const PHONIKUD_URL: &str = "https://huggingface.co/Phonikud/phonikud-onnx/resolve/main/phonikud-1.0.int8.onnx";
 
 #[derive(Debug, Clone, Serialize)]
@@ -35,6 +21,9 @@ pub struct ModelBundle {
     pub runtime: String,
     pub model_path: String,
     pub codec_path: String,
+    /// Hebrew G2P model. Both runtimes need it: the checkpoints consume
+    /// IPA, not Hebrew script.
+    pub renikud_path: String,
     pub voices_path: Option<String>,
     pub espeak_data_path: Option<String>,
     pub model_dir: String,
@@ -152,76 +141,12 @@ async fn download_model_bundle_inner(
     app: tauri::AppHandle,
     runtime: String,
 ) -> Result<ModelBundle, String> {
-    if runtime != "blue" {
-        return Err(format!(
-            "unsupported runtime `{runtime}`; BlueTTS is the only available runtime"
-        ));
+    match runtime.as_str() {
+        "blue" | mamboblue_registry::QWEN_HE_RUNTIME_ID => {
+            return download_runtime_bundle(app, &runtime).await;
+        }
+        other => return Err(format!("unsupported runtime `{other}`")),
     }
-    return download_blue_bundle(app).await;
-    /*
-    let bundle = qwen_bundle(&app)?;
-    if bundle.installed {
-        return Ok(bundle);
-    }
-
-    let models_root = models_root(&app)?;
-    tokio::fs::create_dir_all(&models_root)
-        .await
-        .map_err(|err| format!("failed to create {}: {err}", models_root.display()))?;
-    let dir = model_dir(&app)?;
-    tokio::fs::create_dir_all(&dir)
-        .await
-        .map_err(|err| format!("failed to create {}: {err}", dir.display()))?;
-
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .build()
-        .map_err(|err| format!("failed to build HTTP client: {err}"))?;
-    let mut downloaded = 0_u64;
-    let source = runtime_source("qwen").ok_or_else(|| "missing qwen source".to_string())?;
-    let model_url = source
-        .files
-        .iter()
-        .find(|file| file.name == MODEL_FILE)
-        .map(|file| file.url.clone())
-        .ok_or_else(|| "missing qwen model source URL".to_string())?;
-    let codec_url = source
-        .files
-        .iter()
-        .find(|file| file.name == CODEC_FILE)
-        .map(|file| file.url.clone())
-        .ok_or_else(|| "missing qwen codec source URL".to_string())?;
-    let model_total = remote_content_length(&client, &model_url).await;
-    let codec_total = remote_content_length(&client, &codec_url).await;
-    let total = match (model_total, codec_total) {
-        (Some(model), Some(codec)) => Some(model + codec),
-        _ => None,
-    };
-
-    download_model_file(
-        &app,
-        &client,
-        &model_url,
-        &dir.join(MODEL_FILE),
-        &mut downloaded,
-        total,
-    )
-    .await?;
-    download_model_file(
-        &app,
-        &client,
-        &codec_url,
-        &dir.join(CODEC_FILE),
-        &mut downloaded,
-        total,
-    )
-    .await?;
-
-    let bundle = qwen_bundle(&app)?;
-    if !bundle.installed {
-        return Err("model files downloaded, but expected GGUF files were not found".to_string());
-    }
-    Ok(bundle)*/
 }
 
 pub fn model_bundle(app: &tauri::AppHandle) -> Result<ModelBundle, String> {
@@ -234,9 +159,8 @@ pub fn model_bundle_for_runtime(
 ) -> Result<ModelBundle, String> {
     match runtime {
         "blue" => blue_bundle(app),
-        other => Err(format!(
-            "unsupported runtime `{other}`; BlueTTS is the only available runtime"
-        )),
+        mamboblue_registry::QWEN_HE_RUNTIME_ID => qwen_bundle(app),
+        other => Err(format!("unsupported runtime `{other}`")),
     }
 }
 
@@ -265,6 +189,7 @@ fn blue_bundle(app: &tauri::AppHandle) -> Result<ModelBundle, String> {
         runtime: "blue".to_string(),
         model_path: path_string(&dir),
         codec_path: path_string(&renikud_path),
+        renikud_path: path_string(&renikud_path),
         voices_path: Some(path_string(&dir.join("voices"))),
         espeak_data_path: None,
         model_dir: path_string(&dir),
@@ -284,41 +209,27 @@ fn phonikud_bundle(app: &tauri::AppHandle) -> Result<PhonikudBundle, String> {
 }
 
 fn qwen_bundle(app: &tauri::AppHandle) -> Result<ModelBundle, String> {
-    let source = runtime_source("qwen").ok_or_else(|| "missing qwen source".to_string())?;
-    let dir = model_dir(app)?;
-    let model_path = dir.join(MODEL_FILE);
-    let codec_path = dir.join(CODEC_FILE);
+    let source = runtime_source(mamboblue_registry::QWEN_HE_RUNTIME_ID)
+        .ok_or_else(|| "missing QwenTTS source".to_string())?;
+    let dir = models_root(app)?.join(&source.directory);
+    // model_path is the talker GGUF and codec_path the audio codec, but
+    // Hebrew also needs RenikudPlus because the checkpoint reads IPA.
+    let talker_path = dir.join("qwen-talker-1.7b-base-Q4_K_M.gguf");
+    let codec_path = dir.join("qwen-tokenizer-12hz-Q4_K_M.gguf");
+    let renikud_path = dir.join("renikud-plus.onnx");
     Ok(ModelBundle {
-        installed: model_path.exists() && codec_path.exists(),
-        runtime: "qwen".to_string(),
-        model_path: path_string(&model_path),
+        installed: [&talker_path, &codec_path, &renikud_path]
+            .iter()
+            .all(|file| file.is_file()),
+        runtime: mamboblue_registry::QWEN_HE_RUNTIME_ID.to_string(),
+        model_path: path_string(&talker_path),
         codec_path: path_string(&codec_path),
+        renikud_path: path_string(&renikud_path),
         voices_path: None,
         espeak_data_path: None,
         model_dir: path_string(&dir),
         version: source.version,
-        url: MODEL_BASE_URL.to_string(),
-    })
-}
-
-fn kokoro_bundle(app: &tauri::AppHandle) -> Result<ModelBundle, String> {
-    let source = runtime_source("kokoro").ok_or_else(|| "missing kokoro source".to_string())?;
-    let dir = models_root(app)?.join(KOKORO_MODEL_DIR);
-    let model_path = dir.join(KOKORO_MODEL_FILE);
-    let voices_path = dir.join(KOKORO_VOICES_FILE);
-    let espeak_data_path = dir.join(KOKORO_ESPEAK_DIR);
-    Ok(ModelBundle {
-        installed: model_path.exists() && voices_path.exists() && espeak_data_path.is_dir(),
-        runtime: "kokoro".to_string(),
-        model_path: path_string(&model_path),
-        codec_path: String::new(),
-        voices_path: Some(path_string(&voices_path)),
-        espeak_data_path: Some(path_string(&espeak_data_path)),
-        model_dir: path_string(&dir),
-        version: source.version,
-        url: source
-            .archive_url
-            .unwrap_or_else(|| KOKORO_BUNDLE_URL.to_string()),
+        url: QWEN_HE_BASE_URL.to_string(),
     })
 }
 
@@ -366,72 +277,16 @@ fn runtime_source(runtime: &str) -> Option<ModelSource> {
         .find(|source| source.id == runtime)
 }
 
-async fn download_kokoro_bundle(app: tauri::AppHandle) -> Result<ModelBundle, String> {
-    let bundle = kokoro_bundle(&app)?;
+async fn download_runtime_bundle(
+    app: tauri::AppHandle,
+    runtime: &str,
+) -> Result<ModelBundle, String> {
+    let bundle = model_bundle_for_runtime(&app, runtime)?;
     if bundle.installed {
         return Ok(bundle);
     }
-    let source = runtime_source("kokoro").ok_or_else(|| "missing kokoro source".to_string())?;
-    let archive_url = source
-        .archive_url
-        .ok_or_else(|| "missing kokoro archive source URL".to_string())?;
-    let models_root = models_root(&app)?;
-    tokio::fs::create_dir_all(&models_root)
-        .await
-        .map_err(|err| format!("failed to create {}: {err}", models_root.display()))?;
-    let archive_path = models_root.join("mamboblue-kokoro-models-kokoro-v1.0.tar.gz.part");
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .build()
-        .map_err(|err| format!("failed to build HTTP client: {err}"))?;
-    let mut downloaded = 0_u64;
-    let mut total = remote_content_length(&client, &archive_url).await;
-    download_model_file(
-        &app,
-        &client,
-        &archive_url,
-        &archive_path,
-        &mut downloaded,
-        &mut total,
-    )
-    .await?;
-
-    emit_progress(
-        &app,
-        ModelDownloadProgress {
-            downloaded,
-            total,
-            progress: Some(1.0),
-            stage: "extracting",
-        },
-    );
-    let root = models_root.clone();
-    let archive = archive_path.clone();
-    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
-        let file = fs::File::open(&archive)
-            .map_err(|err| format!("failed to open {}: {err}", archive.display()))?;
-        let decoder = GzDecoder::new(file);
-        let mut tar = Archive::new(decoder);
-        tar.unpack(&root)
-            .map_err(|err| format!("failed to extract Kokoro model bundle: {err}"))?;
-        let _ = fs::remove_file(&archive);
-        Ok(())
-    })
-    .await
-    .map_err(|err| format!("failed to join extraction task: {err}"))??;
-    let bundle = kokoro_bundle(&app)?;
-    if !bundle.installed {
-        return Err("Kokoro bundle extracted, but expected files were not found".to_string());
-    }
-    Ok(bundle)
-}
-
-async fn download_blue_bundle(app: tauri::AppHandle) -> Result<ModelBundle, String> {
-    let bundle = blue_bundle(&app)?;
-    if bundle.installed {
-        return Ok(bundle);
-    }
-    let source = runtime_source("blue").ok_or_else(|| "missing Blue source".to_string())?;
+    let source =
+        runtime_source(runtime).ok_or_else(|| format!("missing `{runtime}` source"))?;
     let dir = PathBuf::from(&bundle.model_dir);
     tokio::fs::create_dir_all(&dir)
         .await
@@ -449,9 +304,11 @@ async fn download_blue_bundle(app: tauri::AppHandle) -> Result<ModelBundle, Stri
     .await;
     let known_sum: u64 = totals.iter().flatten().copied().sum();
     let known_count = totals.iter().flatten().count();
-    let estimated = parse_size_label_bytes(&source.size).unwrap_or(BLUE_ESTIMATED_BYTES);
+    // The manifest's size label is the estimate now that this path
+    // serves every runtime, not just Blue.
+    let estimated = parse_size_label_bytes(&source.size).unwrap_or(0);
     // Prefer exact sum when every file reports a size; otherwise keep the bar moving
-    // with the larger of known bytes vs the advertised bundle size (Blue + RenikudPlus).
+    // with the larger of known bytes vs the advertised bundle size.
     let mut total = Some(if known_count == source.files.len() && known_sum > 0 {
         known_sum
     } else {
@@ -484,9 +341,11 @@ async fn download_blue_bundle(app: tauri::AppHandle) -> Result<ModelBundle, Stri
             stage: "downloading",
         },
     );
-    let bundle = blue_bundle(&app)?;
+    let bundle = model_bundle_for_runtime(&app, runtime)?;
     if !bundle.installed {
-        return Err("Blue model download completed, but required files are missing".to_string());
+        return Err(format!(
+            "`{runtime}` download completed, but required files are missing"
+        ));
     }
     Ok(bundle)
 }
@@ -499,12 +358,6 @@ fn models_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         .join("models");
     Ok(dir)
 }
-
-fn model_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    Ok(models_root(app)?.join(MODEL_DIR))
-}
-
-const BLUE_ESTIMATED_BYTES: u64 = 560 * 1024 * 1024;
 
 fn parse_size_label_bytes(label: &str) -> Option<u64> {
     let lower = label.to_ascii_lowercase();
@@ -669,10 +522,6 @@ async fn download_model_file(
             dest.display()
         )
     })
-}
-
-fn model_file_url(file_name: &str) -> String {
-    format!("{MODEL_BASE_URL}/{file_name}")
 }
 
 fn emit_progress(app: &tauri::AppHandle, payload: ModelDownloadProgress) {

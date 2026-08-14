@@ -161,6 +161,60 @@ Update:
 - [ARCHITECTURE.md](./ARCHITECTURE.md) “Current runtime” section
 - This guide if you introduce a new contribution pattern
 
+## Worked example — QwenTTS Hebrew
+
+`qwen_he` is the reference for Option B, and it also shows what to do when
+upstream publishes a **LoRA adapter** rather than usable weights.
+[QwenTTS-he-1.7B](https://huggingface.co/notmax123/QwenTTS-he-1.7B) ships
+only `adapter_model.safetensors`, whose documented usage needs PyTorch,
+`peft` and the `qwen-tts` Python package. None of that can run in the Rust
+sidecar, so the weights are merged and converted ahead of time:
+
+```console
+# 1. Merge the adapter into the base talker (CPU, ~5 min, needs ~9 GB disk).
+uv run --with torch --with safetensors --with numpy \
+  scripts/merge_qwen_lora.py \
+  --base checkpoints/Qwen3-TTS-12Hz-1.7B-Base \
+  --adapter checkpoints/QwenTTS-he-1.7B \
+  --out merged
+
+# 2. Convert to GGUF with qwentts.cpp, which expects the upstream
+#    directory naming under checkpoints/.
+git clone --recursive https://github.com/ServeurpersoCom/qwentts.cpp
+ln -s "$PWD/merged" qwentts.cpp/checkpoints/Qwen3-TTS-12Hz-1.7B-Base
+cd qwentts.cpp && ./checkpoints.sh tokenizer
+uv run --with numpy --with safetensors --with gguf --with torch python convert.py
+
+# 3. Quantize. F32 is the source of truth; Q4_K_M is what the registry ships.
+cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
+./build/quantize models/qwen-talker-1.7b-base-F32.gguf \
+                 models/qwen-talker-1.7b-base-Q4_K_M.gguf Q4_K_M
+./build/quantize models/qwen-tokenizer-12hz-F32.gguf \
+                 models/qwen-tokenizer-12hz-Q4_K_M.gguf Q4_K_M
+```
+
+The merge is not a plain LoRA fold. Alongside the 231 `lora_A`/`lora_B`
+pairs at scale `alpha / r = 2.0`, the adapter's `modules_to_save` lists 20
+fully retrained tensors — `codec_head`, `text_projection`, and the fifteen
+`code_predictor.lm_head.*` heads — which replace their base counterparts
+outright. Folding only the LoRA pairs produces a model that loads and
+sounds wrong.
+
+Publish the two Q4_K_M GGUFs (about 1.5 GB together) and point
+`QWEN_HE_FILES` at them. Keep the F32 files as the requantization source.
+
+Two constraints worth repeating for any engine of this shape:
+
+- **The text front end is part of the model.** This checkpoint reads
+  stressed IPA, so `renikud-plus.onnx` is in `required_files` and the
+  runtime fails at load time if it is absent, rather than at the first
+  Hebrew request.
+- **Heavy native engines belong behind a Cargo feature.** `qwen` builds
+  qwentts.cpp and GGML from source and links them statically, so the
+  default sidecar build stays fast and unchanged. A dependency's build
+  script cannot add an rpath to the final binary, which is why the
+  linkage is static rather than a shared `libqwen`.
+
 ## Pull request checklist
 
 Open the PR against `main` on GitHub. Title it clearly, for example:

@@ -27,9 +27,13 @@ To add a model, add its manifest to the registry, implement a server `Runtime` a
 
 Step-by-step contribution guide (licenses, hosting, desktop wiring, and PR checklist): [ADDING_MODELS.md](./ADDING_MODELS.md).
 
-## Current runtime
+## Current runtimes
 
-BlueTTS is the currently shipped runtime:
+BlueTTS is the default runtime and the one every release ships enabled.
+QwenTTS Hebrew sits beside it as an opt-in second runtime; selecting one
+never disables the other.
+
+### BlueTTS (default)
 
 - Hebrew, English, Spanish, Italian, and German local synthesis;
 - streaming WAV output;
@@ -39,6 +43,37 @@ BlueTTS is the currently shipped runtime:
 - optional [Phonikud](https://github.com/phonikud/phonikud) vocalization and diacritics controls.
 
 Its bundle is installed in the application data directory under `models/blue-onnx-v2/` and requires the [BlueTTS](https://github.com/maxmelichov/BlueTTS) ONNX pipeline, voice embeddings, and `renikud-plus.onnx`.
+
+### QwenTTS Hebrew (`qwen_he`, opt-in)
+
+[QwenTTS-he-1.7B](https://huggingface.co/notmax123/QwenTTS-he-1.7B) is a
+LoRA adapter over `Qwen/Qwen3-TTS-12Hz-1.7B-Base`, merged into the base
+talker and converted to GGUF. It runs on GGML through
+[qwentts.cpp](https://github.com/ServeurpersoCom/qwentts.cpp), wrapped by
+the `qwentts-rs` crate:
+
+- Hebrew only — the adapter retrained the output heads for Hebrew
+  phonotactics, so the base model's other nine languages are not claimed;
+- streaming output at 24 kHz;
+- voice cloning from a reference recording, and **no** fixed voices: the
+  `voice` field carries a path to a WAV file rather than a name;
+- RenikudPlus is mandatory, not optional. The checkpoint reads *stressed
+  IPA* (`ʃalˈom, mˈa ʃlomχˈa`), never Hebrew script, so the same G2P front
+  end Blue uses supplies its input.
+
+The bundle installs under `models/qwentts-he-1.7b/` and is roughly 1.5 GB:
+a Q4_K_M talker GGUF, the 12 Hz codec GGUF, and `renikud-plus.onnx`.
+
+The engine compiles qwentts.cpp and GGML from source, so it lives behind
+a Cargo feature and is **off by default**:
+
+```console
+cargo build -p mamboblue-server --release --features qwen,metal
+```
+
+Without that feature the sidecar still serves the registry entry, and
+`POST /v1/models/load` answers with a build-specific error rather than
+pretending the runtime is present.
 
 Qwen and Kokoro are not currently shipped runtimes. Historical code and documentation must not be interpreted as available functionality.
 
