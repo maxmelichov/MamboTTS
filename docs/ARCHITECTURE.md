@@ -1,6 +1,6 @@
 # Architecture
 
-MamboTTS is a local-first TTS application for macOS, Windows, and Linux. It has three layers:
+MamboTTS is a local-first TTS application for macOS on Apple Silicon. It has three layers:
 
 ```text
 React + Tauri desktop app

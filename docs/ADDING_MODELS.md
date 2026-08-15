@@ -43,7 +43,7 @@ Your contribution must meet all of these:
 2. **Stable public download URLs** for every file the app will fetch. Hugging Face `resolve/main/...` (or a pinned commit/tag URL) is the usual pattern. Avoid links that require login, paid quotas, or brittle redirects.
 3. **Reproducible bundle layout** — list every required file, expected relative path, and approximate download size.
 4. **Offline use after download** — no phone-home inference API. Optional analytics in the desktop shell do not replace a local model.
-5. **Cross-platform story** — macOS (Apple Silicon at minimum), Windows, and Linux, or an explicit limitation called out in the PR.
+5. **Runs on the shipping target** — macOS on Apple Silicon. Other platforms are not built today; call out any further limitation in the PR.
 6. **Hebrew / multilingual claims must be honest** — set registry capabilities (`hebrew`, `streaming`, `voice_reference`, `fixed_voices`) to match real behavior.
 7. **No license washing** — do not re-host incompatible weights under MamboTTS’s name. If upstream forbids redistribution, do not propose bundling them.
 
@@ -149,7 +149,7 @@ Do not hardcode a one-off marketing card that disagrees with the registry.
 Runtimes are compiled into `mambotts-server` and bundled as a Tauri sidecar. If your engine needs extra shared libraries (ONNX Runtime, espeak data, etc.):
 
 1. Extend [`scripts/pre_build.py`](../scripts/pre_build.py) (and Linux/Windows CI if needed) so those libraries ship beside the sidecar.
-2. Confirm macOS codesigning / Windows/Linux packaging still work. See [BUILDING.md](./BUILDING.md) and `docs/code-signing/`.
+2. Confirm macOS codesigning and notarization still work. See [BUILDING.md](./BUILDING.md) and `docs/code-signing/`.
 
 PRs that cannot ship a signed, offline desktop build will not be merged.
 
@@ -248,7 +248,7 @@ PR description should include:
 - [ ] `POST /v1/models/load` succeeds for the new/updated runtime
 - [ ] Synthesis from the desktop UI (and streaming if claimed)
 - [ ] Advanced phoneme mode behavior verified or documented as unsupported
-- [ ] macOS / Windows / Linux notes (what you tested)
+- [ ] macOS notes (what you tested)
 ```
 
 ### Review expectations

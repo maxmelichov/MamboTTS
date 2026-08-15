@@ -33,8 +33,7 @@
 - Saved voices: Rotem and Roi
 - Supported languages: Hebrew and English
 - Audio preview after creation
-- 💻 Desktop support for `macOS`, `Windows`, and `Linux`
-- 🍎 Optimized desktop builds for Apple Silicon macOS
+- 💻 Desktop support for `macOS` on Apple Silicon
 - Local HTTP API with Swagger docs for tools and automation
 - Agent-ready `/skill` instructions for AI workflows
 

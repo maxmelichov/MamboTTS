@@ -49,7 +49,7 @@ export function DownloadCta() {
         {isMobile ? <Smartphone className="size-3.5" /> : <Monitor className="size-3.5" />}
         <span>
           {isMobile || !isMac
-            ? "macOS only for now. Windows and Linux are coming soon."
+            ? "Requires macOS on Apple Silicon."
             : `${latestRelease.version.includes("v") ? latestRelease.version : "v" + latestRelease.version} for ${platformLabels.macos}.`}
         </span>
       </div>

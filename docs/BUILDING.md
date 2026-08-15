@@ -43,7 +43,7 @@ On macOS, the installer is normally written under:
 src-tauri/target/release/bundle/dmg/
 ```
 
-Open the generated `.dmg`, drag MamboTTS into Applications, and replace the existing copy. If macOS says the app is still running, quit it first. Windows installers and Linux packages are emitted in the corresponding `src-tauri/target/release/bundle/` subdirectories.
+Open the generated `.dmg`, drag MamboTTS into Applications, and replace the existing copy. If macOS says the app is still running, quit it first.
 
 For a faster local reinstallable debug build:
 
