@@ -21,6 +21,9 @@ pub struct QwenRuntime {
     /// Reference audio decoded to the codec rate, cached by source path
     /// so repeated synthesis with one voice decodes the WAV once.
     reference: Option<(PathBuf, Vec<f32>)>,
+    /// Named speakers the loaded talker exposes. Base checkpoints, which
+    /// is what the Hebrew bundle ships, have none.
+    speakers: Vec<String>,
 }
 
 impl QwenRuntime {
@@ -33,6 +36,10 @@ impl QwenRuntime {
         }
         let tts = QwenTts::load(QwenTtsConfig::new(&talker_path, &codec_path))
             .with_context(|| format!("load Qwen talker from {}", talker_path.display()))?;
+        // custom_voice talkers name their speakers; base ones clone from a
+        // recording instead. The mode comes from the GGUF, so the right
+        // meaning for `voice` is whichever the loaded model supports.
+        let speakers = tts.speakers();
         let phonemizer = Phonemizer::with_language(Some(&renikud_path), Language::Hebrew)
             .with_context(|| format!("load RenikudPlus ONNX from {}", renikud_path.display()))?;
 
@@ -47,6 +54,7 @@ impl QwenRuntime {
                 id: 0,
             }],
             reference: None,
+            speakers,
         })
     }
 
@@ -76,7 +84,17 @@ impl QwenRuntime {
         let mut request = SynthesizeRequest::new(ipa);
         // The model card drives generation with language "Auto" and
         // greedy decoding, which an empty language string selects here.
-        request.reference_audio = self.reference_audio(voice)?;
+        if self.speakers.is_empty() {
+            request.reference_audio = self.reference_audio(voice)?;
+        } else if let Some(voice) = voice.map(str::trim).filter(|voice| !voice.is_empty()) {
+            if !self.speakers.iter().any(|speaker| speaker == voice) {
+                bail!(
+                    "unknown speaker `{voice}`; this talker has {}",
+                    self.speakers.join(", ")
+                );
+            }
+            request.speaker = Some(voice.to_owned());
+        }
         Ok(request)
     }
 
@@ -92,10 +110,9 @@ impl Runtime for QwenRuntime {
     }
 
     fn voices(&self) -> Option<Vec<String>> {
-        // Base checkpoints carry no named speakers; the voice is the
+        // Base checkpoints carry no named speakers; the voice is then the
         // reference recording, so the UI must not offer a picker.
-        let speakers = self.tts.speakers();
-        (!speakers.is_empty()).then_some(speakers)
+        (!self.speakers.is_empty()).then(|| self.speakers.clone())
     }
 
     fn sample_rate(&self) -> u32 {

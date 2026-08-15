@@ -48,6 +48,13 @@ fn c_string(value: &str, field: &str) -> Result<CString> {
     CString::new(value).with_context(|| format!("{field} contains an interior NUL byte"))
 }
 
+fn optional_c_string(value: Option<&str>, field: &str) -> Result<Option<CString>> {
+    value
+        .filter(|value| !value.is_empty())
+        .map(|value| c_string(value, field))
+        .transpose()
+}
+
 fn path_string(path: &Path, field: &str) -> Result<CString> {
     let text = path
         .to_str()
@@ -87,6 +94,11 @@ pub struct SynthesizeRequest {
     pub reference_audio: Option<Vec<f32>>,
     /// Transcript of `reference_audio`, which switches cloning to ICL mode.
     pub reference_text: Option<String>,
+    /// Style instruction. Required by voice_design talkers, optional for
+    /// custom_voice, and rejected by base ones.
+    pub instruct: Option<String>,
+    /// Named speaker, for custom_voice talkers only.
+    pub speaker: Option<String>,
     pub seed: i64,
     pub max_new_tokens: i32,
     pub temperature: f32,
@@ -234,12 +246,9 @@ impl QwenTts {
         let language = (!request.language.is_empty())
             .then(|| c_string(&request.language, "language"))
             .transpose()?;
-        let reference_text = request
-            .reference_text
-            .as_deref()
-            .filter(|value| !value.is_empty())
-            .map(|value| c_string(value, "reference_text"))
-            .transpose()?;
+        let reference_text = optional_c_string(request.reference_text.as_deref(), "reference_text")?;
+        let instruct = optional_c_string(request.instruct.as_deref(), "instruct")?;
+        let speaker = optional_c_string(request.speaker.as_deref(), "speaker")?;
 
         let mut state = ChunkState {
             sink: on_chunk,
@@ -265,6 +274,15 @@ impl QwenTts {
             }
             if let Some(reference_text) = reference_text.as_ref() {
                 params.ref_text = reference_text.as_ptr();
+            }
+            // The library enforces which of these the loaded talker accepts
+            // and reports QT_STATUS_MODE_INVALID otherwise, so they are
+            // simply forwarded when present.
+            if let Some(instruct) = instruct.as_ref() {
+                params.instruct = instruct.as_ptr();
+            }
+            if let Some(speaker) = speaker.as_ref() {
+                params.speaker = speaker.as_ptr();
             }
             params.seed = request.seed;
             if request.max_new_tokens > 0 {
