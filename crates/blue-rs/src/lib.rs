@@ -1,4 +1,5 @@
 mod chunking;
+mod npz;
 pub mod handling;
 pub mod phonemize;
 pub mod style;
@@ -86,6 +87,32 @@ pub struct BlueTts {
     vocoder: Session,
     tokenizer: Tokenizer,
     geometry: ModelGeometry,
+    /// v2 baked classifier-free guidance into the vector estimator. v2.5
+    /// dropped that input and ships the unconditional embeddings instead,
+    /// so guidance becomes two runs blended by the caller.
+    guidance: Guidance,
+    /// v2 folded and denormalized the latents inside the vocoder graph.
+    /// v2.5 exports the bare vocoder, so that has to happen here, and it
+    /// is only valid against the stats the checkpoint was normalized with.
+    latent_stats: Option<LatentStats>,
+    vocoder_input: String,
+}
+
+/// How to steer sampling toward the prompt.
+enum Guidance {
+    /// The estimator takes `cfg_scale` directly (v2).
+    Baked,
+    /// Blend a conditional and an unconditional run (v2.5).
+    Uncond { u_text: Array3<f32>, u_ref: Array3<f32> },
+    /// Neither available; sampling runs unguided.
+    None,
+}
+
+/// Latent normalization constants from `stats.npz`.
+struct LatentStats {
+    mean: Vec<f32>,
+    std: Vec<f32>,
+    normalizer_scale: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -110,13 +137,38 @@ impl Default for ModelGeometry {
 impl BlueTts {
     pub fn from_dir(dir: impl AsRef<Path>) -> Result<Self> {
         let dir = dir.as_ref();
+        // Voices here are precomputed styles, so the style-conditioned
+        // duration predictor is the one that applies. v2 shipped only one
+        // predictor and it took the style; v2.5 adds a second, z_ref
+        // conditioned one under the original name, so prefer the explicit
+        // style export whenever it is present.
+        let style_dp = dir.join("duration_predictor_style.onnx");
+        let dp = if style_dp.is_file() {
+            style_dp
+        } else {
+            dir.join("duration_predictor.onnx")
+        };
+
+        let vector_estimator = load_session(dir.join("vector_estimator.onnx"))?;
+        let vocoder = load_session(dir.join("vocoder.onnx"))?;
+        let vocoder_input = vocoder
+            .inputs()
+            .first()
+            .map(|input| input.name().to_owned())
+            .unwrap_or_else(|| "latent".to_owned());
+        let guidance = load_guidance(&vector_estimator, dir.join("uncond.npz"))?;
+        let latent_stats = load_latent_stats(dir.join("stats.npz"))?;
+
         Ok(Self {
-            dp: load_session(dir.join("duration_predictor.onnx"))?,
+            dp: load_session(dp)?,
             text_encoder: load_session(dir.join("text_encoder.onnx"))?,
-            vector_estimator: load_session(dir.join("vector_estimator.onnx"))?,
-            vocoder: load_session(dir.join("vocoder.onnx"))?,
+            vector_estimator,
+            vocoder,
             tokenizer: Tokenizer::from_json(dir.join("vocab.json"))?,
             geometry: load_geometry(dir.join("tts.json"))?,
+            guidance,
+            latent_stats,
+            vocoder_input,
         })
     }
 
@@ -128,6 +180,10 @@ impl BlueTts {
             vocoder: load_session_from_memory(models.vocoder)?,
             tokenizer: Tokenizer::from_json_bytes(models.vocab)?,
             geometry: ModelGeometry::default(),
+            // The embedded-bytes path carries the v2 pipeline only.
+            guidance: Guidance::Baked,
+            latent_stats: None,
+            vocoder_input: "latent".to_owned(),
         })
     }
 
@@ -335,15 +391,19 @@ impl BlueTts {
     ) -> Result<Vec<f32>> {
         let (text_ids, text_mask) = self.tokenizer.encode_batch(&[phonemes], &[&opts.lang])?;
 
-        let dur = self.dp.run(ort::inputs! {
-            "text_ids" => Tensor::from_array(text_ids.clone())?,
-            "style_dp" => Tensor::from_array(style.dp.clone())?,
-            "text_mask" => Tensor::from_array(text_mask.clone())?,
-        })?;
-        let predicted_duration = output_vec_f32(&dur[0])?
-            .first()
-            .copied()
-            .context("duration output was empty")?;
+        // Scoped so the session outputs, which borrow self, are released
+        // before the vocoder call needs self again.
+        let predicted_duration = {
+            let dur = self.dp.run(ort::inputs! {
+                "text_ids" => Tensor::from_array(text_ids.clone())?,
+                "style_dp" => Tensor::from_array(style.dp.clone())?,
+                "text_mask" => Tensor::from_array(text_mask.clone())?,
+            })?;
+            output_vec_f32(&dur[0])?
+                .first()
+                .copied()
+                .context("duration output was empty")?
+        };
         let duration = blend_duration_pace(
             predicted_duration,
             text_mask.sum(),
@@ -354,12 +414,14 @@ impl BlueTts {
             },
         ) / opts.speed.max(1e-6);
 
-        let text_emb = self.text_encoder.run(ort::inputs! {
-            "text_ids" => Tensor::from_array(text_ids)?,
-            "style_ttl" => Tensor::from_array(style.ttl.clone())?,
-            "text_mask" => Tensor::from_array(text_mask.clone())?,
-        })?;
-        let text_emb = output_array3(&text_emb[0])?;
+        let text_emb = {
+            let out = self.text_encoder.run(ort::inputs! {
+                "text_ids" => Tensor::from_array(text_ids)?,
+                "style_ttl" => Tensor::from_array(style.ttl.clone())?,
+                "text_mask" => Tensor::from_array(text_mask.clone())?,
+            })?;
+            output_array3(&out[0])?
+        };
 
         let (mut xt, latent_mask) = sample_noisy_latent(duration, self.geometry, seed);
         let total_step = Array1::from_vec(vec![opts.total_step as f32]);
@@ -367,21 +429,62 @@ impl BlueTts {
 
         for step in 0..opts.total_step {
             let current_step = Array1::from_vec(vec![step as f32]);
-            let out = self.vector_estimator.run(ort::inputs! {
-                "noisy_latent" => Tensor::from_array(xt)?,
-                "text_emb" => Tensor::from_array(text_emb.clone())?,
-                "style_ttl" => Tensor::from_array(style.ttl.clone())?,
-                "latent_mask" => Tensor::from_array(latent_mask.clone())?,
-                "text_mask" => Tensor::from_array(text_mask.clone())?,
-                "current_step" => Tensor::from_array(current_step)?,
-                "total_step" => Tensor::from_array(total_step.clone())?,
-                "cfg_scale" => Tensor::from_array(cfg_scale.clone())?,
-            })?;
-            xt = output_array3(&out[0])?;
+            let cond = match &self.guidance {
+                // v2 steers inside the graph, so one run is the whole step.
+                Guidance::Baked => {
+                    let out = self.vector_estimator.run(ort::inputs! {
+                        "noisy_latent" => Tensor::from_array(xt.clone())?,
+                        "text_emb" => Tensor::from_array(text_emb.clone())?,
+                        "style_ttl" => Tensor::from_array(style.ttl.clone())?,
+                        "latent_mask" => Tensor::from_array(latent_mask.clone())?,
+                        "text_mask" => Tensor::from_array(text_mask.clone())?,
+                        "current_step" => Tensor::from_array(current_step.clone())?,
+                        "total_step" => Tensor::from_array(total_step.clone())?,
+                        "cfg_scale" => Tensor::from_array(cfg_scale.clone())?,
+                    })?;
+                    output_array3(&out[0])?
+                }
+                _ => {
+                    let out = self.vector_estimator.run(ort::inputs! {
+                        "noisy_latent" => Tensor::from_array(xt.clone())?,
+                        "text_emb" => Tensor::from_array(text_emb.clone())?,
+                        "style_ttl" => Tensor::from_array(style.ttl.clone())?,
+                        "latent_mask" => Tensor::from_array(latent_mask.clone())?,
+                        "text_mask" => Tensor::from_array(text_mask.clone())?,
+                        "current_step" => Tensor::from_array(current_step.clone())?,
+                        "total_step" => Tensor::from_array(total_step.clone())?,
+                    })?;
+                    output_array3(&out[0])?
+                }
+            };
+
+            xt = match &self.guidance {
+                Guidance::Uncond { u_text, u_ref } if opts.cfg_scale != 1.0 => {
+                    // The unconditional prompt is a single frame, so its text
+                    // mask is one step rather than the real one.
+                    let out = self.vector_estimator.run(ort::inputs! {
+                        "noisy_latent" => Tensor::from_array(xt.clone())?,
+                        "text_emb" => Tensor::from_array(u_text.clone())?,
+                        "style_ttl" => Tensor::from_array(u_ref.clone())?,
+                        "latent_mask" => Tensor::from_array(latent_mask.clone())?,
+                        "text_mask" => Tensor::from_array(Array3::<f32>::ones((1, 1, 1)))?,
+                        "current_step" => Tensor::from_array(current_step)?,
+                        "total_step" => Tensor::from_array(total_step.clone())?,
+                    })?;
+                    let uncond = output_array3(&out[0])?;
+                    // The graph returns the stepped latent x + v/T, not v.
+                    // Both branches share x and 1/T, so blending the outputs
+                    // is exactly the Euler step on the guided velocity.
+                    &uncond + opts.cfg_scale * (&cond - &uncond)
+                }
+                _ => cond,
+            };
         }
 
+        let latent = self.to_vocoder_input(xt)?;
+        let vocoder_input = self.vocoder_input.clone();
         let wav = self.vocoder.run(ort::inputs! {
-            "latent" => Tensor::from_array(xt)?,
+            vocoder_input.as_str() => Tensor::from_array(latent)?,
         })?;
         let wav = output_array3(&wav[0])?;
         let mut audio: Vec<f32> = wav.iter().copied().collect();
@@ -524,6 +627,96 @@ fn normalize_generated_audio(mut audio: Vec<f32>) -> Vec<f32> {
         }
     }
     audio
+}
+
+impl BlueTts {
+    /// Prepares the sampled latents for whichever vocoder export is loaded.
+    ///
+    /// v2 vocoders take the folded, still-normalized latents straight. v2.5
+    /// exports the bare vocoder, so the caller denormalizes with the
+    /// checkpoint's own stats and interleaves the compression factor back
+    /// into the time axis: `[1, ldim*f, T]` becomes `[1, ldim, f*T]`.
+    fn to_vocoder_input(&self, xt: Array3<f32>) -> Result<Array3<f32>> {
+        let Some(stats) = self.latent_stats.as_ref() else {
+            return Ok(xt);
+        };
+        let (batch, channels, frames) = xt.dim();
+        let ldim = self.geometry.latent_dim;
+        let factor = self.geometry.chunk_compress_factor;
+        if channels != ldim * factor {
+            bail!("latent has {channels} channels, expected {ldim} x {factor}");
+        }
+        if stats.mean.len() != channels || stats.std.len() != channels {
+            bail!(
+                "stats.npz describes {} channels but the latent has {channels}",
+                stats.mean.len()
+            );
+        }
+
+        let mut out = Array3::<f32>::zeros((batch, ldim, factor * frames));
+        for b in 0..batch {
+            for c in 0..ldim {
+                for k in 0..factor {
+                    let channel = c * factor + k;
+                    let mean = stats.mean[channel];
+                    let deviation = stats.std[channel];
+                    for t in 0..frames {
+                        let z = (xt[[b, channel, t]] / stats.normalizer_scale) * deviation + mean;
+                        out[[b, c, t * factor + k]] = z;
+                    }
+                }
+            }
+        }
+        Ok(out)
+    }
+}
+
+/// Picks the guidance strategy the loaded estimator supports.
+fn load_guidance(estimator: &Session, uncond_path: impl AsRef<Path>) -> Result<Guidance> {
+    if estimator.inputs().iter().any(|input| input.name() == "cfg_scale") {
+        return Ok(Guidance::Baked);
+    }
+    let uncond_path = uncond_path.as_ref();
+    if !uncond_path.is_file() {
+        return Ok(Guidance::None);
+    }
+    let arrays = npz::read_npz(uncond_path)?;
+    let (Some(u_text), Some(u_ref)) = (arrays.get("u_text"), arrays.get("u_ref")) else {
+        return Ok(Guidance::None);
+    };
+    Ok(Guidance::Uncond {
+        u_text: to_array3(u_text)?,
+        u_ref: to_array3(u_ref)?,
+    })
+}
+
+fn to_array3(array: &npz::NpyArray) -> Result<Array3<f32>> {
+    match array.shape.as_slice() {
+        [a, b, c] => Ok(Array3::from_shape_vec((*a, *b, *c), array.data.clone())?),
+        other => bail!("expected a 3-D array, found shape {other:?}"),
+    }
+}
+
+/// Latent normalization stats, present only on exports whose vocoder needs
+/// the caller to denormalize.
+fn load_latent_stats(path: impl AsRef<Path>) -> Result<Option<LatentStats>> {
+    let path = path.as_ref();
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let arrays = npz::read_npz(path)?;
+    let (Some(mean), Some(std)) = (arrays.get("mean"), arrays.get("std")) else {
+        bail!("{} has no mean/std", path.display());
+    };
+    Ok(Some(LatentStats {
+        mean: mean.data.clone(),
+        std: std.data.clone(),
+        normalizer_scale: arrays
+            .get("normalizer_scale")
+            .map(|scale| scale.scalar())
+            .transpose()?
+            .unwrap_or(1.0),
+    }))
 }
 
 fn load_geometry(path: impl AsRef<Path>) -> Result<ModelGeometry> {

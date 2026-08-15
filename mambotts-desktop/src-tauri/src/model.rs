@@ -9,8 +9,7 @@ use tokio::io::AsyncWriteExt;
 use crate::analytics;
 use mambotts_registry::runtimes;
 
-const BLUE_MODEL_DIR: &str = "blue-onnx-v2";
-const BLUE_MODEL_BASE_URL: &str = "https://huggingface.co/notmax123/blue-onnx-v2/resolve/main";
+const BLUE_MODEL_BASE_URL: &str = "https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main";
 const QWEN_HE_BASE_URL: &str =
     "https://huggingface.co/notmax123/QwenTTS-he-1.7B-GGUF/resolve/main";
 const PHONIKUD_URL: &str = "https://huggingface.co/Phonikud/phonikud-onnx/resolve/main/phonikud-1.0.int8.onnx";
@@ -166,26 +165,20 @@ pub fn model_bundle_for_runtime(
 
 fn blue_bundle(app: &tauri::AppHandle) -> Result<ModelBundle, String> {
     let source = runtime_source("blue").ok_or_else(|| "missing Blue source".to_string())?;
-    let dir = models_root(app)?.join(BLUE_MODEL_DIR);
+    let dir = models_root(app)?.join(&source.directory);
     let renikud_path = dir.join("renikud-plus.onnx");
     // Drop the old thewh1teagle Renikud file so we never load or re-count it.
     let legacy_renikud = dir.join("renikud.onnx");
     if legacy_renikud.is_file() {
         let _ = std::fs::remove_file(&legacy_renikud);
     }
-    let required = [
-        "duration_predictor.onnx",
-        "text_encoder.onnx",
-        "vector_estimator.onnx",
-        "vocoder.onnx",
-        "vocab.json",
-        "tts.json",
-        "voices/female1.json",
-        "voices/male1.json",
-        "renikud-plus.onnx",
-    ];
     Ok(ModelBundle {
-        installed: required.iter().all(|file| dir.join(file).is_file()),
+        // Follow the manifest rather than a second copy of the file list, so
+        // a bundle change cannot leave the installed check behind.
+        installed: source
+            .files
+            .iter()
+            .all(|file| dir.join(&file.name).is_file()),
         runtime: "blue".to_string(),
         model_path: path_string(&dir),
         codec_path: path_string(&renikud_path),

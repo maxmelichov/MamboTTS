@@ -12,7 +12,16 @@ use blue_rs::{
 
 use super::{Language as RuntimeLanguage, Runtime};
 
-const VOICES: [(&str, &str); 2] = [("Rotem", "female1.json"), ("Roi", "male1.json")];
+/// 2.5 ships one Hebrew speaker (the same voice v2 called Rotem) plus four
+/// LibriTTS English speakers. There is no Hebrew male voice in this bundle,
+/// so v2's `Roi` has no counterpart here.
+const VOICES: [(&str, &str); 5] = [
+    ("Rotem", "female.json"),
+    ("libri_female_1088", "libri_female_1088.json"),
+    ("libri_female_6147", "libri_female_6147.json"),
+    ("libri_male_6209", "libri_male_6209.json"),
+    ("libri_male_8088", "libri_male_8088.json"),
+];
 
 pub struct BlueRuntime {
     tts: BlueTts,
@@ -62,14 +71,10 @@ impl BlueRuntime {
                 .with_context(|| format!("load Blue voice style {}", path.display()))?;
             styles.insert(id.to_owned(), style);
         }
-        // Keep legacy ids working for existing clients.
+        // Keep the legacy id for the voice that still exists.
         styles.insert(
             "female1".to_owned(),
-            VoiceStyle::from_json(voices_dir.join("female1.json"))?,
-        );
-        styles.insert(
-            "male1".to_owned(),
-            VoiceStyle::from_json(voices_dir.join("male1.json"))?,
+            VoiceStyle::from_json(voices_dir.join("female.json"))?,
         );
 
         Ok(Self {
@@ -116,7 +121,6 @@ impl BlueRuntime {
     fn normalize_voice(voice: &str) -> &str {
         match voice.trim() {
             "female1" => "Rotem",
-            "male1" => "Roi",
             other => other,
         }
     }
@@ -198,7 +202,10 @@ impl Runtime for BlueRuntime {
         let (detected_language, language_code) = Self::language_for(text, language)?;
         let voice = Self::normalize_voice(voice.unwrap_or("Rotem"));
         let style = self.styles.get(voice).ok_or_else(|| {
-            anyhow::anyhow!("unknown Blue voice `{voice}`; expected Rotem or Roi")
+            anyhow::anyhow!(
+                "unknown Blue voice `{voice}`; this bundle has {}",
+                VOICES.map(|(id, _)| id).join(", ")
+            )
         })?;
         if detected_language == Language::Hebrew && self.hebrew_g2p_engine == "phonikud" {
             let phonemes = self.phonikud(text, "phonemize")?;
@@ -250,7 +257,10 @@ impl Runtime for BlueRuntime {
         let (_, language_code) = Self::language_for(phonemes, language)?;
         let voice = Self::normalize_voice(voice.unwrap_or("Rotem"));
         let style = self.styles.get(voice).ok_or_else(|| {
-            anyhow::anyhow!("unknown Blue voice `{voice}`; expected Rotem or Roi")
+            anyhow::anyhow!(
+                "unknown Blue voice `{voice}`; this bundle has {}",
+                VOICES.map(|(id, _)| id).join(", ")
+            )
         })?;
         let audio = self.tts.create(
             phonemes,
@@ -281,7 +291,10 @@ impl Runtime for BlueRuntime {
         let (_language, language_code) = Self::language_for(text, language)?;
         let voice = Self::normalize_voice(voice.unwrap_or("Rotem"));
         let style = self.styles.get(voice).ok_or_else(|| {
-            anyhow::anyhow!("unknown Blue voice `{voice}`; expected Rotem or Roi")
+            anyhow::anyhow!(
+                "unknown Blue voice `{voice}`; this bundle has {}",
+                VOICES.map(|(id, _)| id).join(", ")
+            )
         })?;
         let audio = self.tts.synthesize_text(
             &mut self.phonemizer,

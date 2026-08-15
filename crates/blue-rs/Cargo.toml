@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
 anyhow = "1"
 espeak-rs = { git = "https://github.com/thewh1teagle/piper-rs", rev = "616e6823cc29955bb0cf66532637b352b26fa292", package = "espeak-rs" }
 hound = "3.5.1"

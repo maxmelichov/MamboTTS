@@ -42,41 +42,65 @@ pub struct RuntimeManifest {
     pub capabilities: RuntimeCapabilities,
 }
 
-const BLUE_MODEL_BASE_URL: &str = "https://huggingface.co/notmax123/blue-onnx-v2/resolve/main";
+const BLUE_MODEL_BASE_URL: &str = "https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main";
 const RENIKUD_URL: &str = "https://huggingface.co/notmax123/RenikudPlus/resolve/main/model.onnx";
 
 const BLUE_FILES: &[ModelFile] = &[
     ModelFile {
         name: "duration_predictor.onnx",
-        url: "https://huggingface.co/notmax123/blue-onnx-v2/resolve/main/duration_predictor.onnx",
+        url: "https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main/duration_predictor.onnx",
+    },
+    ModelFile {
+        name: "duration_predictor_style.onnx",
+        url: "https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main/duration_predictor_style.onnx",
     },
     ModelFile {
         name: "text_encoder.onnx",
-        url: "https://huggingface.co/notmax123/blue-onnx-v2/resolve/main/text_encoder.onnx",
+        url: "https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main/text_encoder.onnx",
     },
     ModelFile {
         name: "vector_estimator.onnx",
-        url: "https://huggingface.co/notmax123/blue-onnx-v2/resolve/main/vector_estimator.onnx",
+        url: "https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main/vector_estimator.onnx",
     },
     ModelFile {
         name: "vocoder.onnx",
-        url: "https://huggingface.co/notmax123/blue-onnx-v2/resolve/main/vocoder.onnx",
+        url: "https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main/vocoder.onnx",
+    },
+    ModelFile {
+        name: "stats.npz",
+        url: "https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main/stats.npz",
+    },
+    ModelFile {
+        name: "uncond.npz",
+        url: "https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main/uncond.npz",
     },
     ModelFile {
         name: "vocab.json",
-        url: "https://huggingface.co/notmax123/blue-onnx-v2/resolve/main/vocab.json",
+        url: "https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main/vocab.json",
     },
     ModelFile {
         name: "tts.json",
-        url: "https://huggingface.co/notmax123/blue-onnx-v2/resolve/main/tts.json",
+        url: "https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main/tts.json",
     },
     ModelFile {
-        name: "voices/female1.json",
-        url: "https://huggingface.co/notmax123/blue-onnx-v2/resolve/main/voices/female1.json",
+        name: "voices/female.json",
+        url: "https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main/voices/female.json",
     },
     ModelFile {
-        name: "voices/male1.json",
-        url: "https://huggingface.co/notmax123/blue-onnx-v2/resolve/main/voices/male1.json",
+        name: "voices/libri_female_1088.json",
+        url: "https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main/voices/libri_female_1088.json",
+    },
+    ModelFile {
+        name: "voices/libri_female_6147.json",
+        url: "https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main/voices/libri_female_6147.json",
+    },
+    ModelFile {
+        name: "voices/libri_male_6209.json",
+        url: "https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main/voices/libri_male_6209.json",
+    },
+    ModelFile {
+        name: "voices/libri_male_8088.json",
+        url: "https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main/voices/libri_male_8088.json",
     },
     ModelFile {
         name: "renikud-plus.onnx",
@@ -86,23 +110,31 @@ const BLUE_FILES: &[ModelFile] = &[
 
 const BLUE_REQUIRED_FILES: &[&str] = &[
     "duration_predictor.onnx",
+    "duration_predictor_style.onnx",
     "text_encoder.onnx",
     "vector_estimator.onnx",
     "vocoder.onnx",
+    "stats.npz",
+    "uncond.npz",
     "vocab.json",
     "tts.json",
-    "voices/female1.json",
-    "voices/male1.json",
+    "voices/female.json",
+    "voices/libri_female_1088.json",
+    "voices/libri_female_6147.json",
+    "voices/libri_male_6209.json",
+    "voices/libri_male_8088.json",
     "renikud-plus.onnx",
 ];
 
 const BLUE: RuntimeManifest = RuntimeManifest {
     id: DEFAULT_RUNTIME_ID,
     name: "BlueTTS",
-    version: "blue-onnx-v2",
-    size: "~560 MB",
+    version: "bluetts-2.5",
+    size: "~570 MB",
     description: "Fast local speech for Hebrew, English, Spanish, German, and Italian.",
-    directory: "blue-onnx-v2",
+    // A new directory: 2.5 changes the IO contract, so it must not land on
+    // top of a v2 install.
+    directory: "bluetts-2.5",
     install_kind: InstallKind::Files,
     files: BLUE_FILES,
     required_files: BLUE_REQUIRED_FILES,
