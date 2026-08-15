@@ -37,7 +37,7 @@ never disables the other.
 
 - Hebrew, English, Spanish, Italian, and German local synthesis;
 - streaming WAV output;
-- fixed `Rotem` and `Roi` voice styles;
+- fixed `Noa`, `Lily`, `Daniel`, and `Adam` voice styles;
 - no reference-voice cloning;
 - [RenikudPlus](https://github.com/maxmelichov/RenikudPlus) ONNX phonemization for Hebrew, including optional source/target speaker conditioning;
 - optional [Phonikud](https://github.com/phonikud/phonikud) vocalization and diacritics controls.

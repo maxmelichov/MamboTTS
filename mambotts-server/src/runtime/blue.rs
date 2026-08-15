@@ -12,16 +12,25 @@ use blue_rs::{
 
 use super::{Language as RuntimeLanguage, Runtime};
 
-/// 2.5 ships one Hebrew speaker (the same voice v2 called Rotem) plus four
-/// LibriTTS English speakers. There is no Hebrew male voice in this bundle,
-/// so v2's `Roi` has no counterpart here.
-const VOICES: [(&str, &str); 5] = [
-    ("Rotem", "female.json"),
-    ("libri_female_1088", "libri_female_1088.json"),
-    ("libri_female_6147", "libri_female_6147.json"),
-    ("libri_male_6209", "libri_male_6209.json"),
-    ("libri_male_8088", "libri_male_8088.json"),
+/// The 2.5 voice catalog, named to match the reference app. v2's `Rotem`
+/// and `Roi` are both retired: 2.5 ships these four LibriTTS speakers.
+const VOICES: [(&str, &str); 4] = [
+    ("Noa", "libri_female_1088.json"),
+    ("Lily", "libri_female_6147.json"),
+    ("Daniel", "libri_male_6209.json"),
+    ("Adam", "libri_male_8088.json"),
 ];
+
+/// Old ids stay resolvable so a caller that pinned a file stem keeps
+/// landing on the same speaker instead of erroring.
+const VOICE_ALIASES: [(&str, &str); 4] = [
+    ("libri_female_1088", "Noa"),
+    ("libri_female_6147", "Lily"),
+    ("libri_male_6209", "Daniel"),
+    ("libri_male_8088", "Adam"),
+];
+
+const DEFAULT_VOICE: &str = "Noa";
 
 pub struct BlueRuntime {
     tts: BlueTts,
@@ -71,12 +80,6 @@ impl BlueRuntime {
                 .with_context(|| format!("load Blue voice style {}", path.display()))?;
             styles.insert(id.to_owned(), style);
         }
-        // Keep the legacy id for the voice that still exists.
-        styles.insert(
-            "female1".to_owned(),
-            VoiceStyle::from_json(voices_dir.join("female.json"))?,
-        );
-
         Ok(Self {
             tts,
             phonemizer,
@@ -119,10 +122,12 @@ impl BlueRuntime {
     }
 
     fn normalize_voice(voice: &str) -> &str {
-        match voice.trim() {
-            "female1" => "Rotem",
-            other => other,
-        }
+        let voice = voice.trim();
+        VOICE_ALIASES
+            .iter()
+            .find(|(stem, _)| *stem == voice)
+            .map(|(_, name)| *name)
+            .unwrap_or(voice)
     }
 
     fn phonikud(&self, text: &str, mode: &str) -> Result<String> {
@@ -200,7 +205,7 @@ impl Runtime for BlueRuntime {
         on_chunk: &mut dyn FnMut(&[f32], u32) -> Result<()>,
     ) -> Result<Vec<f32>> {
         let (detected_language, language_code) = Self::language_for(text, language)?;
-        let voice = Self::normalize_voice(voice.unwrap_or("Rotem"));
+        let voice = Self::normalize_voice(voice.unwrap_or(DEFAULT_VOICE));
         let style = self.styles.get(voice).ok_or_else(|| {
             anyhow::anyhow!(
                 "unknown Blue voice `{voice}`; this bundle has {}",
@@ -255,7 +260,7 @@ impl Runtime for BlueRuntime {
         on_chunk: &mut dyn FnMut(&[f32], u32) -> Result<()>,
     ) -> Result<Vec<f32>> {
         let (_, language_code) = Self::language_for(phonemes, language)?;
-        let voice = Self::normalize_voice(voice.unwrap_or("Rotem"));
+        let voice = Self::normalize_voice(voice.unwrap_or(DEFAULT_VOICE));
         let style = self.styles.get(voice).ok_or_else(|| {
             anyhow::anyhow!(
                 "unknown Blue voice `{voice}`; this bundle has {}",
@@ -289,7 +294,7 @@ impl Runtime for BlueRuntime {
         language: &str,
     ) -> Result<()> {
         let (_language, language_code) = Self::language_for(text, language)?;
-        let voice = Self::normalize_voice(voice.unwrap_or("Rotem"));
+        let voice = Self::normalize_voice(voice.unwrap_or(DEFAULT_VOICE));
         let style = self.styles.get(voice).ok_or_else(|| {
             anyhow::anyhow!(
                 "unknown Blue voice `{voice}`; this bundle has {}",

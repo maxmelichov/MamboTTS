@@ -68,7 +68,7 @@ curl -sS http://127.0.0.1:8080/v1/audio/speech \
   -d '{
     "input": "שלום, זהו ממו רמבו.",
     "language": "he",
-    "voice": "Rotem",
+    "voice": "Noa",
     "response_format": "wav",
     "stream": false
   }' \

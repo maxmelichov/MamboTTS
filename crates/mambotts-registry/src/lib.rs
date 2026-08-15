@@ -83,10 +83,6 @@ const BLUE_FILES: &[ModelFile] = &[
         url: "https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main/tts.json",
     },
     ModelFile {
-        name: "voices/female.json",
-        url: "https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main/voices/female.json",
-    },
-    ModelFile {
         name: "voices/libri_female_1088.json",
         url: "https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main/voices/libri_female_1088.json",
     },
@@ -118,7 +114,6 @@ const BLUE_REQUIRED_FILES: &[&str] = &[
     "uncond.npz",
     "vocab.json",
     "tts.json",
-    "voices/female.json",
     "voices/libri_female_1088.json",
     "voices/libri_female_6147.json",
     "voices/libri_male_6209.json",

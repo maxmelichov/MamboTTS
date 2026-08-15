@@ -39,7 +39,7 @@ curl -X POST {{base_url}}/v1/phonemize \
 curl -X POST {{base_url}}/v1/audio/speech \
   -H 'Content-Type: application/json' \
   -o speech.wav \
-  -d '{"input":"שלום מממבו רמבו","language":"auto","voice":"Rotem","response_format":"wav","stream":false}'
+  -d '{"input":"שלום מממבו רמבו","language":"auto","voice":"Noa","response_format":"wav","stream":false}'
 ~~~
 
 Useful endpoints for the desktop Phoneme editor:
