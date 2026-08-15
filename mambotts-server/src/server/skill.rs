@@ -1,6 +1,6 @@
 const TEMPLATE: &str = r#"# MamboTTS Local TTS API
 
-You are using MamboTTS, a local BlueTTS HTTP API. The shipped runtime supports Hebrew and English, fixed voices, and streaming WAV output. It does not support voice cloning.
+You are using MamboTTS, a local BlueTTS HTTP API. The shipped runtime supports Hebrew, English, Spanish, German, and Italian, fixed voices, and streaming WAV output. It does not support voice cloning; builds that include the optional QwenTTS Hebrew runtime do.
 
 Hebrew grapheme-to-IPA uses RenikudPlus (`renikud-plus.onnx`) with optional `speaker` / `target_speaker` conditioning (0=unknown, 1=male, 2=female). Phonikud is optional for diacritics when selected.
 

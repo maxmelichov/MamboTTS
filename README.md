@@ -31,7 +31,7 @@
 - Local text-to-speech with BlueTTS
 - Fully offline generation after the model is downloaded
 - Saved voices: Rotem and Roi
-- Supported languages: Hebrew and English
+- Supported languages: Hebrew, English, Spanish, German, and Italian
 - Audio preview after creation
 - 💻 Desktop support for `macOS` on Apple Silicon
 - Local HTTP API with Swagger docs for tools and automation

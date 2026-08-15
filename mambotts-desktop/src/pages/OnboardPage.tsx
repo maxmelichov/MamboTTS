@@ -94,7 +94,7 @@ export function OnboardPage({ bundle, setBundle }: PageProps) {
       name: "BlueTTS",
       version: "blue-onnx-v2",
       size: "~560 MB",
-      description: "Local Hebrew and English speech",
+      description: "Local speech in Hebrew, English, Spanish, German, and Italian",
       files: [],
       directory: "blue-onnx-v2",
       capabilities: { hebrew: true, streaming: true, voice_reference: false, fixed_voices: true },
