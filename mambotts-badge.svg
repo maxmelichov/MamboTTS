@@ -1,0 +1,31 @@
+<svg width="512" height="512" viewBox="0 0 280 280" xmlns="http://www.w3.org/2000/svg">
+  <rect x="0" y="0" width="280" height="280" rx="24" fill="#FFD23F"/>
+  <g transform="translate(140,128)">
+    <g fill="#2B1F0E" opacity="0.85">
+      <path d="M0 -102 L8 -78 L-8 -78 Z"/>
+      <path d="M97 -32 L74 -22 L79 -38 Z"/>
+      <path d="M97 32 L79 38 L74 22 Z"/>
+      <path d="M0 102 L-8 78 L8 78 Z"/>
+      <path d="M-97 32 L-74 22 L-79 38 Z"/>
+      <path d="M-97 -32 L-79 -38 L-74 -22 Z"/>
+    </g>
+    <g transform="rotate(-5)">
+      <circle cx="4" cy="6" r="66" fill="#C79A10"/>
+      <circle cx="0" cy="0" r="66" fill="#33270F" stroke="#F5F0E8" stroke-width="4"/>
+      <circle cx="0" cy="0" r="52" fill="none" stroke="#5C4A1F" stroke-width="1.5"/>
+      <circle cx="0" cy="0" r="44" fill="none" stroke="#5C4A1F" stroke-width="1.5"/>
+      <path d="M-46 -33 A57 57 0 0 1 -10 -56" stroke="#F5F0E8" stroke-width="3" fill="none" stroke-linecap="round" opacity="0.8"/>
+      <circle cx="0" cy="0" r="34" fill="#F5F0E8"/>
+      <circle cx="0" cy="0" r="34" fill="none" stroke="#D8CFC0" stroke-width="2"/>
+      <text x="0" y="8" text-anchor="middle" font-family="'Arial Rounded MT Bold','Nunito','Segoe UI',Arial,sans-serif" font-size="21" font-weight="700" fill="#33270F">MT</text>
+    </g>
+    <g transform="translate(72,-84)">
+      <path d="M0 0 Q26 4 30 34" stroke="#2B1F0E" stroke-width="4" fill="none" stroke-linecap="round"/>
+      <circle cx="0" cy="0" r="7" fill="#2B1F0E"/>
+      <rect x="24" y="32" width="12" height="16" rx="3" fill="#2B1F0E" transform="rotate(18 30 40)"/>
+    </g>
+    <circle cx="-76" cy="56" r="4" fill="#FF6B35"/>
+    <circle cx="-58" cy="-70" r="5" fill="#4ECDC4"/>
+  </g>
+  <text x="140" y="262" text-anchor="middle" font-family="'Arial Rounded MT Bold','Nunito','Segoe UI',Arial,sans-serif" font-size="19" font-weight="700" fill="#2B1F0E">MamboTTS</text>
+</svg>

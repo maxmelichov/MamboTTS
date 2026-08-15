@@ -1,20 +1,20 @@
 # Architecture
 
-MamboBlue is a local-first TTS application for macOS, Windows, and Linux. It has three layers:
+MamboTTS is a local-first TTS application for macOS, Windows, and Linux. It has three layers:
 
 ```text
 React + Tauri desktop app
         ↓ local HTTP
-mamboblue-server sidecar
+mambotts-server sidecar
         ↓ Runtime trait
 TTS runtime crates and downloaded model bundles
 ```
 
-The desktop never loads a native TTS runtime itself. It starts `mamboblue-server` as a sidecar, waits for its ready signal, and calls its local HTTP API.
+The desktop never loads a native TTS runtime itself. It starts `mambotts-server` as a sidecar, waits for its ready signal, and calls its local HTTP API.
 
 ## Runtime registry
 
-`crates/mamboblue-registry` is the source of truth for all model metadata. A runtime manifest declares:
+`crates/mambotts-registry` is the source of truth for all model metadata. A runtime manifest declares:
 
 - its stable ID, display name, version, size, and install directory;
 - model files and download URLs;
@@ -68,7 +68,7 @@ The engine compiles qwentts.cpp and GGML from source, so it lives behind
 a Cargo feature and is **off by default**:
 
 ```console
-cargo build -p mamboblue-server --release --features qwen,metal
+cargo build -p mambotts-server --release --features qwen,metal
 ```
 
 Without that feature the sidecar still serves the registry entry, and
@@ -90,6 +90,6 @@ The streaming frame format is `[kind: u8][length: u32 big-endian][payload]`: kin
 
 ## Packaging
 
-`scripts/pre_build.py` builds the sidecar for Tauri's target triple and places it in `mamboblue-desktop/src-tauri/binaries/`. It also stages ONNX Runtime libraries beside the sidecar and configures their platform loader paths. Tauri then bundles that sidecar and its native libraries into the desktop installer.
+`scripts/pre_build.py` builds the sidecar for Tauri's target triple and places it in `mambotts-desktop/src-tauri/binaries/`. It also stages ONNX Runtime libraries beside the sidecar and configures their platform loader paths. Tauri then bundles that sidecar and its native libraries into the desktop installer.
 
 Dynamic native plugins are intentionally not used. They make code-signing, ABI compatibility, and bundled dependency resolution unsafe across three operating systems. Runtimes are compiled into a versioned sidecar; model assets remain independently downloadable.

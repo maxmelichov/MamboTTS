@@ -8,7 +8,7 @@
 Windows code signing via remote YubiKey sign server.
 
 Called by Tauri's custom signCommand for each binary.
-Whitelists only MamboBlue desktop executables/installers, skips everything else.
+Whitelists only MamboTTS desktop executables/installers, skips everything else.
 
 Required env vars:
   SIGN_ENABLED       - set to "true" to actually sign (default: dry run)
@@ -42,9 +42,9 @@ import httpx
 # Whitelist patterns - only these get signed. Keep this narrow because remote
 # signing services and hardware tokens can be rate/interaction constrained.
 SIGN_PATTERNS = [
-    "mamboblue.exe",
-    "mamboblue*setup*.exe",
-    "mamboblue-server*.exe",
+    "mambotts.exe",
+    "mambotts*setup*.exe",
+    "mambotts-server*.exe",
 ]
 
 

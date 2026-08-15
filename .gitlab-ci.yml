@@ -1,4 +1,4 @@
-# Build MamboBlue desktop installers on GitLab.
+# Build MamboTTS desktop installers on GitLab.
 # Run from CI/CD → Pipelines → Run pipeline (web), or manually on main.
 # After jobs finish, download artifacts and upload to GitHub Releases.
 
@@ -26,7 +26,7 @@ windows:desktop:
     key: windows-desktop-v2
     paths:
       - target/
-      - mamboblue-desktop/node_modules/
+      - mambotts-desktop/node_modules/
     policy: pull-push
   script:
     - |
@@ -64,13 +64,13 @@ windows:desktop:
       Write-Host "PATH=$env:Path"
       Write-Host "LIBCLANG_PATH=$env:LIBCLANG_PATH"
       Get-Command pnpm, uv, rustc, cmake | Format-Table Name, Source
-      pnpm --dir mamboblue-desktop install --frozen-lockfile
+      pnpm --dir mambotts-desktop install --frozen-lockfile
       uv run scripts/pre_build.py --target x86_64-pc-windows-msvc
       # Build installers separately so NSIS can still archive if MSI fails.
-      pnpm --dir mamboblue-desktop exec tauri build --target x86_64-pc-windows-msvc --bundles nsis
-      pnpm --dir mamboblue-desktop exec tauri build --target x86_64-pc-windows-msvc --bundles msi
+      pnpm --dir mambotts-desktop exec tauri build --target x86_64-pc-windows-msvc --bundles nsis
+      pnpm --dir mambotts-desktop exec tauri build --target x86_64-pc-windows-msvc --bundles msi
   artifacts:
-    name: "mamboblue-windows-$CI_COMMIT_SHORT_SHA"
+    name: "mambotts-windows-$CI_COMMIT_SHORT_SHA"
     when: always
     paths:
       - target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
@@ -96,7 +96,7 @@ linux:desktop:
     key: linux-desktop
     paths:
       - target/
-      - mamboblue-desktop/node_modules/
+      - mambotts-desktop/node_modules/
     policy: pull-push
   before_script:
     - apt-get update -qq
@@ -116,11 +116,11 @@ linux:desktop:
     - rustup target add x86_64-unknown-linux-gnu
   script:
     - export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
-    - pnpm --dir mamboblue-desktop install --frozen-lockfile
+    - pnpm --dir mambotts-desktop install --frozen-lockfile
     - uv run scripts/pre_build.py --target x86_64-unknown-linux-gnu
-    - pnpm --dir mamboblue-desktop exec tauri build --target x86_64-unknown-linux-gnu --bundles deb,rpm
+    - pnpm --dir mambotts-desktop exec tauri build --target x86_64-unknown-linux-gnu --bundles deb,rpm
   artifacts:
-    name: "mamboblue-linux-$CI_COMMIT_SHORT_SHA"
+    name: "mambotts-linux-$CI_COMMIT_SHORT_SHA"
     paths:
       - target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
       - target/x86_64-unknown-linux-gnu/release/bundle/rpm/*.rpm

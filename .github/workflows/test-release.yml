@@ -6,12 +6,12 @@ on:
       server_tag:
         description: "Server release tag to test"
         required: true
-        default: "mamboblue-server-v0.1.0"
+        default: "mambotts-server-v0.1.0"
         type: string
       kokoro_bundle_url:
         description: "Kokoro model bundle URL"
         required: true
-        default: "https://huggingface.co/maxmelichov/MamboBlue-kokoro-models/resolve/main/mamboblue-kokoro-models-kokoro-v1.0.tar.gz"
+        default: "https://huggingface.co/maxmelichov/MamboTTS-kokoro-models/resolve/main/mambotts-kokoro-models-kokoro-v1.0.tar.gz"
         type: string
 
 permissions:
@@ -25,23 +25,23 @@ jobs:
         include:
           - runner: ubuntu-24.04
             platform: linux-x64
-            archive: mamboblue-server-linux-x64.tar.gz
-            binary: mamboblue-server
+            archive: mambotts-server-linux-x64.tar.gz
+            binary: mambotts-server
             shell: bash
           - runner: ubuntu-24.04-arm
             platform: linux-arm64
-            archive: mamboblue-server-linux-arm64.tar.gz
-            binary: mamboblue-server
+            archive: mambotts-server-linux-arm64.tar.gz
+            binary: mambotts-server
             shell: bash
           - runner: macos-14
             platform: darwin-arm64
-            archive: mamboblue-server-darwin-arm64.tar.gz
-            binary: mamboblue-server
+            archive: mambotts-server-darwin-arm64.tar.gz
+            binary: mambotts-server
             shell: bash
           - runner: windows-latest
             platform: windows-x64
-            archive: mamboblue-server-windows-x64.zip
-            binary: mamboblue-server.exe
+            archive: mambotts-server-windows-x64.zip
+            binary: mambotts-server.exe
             shell: pwsh
     runs-on: ${{ matrix.runner }}
     env:
@@ -69,7 +69,7 @@ jobs:
           curl -L --retry 3 --retry-delay 5 -o dist/kokoro.tar.gz "${KOKORO_BUNDLE_URL}"
           tar -xzf "dist/${ARCHIVE}" -C dist
           tar -xzf dist/kokoro.tar.gz -C models
-          chmod +x "dist/mamboblue-server-${{ matrix.platform }}/${BINARY}"
+          chmod +x "dist/mambotts-server-${{ matrix.platform }}/${BINARY}"
           find dist -maxdepth 2 -type f -print
           find models -maxdepth 3 -type f -print
 
@@ -93,8 +93,8 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          RUNNER="dist/mamboblue-server-${{ matrix.platform }}/${BINARY}"
-          MODEL_DIR="models/mamboblue-kokoro-models-kokoro-v1.0"
+          RUNNER="dist/mambotts-server-${{ matrix.platform }}/${BINARY}"
+          MODEL_DIR="models/mambotts-kokoro-models-kokoro-v1.0"
           "${RUNNER}" --version
           "${RUNNER}" serve --host 127.0.0.1 --port 51972 > server.log 2>&1 &
           RUNNER_PID=$!
@@ -109,15 +109,15 @@ jobs:
           curl -fsS -X POST http://127.0.0.1:51972/v1/audio/speech \
             -H 'Content-Type: application/json' \
             -o out.wav \
-            -d '{"input":"Hello world from MamboBlue Kokoro.","voice":"af_heart","language":"en-us","response_format":"wav"}'
+            -d '{"input":"Hello world from MamboTTS Kokoro.","voice":"af_heart","language":"en-us","response_format":"wav"}'
           test -s out.wav
 
       - name: Kokoro HTTP smoke test (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $runner = "dist\mamboblue-server-${{ matrix.platform }}\$env:BINARY"
-          $modelDir = "models\mamboblue-kokoro-models-kokoro-v1.0"
+          $runner = "dist\mambotts-server-${{ matrix.platform }}\$env:BINARY"
+          $modelDir = "models\mambotts-kokoro-models-kokoro-v1.0"
           & $runner --version
           $proc = Start-Process -FilePath $runner -ArgumentList @("serve", "--host", "127.0.0.1", "--port", "51972") -RedirectStandardOutput server.log -RedirectStandardError server.err -PassThru
           try {
@@ -140,7 +140,7 @@ jobs:
               }
             } | ConvertTo-Json -Depth 4 -Compress
             curl.exe -fsS -X POST http://127.0.0.1:51972/v1/models/load -H "Content-Type: application/json" -d $load
-            curl.exe -fsS -X POST http://127.0.0.1:51972/v1/audio/speech -H "Content-Type: application/json" -o out.wav -d '{"input":"Hello world from MamboBlue Kokoro.","voice":"af_heart","language":"en-us","response_format":"wav"}'
+            curl.exe -fsS -X POST http://127.0.0.1:51972/v1/audio/speech -H "Content-Type: application/json" -o out.wav -d '{"input":"Hello world from MamboTTS Kokoro.","voice":"af_heart","language":"en-us","response_format":"wav"}'
             if (!(Test-Path out.wav) -or ((Get-Item out.wav).Length -eq 0)) { throw "out.wav was not created" }
           } finally {
             Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue

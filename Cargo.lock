@@ -2862,12 +2862,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "mamboblue"
+name = "mambotts"
 version = "1.0.9"
 dependencies = [
  "flate2",
  "futures-util",
- "mamboblue-registry",
+ "mambotts-registry",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -2886,7 +2886,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mamboblue-registry"
+name = "mambotts-registry"
 version = "0.1.0"
 dependencies = [
  "serde",
@@ -2895,7 +2895,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mamboblue-server"
+name = "mambotts-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -2904,7 +2904,7 @@ dependencies = [
  "clap",
  "futures-util",
  "hound",
- "mamboblue-registry",
+ "mambotts-registry",
  "qwentts-rs",
  "serde",
  "serde_json",

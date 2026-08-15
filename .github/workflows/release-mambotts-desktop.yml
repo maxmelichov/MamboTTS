@@ -1,0 +1,133 @@
+name: release mambotts-desktop
+
+on:
+  workflow_dispatch:
+    inputs:
+      sign-windows:
+        description: "Sign Windows binaries via remote YubiKey"
+        type: boolean
+        default: false
+      sign-macos:
+        description: "Sign and notarize macOS binaries with Apple Developer ID"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  publish-tauri:
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-14
+            args: --target aarch64-apple-darwin
+            target: aarch64-apple-darwin
+          - platform: ubuntu-24.04
+            args: --target x86_64-unknown-linux-gnu
+            target: x86_64-unknown-linux-gnu
+          - platform: windows-latest
+            args: --target x86_64-pc-windows-msvc
+            target: x86_64-pc-windows-msvc
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.1
+          package_json_file: mambotts-desktop/package.json
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: mambotts-desktop/pnpm-lock.yaml
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: mambotts-desktop/src-tauri
+
+      - name: Install Linux Tauri dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            cmake \
+            git \
+            clang \
+            libclang-dev \
+            libasound2-dev
+
+      - name: Install frontend dependencies
+        run: pnpm install
+        working-directory: mambotts-desktop
+
+      - name: Build server sidecar
+        run: uv run scripts/pre_build.py --target ${{ matrix.target }}
+
+      - name: Build Tauri release
+        if: runner.os != 'macOS' || !inputs.sign-macos
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APTABASE_APP_KEY: ${{ secrets.APTABASE_APP_KEY }}
+          APTABASE_BASE_URL: ${{ secrets.APTABASE_BASE_URL }}
+          SIGN_ENABLED: ${{ runner.os == 'Windows' && inputs.sign-windows && 'true' || 'false' }}
+          SIGN_TUNNEL_URL: ${{ secrets.SIGN_TUNNEL_URL }}
+          SIGN_TUNNEL_SECRET: ${{ secrets.SIGN_TUNNEL_SECRET }}
+          ORT_STRATEGY: system
+          ORT_PREFER_DYNAMIC_LINK: "1"
+          ORT_LIB_LOCATION: ${{ runner.os == 'macOS' && 'crates/blue-rs/.ort/onnxruntime-osx-arm64-1.23.2' || runner.os == 'Windows' && 'crates/blue-rs/.ort/onnxruntime-win-x64-1.23.2' || 'crates/blue-rs/.ort/onnxruntime-linux-x64-1.23.2' }}
+        with:
+          tagName: mambotts-desktop-v__VERSION__
+          releaseName: MamboTTS Desktop v__VERSION__
+          releaseBody: "MamboTTS desktop builds for macOS, Windows, and Linux."
+          prerelease: false
+          projectPath: mambotts-desktop
+          tauriScript: pnpm exec tauri
+          args: ${{ matrix.args }}
+
+      - name: Build signed macOS Tauri release
+        if: runner.os == 'macOS' && inputs.sign-macos
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APTABASE_APP_KEY: ${{ secrets.APTABASE_APP_KEY }}
+          APTABASE_BASE_URL: ${{ secrets.APTABASE_BASE_URL }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          ORT_STRATEGY: system
+          ORT_PREFER_DYNAMIC_LINK: "1"
+          ORT_LIB_LOCATION: crates/blue-rs/.ort/onnxruntime-osx-arm64-1.23.2
+        with:
+          tagName: mambotts-desktop-v__VERSION__
+          releaseName: MamboTTS Desktop v__VERSION__
+          releaseBody: "MamboTTS desktop builds for macOS, Windows, and Linux."
+          prerelease: false
+          projectPath: mambotts-desktop
+          tauriScript: pnpm exec tauri
+          args: ${{ matrix.args }}

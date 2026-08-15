@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - "mamboblue-website/**"
+      - "mambotts-website/**"
       - "scripts/website_links.py"
   workflow_dispatch:
 
@@ -29,14 +29,14 @@ jobs:
         uses: pnpm/action-setup@v4
         with:
           version: 10.15.1
-          package_json_file: mamboblue-website/package.json
+          package_json_file: mambotts-website/package.json
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: mamboblue-website/pnpm-lock.yaml
+          cache-dependency-path: mambotts-website/pnpm-lock.yaml
 
       - name: Setup uv
         uses: astral-sh/setup-uv@v5
@@ -46,7 +46,7 @@ jobs:
           pnpm install
           pnpm update:downloads
           pnpm build
-        working-directory: mamboblue-website
+        working-directory: mambotts-website
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -56,7 +56,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: mamboblue-website/dist
+          path: mambotts-website/dist
 
   deploy:
     needs: build

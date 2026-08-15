@@ -22,11 +22,11 @@ def package(
     if not binary.exists():
         raise FileNotFoundError(binary)
 
-    with tempfile.TemporaryDirectory(prefix="mamboblue-server-package-") as td:
+    with tempfile.TemporaryDirectory(prefix="mambotts-server-package-") as td:
         stage = Path(td) / out.stem.removesuffix(".tar")
         stage.mkdir(parents=True)
 
-        target_name = "mamboblue-server.exe" if platform.startswith("windows-") else "mamboblue-server"
+        target_name = "mambotts-server.exe" if platform.startswith("windows-") else "mambotts-server"
         target = stage / target_name
         shutil.copy2(binary, target)
         target.chmod(0o755)
@@ -34,7 +34,7 @@ def package(
         (stage / "metadata.json").write_text(
             json.dumps(
                 {
-                    "component": "mamboblue-server",
+                    "component": "mambotts-server",
                     "version": version,
                     "platform": platform,
                 },
@@ -58,7 +58,7 @@ def package(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Package a mamboblue server release archive")
+    parser = argparse.ArgumentParser(description="Package a mambotts server release archive")
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--platform", required=True)

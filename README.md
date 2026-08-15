@@ -1,18 +1,18 @@
 <p align="center">
-  <a target="_blank" href="https://maxmelichov.github.io/MamboBlue/">
-    <img width="240" alt="MamboBlue logo" src="./mamboblue-desktop/src/assets/mamboblue-logo.png" />
+  <a target="_blank" href="https://maxmelichov.github.io/MamboRambo-site/">
+    <img width="240" alt="MamboTTS logo" src="./mambotts-desktop/src/assets/mambotts-logo.png" />
   </a>
 </p>
 
-<h1 align="center">MamboBlue</h1>
+<h1 align="center">MamboTTS</h1>
 
 <p align="center">
   <strong>Native offline BlueTTS for desktop</strong>
 </p>
 
 <p align="center">
-  <a target="_blank" href="https://maxmelichov.github.io/MamboBlue/">
-    🔗 Download MamboBlue
+  <a target="_blank" href="https://maxmelichov.github.io/MamboRambo-site/">
+    🔗 Download MamboTTS
   </a>
   &nbsp; | &nbsp; Give it a Star ⭐ | &nbsp;
   <a target="_blank" href="https://github.com/sponsors/maxmelichov">Support the project 🤝</a>
@@ -21,8 +21,8 @@
 <hr />
 
 <p align="center">
-  <a target="_blank" href="https://maxmelichov.github.io/MamboBlue/">
-    <img width="800" alt="MamboBlue desktop screenshot" src="./docs/images/mamboblue-studio.png" />
+  <a target="_blank" href="https://maxmelichov.github.io/MamboRambo-site/">
+    <img width="800" alt="MamboTTS desktop screenshot" src="./docs/images/mambotts-studio.png" />
   </a>
 </p>
 
@@ -40,7 +40,7 @@
 
 ## Models and phonemizers
 
-MamboBlue builds on these open-source projects:
+MamboTTS builds on these open-source projects:
 
 - [BlueTTS](https://github.com/maxmelichov/BlueTTS) — local ONNX text-to-speech runtime, shipped by default
 - [QwenTTS-he-1.7B](https://huggingface.co/notmax123/QwenTTS-he-1.7B) — Hebrew LoRA over [Qwen3-TTS](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base), an opt-in runtime with reference-audio voice cloning
@@ -54,7 +54,7 @@ See [BUILDING.md](docs/BUILDING.md).
 
 ## Adding models
 
-Want to ship another open-source TTS model or voice bundle with MamboBlue? See [docs/ADDING_MODELS.md](docs/ADDING_MODELS.md) for licensing, registry wiring, server/desktop steps, and the PR checklist.
+Want to ship another open-source TTS model or voice bundle with MamboTTS? See [docs/ADDING_MODELS.md](docs/ADDING_MODELS.md) for licensing, registry wiring, server/desktop steps, and the PR checklist.
 
 ---
 

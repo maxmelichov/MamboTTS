@@ -1,0 +1,12 @@
+{
+  "bundle": {
+    "externalBin": ["binaries/mambotts-server"],
+    "resources": [
+      "binaries/libonnxruntime*.dylib"
+    ],
+    "macOS": {
+      "entitlements": "entitlements.plist",
+      "hardenedRuntime": true
+    }
+  }
+}

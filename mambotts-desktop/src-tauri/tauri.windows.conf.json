@@ -1,0 +1,8 @@
+{
+  "bundle": {
+    "externalBin": ["binaries/mambotts-server"],
+    "resources": [
+      "binaries/onnxruntime*.dll"
+    ]
+  }
+}

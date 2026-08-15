@@ -9,9 +9,9 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RELEASES_PATH = ROOT / "mamboblue-website" / "src" / "lib" / "latest_release.json"
-REPO = "maxmelichov/MamboBlue"
-DESKTOP_TAG_RE = re.compile(r"^mamboblue-desktop-v")
+RELEASES_PATH = ROOT / "mambotts-website" / "src" / "lib" / "latest_release.json"
+REPO = "maxmelichov/MamboTTS"
+DESKTOP_TAG_RE = re.compile(r"^mambotts-desktop-v")
 
 
 def gh_json(*args: str) -> Any:
@@ -47,7 +47,7 @@ def latest_desktop_release() -> dict[str, Any]:
                 "--json",
                 "tagName,publishedAt,isPrerelease,url,assets",
             )
-    raise RuntimeError("No mamboblue-desktop-v* release found")
+    raise RuntimeError("No mambotts-desktop-v* release found")
 
 
 def asset_info(name: str) -> dict[str, str] | None:

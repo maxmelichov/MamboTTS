@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Build MamboBlue desktop Linux bundles inside Docker (x86_64).
+# Build MamboTTS desktop Linux bundles inside Docker (x86_64).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-IMAGE="mamboblue-linux-builder:22.04"
+IMAGE="mambotts-linux-builder:22.04"
 
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
   echo "Building cached Linux builder image (one-time)..."
@@ -13,7 +13,7 @@ fi
 docker run --rm \
   --platform linux/amd64 \
   -v "$ROOT:/workspace" \
-  -v mamboblue-desktop-node-modules:/workspace/mamboblue-desktop/node_modules \
+  -v mambotts-desktop-node-modules:/workspace/mambotts-desktop/node_modules \
   -w /workspace \
   -e CI=true \
   -e ORT_STRATEGY=system \
@@ -30,8 +30,8 @@ docker run --rm \
     export PATH="/root/.cargo/bin:/root/.local/bin:$PATH"
     export CI=true
     uv run scripts/pre_build.py --target x86_64-unknown-linux-gnu
-    pnpm --dir mamboblue-desktop install --frozen-lockfile
-    pnpm --dir mamboblue-desktop exec tauri build --target x86_64-unknown-linux-gnu
+    pnpm --dir mambotts-desktop install --frozen-lockfile
+    pnpm --dir mambotts-desktop exec tauri build --target x86_64-unknown-linux-gnu
   '
 
 echo "Linux bundles:"

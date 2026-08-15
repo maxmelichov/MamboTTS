@@ -129,7 +129,7 @@ def install_ort_libs(target: str, dest_dir: Path) -> list[Path]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Build the MamboBlue server sidecar for Tauri builds")
+    parser = argparse.ArgumentParser(description="Build the MamboTTS server sidecar for Tauri builds")
     parser.add_argument("--target", help="Rust target triple, for example x86_64-unknown-linux-gnu")
     parser.add_argument("--profile", default="release", choices=["debug", "release"])
     args = parser.parse_args()
@@ -142,17 +142,17 @@ def main() -> int:
     is_windows = target.endswith("windows-msvc")
     is_macos = "apple-darwin" in target
     is_linux = "linux" in target
-    sidecar_name = f"mamboblue-server-{target}" + (".exe" if is_windows else "")
-    dest_dir = ROOT / "mamboblue-desktop" / "src-tauri" / "binaries"
+    sidecar_name = f"mambotts-server-{target}" + (".exe" if is_windows else "")
+    dest_dir = ROOT / "mambotts-desktop" / "src-tauri" / "binaries"
     dest = dest_dir / sidecar_name
     profile_args = [] if args.profile == "debug" else ["--release"]
     cmd = [
         "cargo",
         "build",
         "-p",
-        "mamboblue-server",
+        "mambotts-server",
         "--bin",
-        "mamboblue-server",
+        "mambotts-server",
         "--target",
         target,
         *profile_args,
@@ -180,7 +180,7 @@ def main() -> int:
         build_env["RUSTFLAGS"] = f"{build_env.get('RUSTFLAGS', '')} -C link-arg=advapi32.lib".strip()
     subprocess.run(cmd, cwd=ROOT, env=build_env, check=True)
 
-    source = ROOT / "target" / target / args.profile / ("mamboblue-server.exe" if is_windows else "mamboblue-server")
+    source = ROOT / "target" / target / args.profile / ("mambotts-server.exe" if is_windows else "mambotts-server")
     if not source.exists():
         raise FileNotFoundError(source)
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -210,7 +210,7 @@ def main() -> int:
         else:
             print("warning: patchelf not found; packaged Linux sidecar may fail to load ONNX Runtime")
 
-    print(f"Installed MamboBlue server sidecar at {dest}")
+    print(f"Installed MamboTTS server sidecar at {dest}")
     return 0
 
 
