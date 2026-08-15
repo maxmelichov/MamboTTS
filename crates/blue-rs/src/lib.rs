@@ -51,6 +51,7 @@ impl Default for SynthesisOptions {
     }
 }
 
+#[derive(Clone)]
 pub struct VoiceStyle {
     ttl: Array3<f32>,
     dp: Array3<f32>,

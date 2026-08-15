@@ -12,25 +12,7 @@ use blue_rs::{
 
 use super::{Language as RuntimeLanguage, Runtime};
 
-/// The 2.5 voice catalog, named to match the reference app. v2's `Rotem`
-/// and `Roi` are both retired: 2.5 ships these four LibriTTS speakers.
-const VOICES: [(&str, &str); 4] = [
-    ("Noa", "libri_female_1088.json"),
-    ("Lily", "libri_female_6147.json"),
-    ("Daniel", "libri_male_6209.json"),
-    ("Adam", "libri_male_8088.json"),
-];
-
-/// Old ids stay resolvable so a caller that pinned a file stem keeps
-/// landing on the same speaker instead of erroring.
-const VOICE_ALIASES: [(&str, &str); 4] = [
-    ("libri_female_1088", "Noa"),
-    ("libri_female_6147", "Lily"),
-    ("libri_male_6209", "Daniel"),
-    ("libri_male_8088", "Adam"),
-];
-
-const DEFAULT_VOICE: &str = "Noa";
+use mambotts_registry::{BLUE_VOICES, DEFAULT_BLUE_VOICE, blue_voice_name};
 
 pub struct BlueRuntime {
     tts: BlueTts,
@@ -74,11 +56,11 @@ impl BlueRuntime {
 
         let voices_dir = model_dir.join("voices");
         let mut styles = HashMap::new();
-        for (id, file) in VOICES {
-            let path = voices_dir.join(file);
+        for voice in BLUE_VOICES {
+            let path = voices_dir.join(voice.file);
             let style = VoiceStyle::from_json(&path)
                 .with_context(|| format!("load Blue voice style {}", path.display()))?;
-            styles.insert(id.to_owned(), style);
+            styles.insert(voice.name.to_owned(), style);
         }
         Ok(Self {
             tts,
@@ -122,12 +104,7 @@ impl BlueRuntime {
     }
 
     fn normalize_voice(voice: &str) -> &str {
-        let voice = voice.trim();
-        VOICE_ALIASES
-            .iter()
-            .find(|(stem, _)| *stem == voice)
-            .map(|(_, name)| *name)
-            .unwrap_or(voice)
+        blue_voice_name(voice)
     }
 
     fn phonikud(&self, text: &str, mode: &str) -> Result<String> {
@@ -171,7 +148,7 @@ impl Runtime for BlueRuntime {
     }
 
     fn voices(&self) -> Option<Vec<String>> {
-        Some(VOICES.into_iter().map(|(id, _)| id.to_owned()).collect())
+        Some(BLUE_VOICES.iter().map(|voice| voice.name.to_owned()).collect())
     }
 
     fn sample_rate(&self) -> u32 {
@@ -205,11 +182,15 @@ impl Runtime for BlueRuntime {
         on_chunk: &mut dyn FnMut(&[f32], u32) -> Result<()>,
     ) -> Result<Vec<f32>> {
         let (detected_language, language_code) = Self::language_for(text, language)?;
-        let voice = Self::normalize_voice(voice.unwrap_or(DEFAULT_VOICE));
+        let voice = Self::normalize_voice(voice.unwrap_or(DEFAULT_BLUE_VOICE));
         let style = self.styles.get(voice).ok_or_else(|| {
             anyhow::anyhow!(
                 "unknown Blue voice `{voice}`; this bundle has {}",
-                VOICES.map(|(id, _)| id).join(", ")
+                BLUE_VOICES
+                    .iter()
+                    .map(|voice| voice.name)
+                    .collect::<Vec<_>>()
+                    .join(", ")
             )
         })?;
         if detected_language == Language::Hebrew && self.hebrew_g2p_engine == "phonikud" {
@@ -260,11 +241,15 @@ impl Runtime for BlueRuntime {
         on_chunk: &mut dyn FnMut(&[f32], u32) -> Result<()>,
     ) -> Result<Vec<f32>> {
         let (_, language_code) = Self::language_for(phonemes, language)?;
-        let voice = Self::normalize_voice(voice.unwrap_or(DEFAULT_VOICE));
+        let voice = Self::normalize_voice(voice.unwrap_or(DEFAULT_BLUE_VOICE));
         let style = self.styles.get(voice).ok_or_else(|| {
             anyhow::anyhow!(
                 "unknown Blue voice `{voice}`; this bundle has {}",
-                VOICES.map(|(id, _)| id).join(", ")
+                BLUE_VOICES
+                    .iter()
+                    .map(|voice| voice.name)
+                    .collect::<Vec<_>>()
+                    .join(", ")
             )
         })?;
         let audio = self.tts.create(
@@ -294,11 +279,15 @@ impl Runtime for BlueRuntime {
         language: &str,
     ) -> Result<()> {
         let (_language, language_code) = Self::language_for(text, language)?;
-        let voice = Self::normalize_voice(voice.unwrap_or(DEFAULT_VOICE));
+        let voice = Self::normalize_voice(voice.unwrap_or(DEFAULT_BLUE_VOICE));
         let style = self.styles.get(voice).ok_or_else(|| {
             anyhow::anyhow!(
                 "unknown Blue voice `{voice}`; this bundle has {}",
-                VOICES.map(|(id, _)| id).join(", ")
+                BLUE_VOICES
+                    .iter()
+                    .map(|voice| voice.name)
+                    .collect::<Vec<_>>()
+                    .join(", ")
             )
         })?;
         let audio = self.tts.synthesize_text(

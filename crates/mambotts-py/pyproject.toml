@@ -1,0 +1,17 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "mambotts"
+version = "0.1.0"
+description = "Python bindings for the MamboTTS BlueTTS engine"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+
+[project.optional-dependencies]
+server = ["fastapi>=0.115", "uvicorn>=0.32"]
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+module-name = "mambotts"

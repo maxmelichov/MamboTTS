@@ -47,6 +47,12 @@ MamboTTS builds on these open-source projects:
 - [RenikudPlus](https://github.com/maxmelichov/RenikudPlus) — Hebrew grapheme-to-IPA conversion with speaker conditioning
 - [Phonikud](https://github.com/phonikud/phonikud) — Hebrew vocalization and diacritics-aware IPA tools
 
+## Python
+
+`crates/mambotts-py` exposes the same engine to Python and ships a FastAPI
+server over it, so the HTTP API is available on platforms the desktop app
+no longer builds for. See its [README](crates/mambotts-py/README.md).
+
 ## Build
 
 See [BUILDING.md](docs/BUILDING.md).

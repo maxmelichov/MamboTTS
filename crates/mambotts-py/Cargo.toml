@@ -1,0 +1,14 @@
+[package]
+name = "mambotts-py"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "mambotts"
+crate-type = ["cdylib"]
+
+[dependencies]
+anyhow = "1.0.100"
+blue-rs = { path = "../blue-rs" }
+mambotts-registry = { path = "../mambotts-registry" }
+pyo3 = { version = "0.29", features = ["extension-module", "anyhow", "abi3-py39"] }

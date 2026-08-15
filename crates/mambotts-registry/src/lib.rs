@@ -141,6 +141,36 @@ const BLUE: RuntimeManifest = RuntimeManifest {
     },
 };
 
+/// A selectable BlueTTS voice: the name users see and the style file it
+/// loads from the bundle's `voices/` directory.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+pub struct BlueVoice {
+    pub name: &'static str,
+    pub file: &'static str,
+}
+
+/// The 2.5 voice catalog. Both the server runtime and the Python
+/// bindings read this, so there is exactly one list.
+pub const BLUE_VOICES: &[BlueVoice] = &[
+    BlueVoice { name: "Noa", file: "libri_female_1088.json" },
+    BlueVoice { name: "Lily", file: "libri_female_6147.json" },
+    BlueVoice { name: "Daniel", file: "libri_male_6209.json" },
+    BlueVoice { name: "Adam", file: "libri_male_8088.json" },
+];
+
+pub const DEFAULT_BLUE_VOICE: &str = "Noa";
+
+/// Resolves an old file stem to its display name, so a caller that
+/// pinned `libri_male_6209` keeps landing on Daniel.
+pub fn blue_voice_name(id: &str) -> &str {
+    let id = id.trim();
+    BLUE_VOICES
+        .iter()
+        .find(|voice| voice.file.strip_suffix(".json") == Some(id))
+        .map(|voice| voice.name)
+        .unwrap_or(id)
+}
+
 /// Stable id for the Qwen3-TTS Hebrew runtime.
 pub const QWEN_HE_RUNTIME_ID: &str = "qwen_he";
 
@@ -244,6 +274,27 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn every_catalog_voice_is_in_the_bundle() {
+        let blue = runtime(DEFAULT_RUNTIME_ID).expect("Blue manifest");
+        for voice in BLUE_VOICES {
+            let path = format!("voices/{}", voice.file);
+            assert!(
+                blue.required_files.contains(&path.as_str()),
+                "{} is offered but never downloaded",
+                voice.name
+            );
+        }
+        assert!(BLUE_VOICES.iter().any(|v| v.name == DEFAULT_BLUE_VOICE));
+    }
+
+    #[test]
+    fn old_voice_stems_still_resolve() {
+        assert_eq!(blue_voice_name("libri_male_6209"), "Daniel");
+        assert_eq!(blue_voice_name("Noa"), "Noa");
+        assert_eq!(blue_voice_name("nonsense"), "nonsense");
     }
 
     #[test]
