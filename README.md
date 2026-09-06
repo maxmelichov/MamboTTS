@@ -33,7 +33,7 @@
 - Saved voices: Noa, Lily, Daniel, and Adam
 - Supported languages: Hebrew, English, Spanish, German, and Italian
 - Audio preview after creation
-- 💻 Desktop support for `macOS` on Apple Silicon
+- 💻 Desktop builds for `macOS` on Apple Silicon, `Linux` on x86_64, and `Windows` on x86_64
 - Local HTTP API with Swagger docs for tools and automation
 - Agent-ready `/skill` instructions for AI workflows
 
@@ -49,7 +49,7 @@ MamboTTS builds on these open-source projects:
 
 `crates/mambotts-py` exposes the same engine to Python and ships a FastAPI
 server over it, so the HTTP API is available on platforms the desktop app
-no longer builds for. See its [README](crates/mambotts-py/README.md).
+does not ship an installer for. See its [README](crates/mambotts-py/README.md).
 
 ## Build
 

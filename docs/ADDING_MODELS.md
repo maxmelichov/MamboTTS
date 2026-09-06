@@ -43,7 +43,7 @@ Your contribution must meet all of these:
 2. **Stable public download URLs** for every file the app will fetch. Hugging Face `resolve/main/...` (or a pinned commit/tag URL) is the usual pattern. Avoid links that require login, paid quotas, or brittle redirects.
 3. **Reproducible bundle layout** — list every required file, expected relative path, and approximate download size.
 4. **Offline use after download** — no phone-home inference API. Optional analytics in the desktop shell do not replace a local model.
-5. **Runs on the shipping target** — macOS on Apple Silicon. Other platforms are not built today; call out any further limitation in the PR.
+5. **Runs on the shipping targets**: macOS on Apple Silicon, Linux on x86_64, and Windows on x86_64. Build the sidecar for every one of them before you open the PR, and say in the PR if your model cannot run on one of them.
 6. **Hebrew / multilingual claims must be honest** — set registry capabilities (`hebrew`, `streaming`, `voice_reference`, `fixed_voices`) to match real behavior.
 7. **No license washing** — do not re-host incompatible weights under MamboTTS’s name. If upstream forbids redistribution, do not propose bundling them.
 
