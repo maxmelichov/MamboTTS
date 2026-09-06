@@ -1,6 +1,6 @@
 # MamboTTS Agent Skill
 
-MamboTTS is a local, offline TTS server. The current shipped engine is [BlueTTS](https://github.com/maxmelichov/BlueTTS), with Hebrew, English, Spanish, Italian, and German support, streamed WAV output, and fixed voice styles. Hebrew IPA uses [RenikudPlus](https://github.com/maxmelichov/RenikudPlus), with optional [Phonikud](https://github.com/phonikud/phonikud) diacritics controls. It does not support voice cloning or Qwen model files.
+MamboTTS is a local, offline TTS server. The current shipped engine is [BlueTTS](https://github.com/maxmelichov/BlueTTS), with Hebrew, English, Spanish, Italian, and German support, streamed WAV output, and fixed voice styles. Hebrew IPA uses [RenikudPlus](https://github.com/maxmelichov/RenikudPlus), with optional [Phonikud](https://github.com/phonikud/phonikud) diacritics controls. It does not support voice cloning.
 
 ## Start the server
 

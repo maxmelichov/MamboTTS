@@ -10,8 +10,6 @@ use crate::analytics;
 use mambotts_registry::runtimes;
 
 const BLUE_MODEL_BASE_URL: &str = "https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main";
-const QWEN_HE_BASE_URL: &str =
-    "https://huggingface.co/notmax123/QwenTTS-he-1.7B-GGUF/resolve/main";
 const PHONIKUD_URL: &str = "https://huggingface.co/Phonikud/phonikud-onnx/resolve/main/phonikud-1.0.int8.onnx";
 
 #[derive(Debug, Clone, Serialize)]
@@ -20,8 +18,8 @@ pub struct ModelBundle {
     pub runtime: String,
     pub model_path: String,
     pub codec_path: String,
-    /// Hebrew G2P model. Both runtimes need it: the checkpoints consume
-    /// IPA, not Hebrew script.
+    /// Hebrew G2P model. BlueTTS consumes IPA rather than Hebrew script,
+    /// so this is not optional.
     pub renikud_path: String,
     pub voices_path: Option<String>,
     pub espeak_data_path: Option<String>,
@@ -141,7 +139,7 @@ async fn download_model_bundle_inner(
     runtime: String,
 ) -> Result<ModelBundle, String> {
     match runtime.as_str() {
-        "blue" | mambotts_registry::QWEN_HE_RUNTIME_ID => {
+        "blue" => {
             return download_runtime_bundle(app, &runtime).await;
         }
         other => return Err(format!("unsupported runtime `{other}`")),
@@ -158,7 +156,6 @@ pub fn model_bundle_for_runtime(
 ) -> Result<ModelBundle, String> {
     match runtime {
         "blue" => blue_bundle(app),
-        mambotts_registry::QWEN_HE_RUNTIME_ID => qwen_bundle(app),
         other => Err(format!("unsupported runtime `{other}`")),
     }
 }
@@ -198,31 +195,6 @@ fn phonikud_bundle(app: &tauri::AppHandle) -> Result<PhonikudBundle, String> {
     Ok(PhonikudBundle {
         installed: path.is_file(),
         path: path_string(&path),
-    })
-}
-
-fn qwen_bundle(app: &tauri::AppHandle) -> Result<ModelBundle, String> {
-    let source = runtime_source(mambotts_registry::QWEN_HE_RUNTIME_ID)
-        .ok_or_else(|| "missing QwenTTS source".to_string())?;
-    let dir = models_root(app)?.join(&source.directory);
-    // model_path is the talker GGUF and codec_path the audio codec, but
-    // Hebrew also needs RenikudPlus because the checkpoint reads IPA.
-    let talker_path = dir.join("qwen-talker-1.7b-base-Q4_K_M.gguf");
-    let codec_path = dir.join("qwen-tokenizer-12hz-Q4_K_M.gguf");
-    let renikud_path = dir.join("renikud-plus.onnx");
-    Ok(ModelBundle {
-        installed: [&talker_path, &codec_path, &renikud_path]
-            .iter()
-            .all(|file| file.is_file()),
-        runtime: mambotts_registry::QWEN_HE_RUNTIME_ID.to_string(),
-        model_path: path_string(&talker_path),
-        codec_path: path_string(&codec_path),
-        renikud_path: path_string(&renikud_path),
-        voices_path: None,
-        espeak_data_path: None,
-        model_dir: path_string(&dir),
-        version: source.version,
-        url: QWEN_HE_BASE_URL.to_string(),
     })
 }
 

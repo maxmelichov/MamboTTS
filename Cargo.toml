@@ -4,11 +4,9 @@ members = [
     "mambotts-server",
     "crates/espeak-rs",
     "crates/espeak-rs-sys",
-    "crates/ggml-rs-sys",
     "crates/blue-rs",
     "crates/renikud-plus-rs",
     "crates/mambotts-registry",
-    "crates/qwentts-rs",
     "crates/mambotts-py",
 ]
 resolver = "2"
