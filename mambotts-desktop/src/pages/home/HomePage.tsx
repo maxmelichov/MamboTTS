@@ -87,7 +87,13 @@ export function HomePage({ bundle, setBundle, studio, setStudio, advancedMode, h
         if (supportedLanguages.length) nextStudio.languages = supportedLanguages;
         try {
           const voiceIds = await invoke<string[]>("get_voices");
-          if (voiceIds.length) nextStudio.blueVoiceIds = voiceIds;
+          if (voiceIds.length) {
+            nextStudio.blueVoiceIds = voiceIds;
+            // The loaded bundle owns the catalog. A voice held over from an
+            // older bundle has to give way, or synthesis fails on a name the
+            // engine has never heard of.
+            if (!voiceIds.includes(blueVoice)) nextStudio.blueVoice = voiceIds[0];
+          }
         } catch {
           // Voice IDs improve the picker, but language loading should still succeed without them.
         }
@@ -169,11 +175,18 @@ export function HomePage({ bundle, setBundle, studio, setStudio, advancedMode, h
       const nextStudio: Partial<StudioState> = { languages: supportedLanguages.length ? supportedLanguages : ["auto"] };
       try {
         const voiceIds = await invoke<string[]>("get_voices");
-        if (voiceIds.length) nextStudio.blueVoiceIds = voiceIds;
+        if (voiceIds.length) {
+          nextStudio.blueVoiceIds = voiceIds;
+          if (!voiceIds.includes(blueVoice)) nextStudio.blueVoice = voiceIds[0];
+        }
       } catch {
         // Keep synthesis usable even if voice listing is unavailable.
       }
       updateStudio(nextStudio);
+      // State from updateStudio is not readable until the next render, so the
+      // reconciled voice has to come from nextStudio the same way the language
+      // below does.
+      const synthesisVoice = nextStudio.blueVoice ?? blueVoice;
       const selectedLanguage = supportedLanguages.includes(language) ? language : "auto";
       if (selectedLanguage !== language) updateStudio({ language: "auto" });
       const synthesisLanguage = advancedMode && phonemes.trim() && selectedLanguage === "auto"
@@ -184,7 +197,7 @@ export function HomePage({ bundle, setBundle, studio, setStudio, advancedMode, h
       const output = await invoke<string>("synthesize", {
         request: {
           input,
-          voice: blueVoice,
+          voice: synthesisVoice || undefined,
           language: synthesisLanguage,
           input_is_phonemes: advancedMode && Boolean(phonemes.trim()),
         },

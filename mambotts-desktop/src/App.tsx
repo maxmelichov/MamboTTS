@@ -27,7 +27,9 @@ function App() {
     referencePath: "",
     languages: ["auto"],
     language: "auto",
-    blueVoice: "Rotem",
+    // Left empty on purpose. The catalog arrives with the loaded bundle, and
+    // the server falls back to its own default when no voice is sent.
+    blueVoice: "",
     blueVoiceIds: [],
     speaker: 0,
     targetSpeaker: 0,

@@ -2,11 +2,13 @@ import { AudioLines, ChevronRight, Languages, UserRound } from "lucide-react";
 
 import { Button, Card, Eyebrow } from "../../components/ui";
 
+// Decoration only. The bundle decides which voices exist, so anything not
+// listed here still renders from its own name rather than disappearing.
 const voiceLabels: Record<string, { name: string; detail: string }> = {
-  Rotem: { name: "Rotem", detail: "Clear feminine BlueTTS voice" },
-  Roi: { name: "Roi", detail: "Clear masculine BlueTTS voice" },
-  female1: { name: "Rotem", detail: "Clear feminine BlueTTS voice" },
-  male1: { name: "Roi", detail: "Clear masculine BlueTTS voice" },
+  Noa: { name: "Noa", detail: "Clear feminine BlueTTS voice" },
+  Lily: { name: "Lily", detail: "Bright feminine BlueTTS voice" },
+  Daniel: { name: "Daniel", detail: "Clear masculine BlueTTS voice" },
+  Adam: { name: "Adam", detail: "Warm masculine BlueTTS voice" },
 };
 
 const languageLabels: Record<string, string> = {
@@ -45,7 +47,9 @@ export function VoiceSettings({
   setSpeaker: (speaker: number) => void;
   setTargetSpeaker: (speaker: number) => void;
 }) {
-  const voices = blueVoiceIds.length ? blueVoiceIds : ["Rotem", "Roi"];
+  // Never invent a catalog. Naming a voice the loaded bundle does not have is
+  // what produced "unknown Blue voice `Rotem`" after the voices were renamed.
+  const voices = blueVoiceIds;
 
   return (
     <Card className="space-y-8 border-none p-6 shadow-xl">
@@ -86,7 +90,7 @@ export function VoiceSettings({
           <Languages className="h-4 w-4 text-secondary opacity-40" />
           <Eyebrow className="mb-0">Hebrew speaker context</Eyebrow>
         </div>
-        <p className="text-xs text-secondary/55">RenikudPlus uses these hints when choosing Hebrew IPA. They affect pronunciation, not the generated voice; use Rotem or Roi above to change the voice.</p>
+        <p className="text-xs text-secondary/55">RenikudPlus uses these hints when choosing Hebrew IPA. They affect pronunciation, not the generated voice; use the voice buttons above to change the voice.</p>
         <div className="grid grid-cols-2 gap-2">
           {[
             ["Source", speaker, setSpeaker],
