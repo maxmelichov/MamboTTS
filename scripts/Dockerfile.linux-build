@@ -5,8 +5,11 @@ ENV PATH=/root/.cargo/bin:/root/.local/bin:$PATH
 ENV APPIMAGE_EXTRACT_AND_RUN=1
 ENV NO_STRIP=true
 
+# qemu-user-static is only used when this image runs under emulation, where
+# the static-pie linuxdeploy AppImage plugin cannot be executed directly.
 RUN apt-get update -qq && apt-get install -y -qq \
     build-essential cmake git curl wget file patchelf ca-certificates \
+    qemu-user-static \
     libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
     libssl-dev libgtk-3-dev libxdo-dev clang libclang-dev libasound2-dev \
     pkg-config xdg-utils \

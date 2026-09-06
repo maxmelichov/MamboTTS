@@ -29,6 +29,38 @@ docker run --rm \
     set -euo pipefail
     export PATH="/root/.cargo/bin:/root/.local/bin:$PATH"
     export CI=true
+
+    # Tauri fetches linuxdeploy and its AppImage plugin into this cache the
+    # first time it bundles an AppImage, and it reuses whatever is already
+    # there. The plugin ships as a static-pie executable, which Rosetta cannot
+    # run, so on an Apple Silicon Mac the AppImage step dies with an opaque
+    # "subprocess failed" from linuxdeploy. Seed the cache ourselves and, when
+    # the plugin turns out not to be executable here, put a wrapper in its
+    # place that runs it under qemu-user instead. On a native x86_64 host the
+    # plugin runs directly and the wrapper is never written.
+    # The real plugin has to live outside the cache directory, because
+    # linuxdeploy treats every "linuxdeploy-plugin-*" file it finds there as a
+    # plugin and tries to execute it while it scans.
+    cache="$HOME/.cache/tauri"
+    plugin="$cache/linuxdeploy-plugin-appimage.AppImage"
+    real="$HOME/.cache/mambotts/appimage-plugin"
+    mkdir -p "$cache" "$(dirname "$real")"
+    if [ ! -x "$real" ]; then
+      curl -fsSL -o "$real" https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage
+      chmod +x "$real"
+    fi
+    if "$real" --plugin-api-version >/dev/null 2>&1; then
+      cp "$real" "$plugin"
+    else
+      echo "linuxdeploy AppImage plugin is not directly executable here; running it under qemu-user"
+      if ! command -v qemu-x86_64-static >/dev/null 2>&1; then
+        apt-get update -qq
+        apt-get install -y -qq qemu-user-static
+      fi
+      printf "#!/bin/bash\nexec /usr/bin/qemu-x86_64-static %s \"\$@\"\n" "$real" > "$plugin"
+    fi
+    chmod +x "$plugin"
+
     uv run scripts/pre_build.py --target x86_64-unknown-linux-gnu
     pnpm --dir mambotts-desktop install --frozen-lockfile
     pnpm --dir mambotts-desktop exec tauri build --target x86_64-unknown-linux-gnu

@@ -22,7 +22,14 @@ pub fn resolve_runner_binary(app: &tauri::AppHandle) -> Result<PathBuf, String> 
 
     #[cfg(target_os = "linux")]
     {
+        // The Debian package puts the sidecar next to the shell in /usr/bin and
+        // its ONNX Runtime resources under /usr/lib/MamboTTS, so the lookups
+        // above normally win. These stay as a fallback for hand-rolled installs
+        // that drop the payload somewhere else, and they cover both the
+        // product-name and lowercase directory spellings.
         for base in [
+            "/usr/lib/MamboTTS",
+            "/usr/lib/MamboTTS/binaries",
             "/usr/lib/mambotts",
             "/usr/lib/mambotts/binaries",
             "/opt/mambotts",

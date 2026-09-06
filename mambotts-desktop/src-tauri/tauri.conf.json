@@ -41,9 +41,6 @@
     ],
     "externalBin": [
       "binaries/mambotts-server"
-    ],
-    "resources": {
-      "src-tauri/binaries/libonnxruntime.1.23.2.dylib": "libonnxruntime.1.23.2.dylib"
-    }
+    ]
   }
 }

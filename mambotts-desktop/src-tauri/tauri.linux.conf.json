@@ -2,7 +2,7 @@
   "bundle": {
     "externalBin": ["binaries/mambotts-server"],
     "resources": [
-      "binaries/libonnxruntime.so*"
+      "binaries/libonnxruntime*.so*"
     ]
   }
 }

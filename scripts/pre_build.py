@@ -68,6 +68,22 @@ def detect_host_target() -> str | None:
     return HOST_TRIPLE_MAP.get((platform.system(), platform.machine()))
 
 
+def cargo_target_dir() -> Path:
+    """Where Cargo will drop build artifacts for this workspace.
+
+    Espeak-ng compiles its phoneme data with fixed 180 byte path buffers, so a
+    deep checkout path can break the build with a truncated "Failed to open"
+    error. The documented way out is to point CARGO_TARGET_DIR somewhere short,
+    which means we have to look for the built sidecar there rather than
+    assuming `<repo>/target`.
+    """
+    for key in ("CARGO_TARGET_DIR", "CARGO_BUILD_TARGET_DIR"):
+        value = os.environ.get(key)
+        if value:
+            return Path(value).expanduser().resolve()
+    return ROOT / "target"
+
+
 def download_ort(target: str) -> Path:
     if target not in ORT_PACKAGES:
         raise KeyError(f"no ONNX Runtime package mapping for target {target}")
@@ -132,6 +148,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Build the MamboTTS server sidecar for Tauri builds")
     parser.add_argument("--target", help="Rust target triple, for example x86_64-unknown-linux-gnu")
     parser.add_argument("--profile", default="release", choices=["debug", "release"])
+    parser.add_argument(
+        "--use-xwin",
+        action="store_true",
+        help="force `cargo xwin build` for the Windows MSVC target instead of plain `cargo build`",
+    )
     args = parser.parse_args()
 
     target = args.target or detect_host_target()
@@ -142,12 +163,25 @@ def main() -> int:
     is_windows = target.endswith("windows-msvc")
     is_macos = "apple-darwin" in target
     is_linux = "linux" in target
+    # A Windows MSVC target needs the MSVC linker and the Windows SDK import
+    # libraries. On Windows itself cargo finds those through the Visual Studio
+    # install, so plain `cargo build` is correct. Anywhere else we have to go
+    # through cargo-xwin, which downloads the SDK and links with lld-link.
+    cross_to_windows = is_windows and platform.system() != "Windows"
+    use_xwin = args.use_xwin or cross_to_windows
+    if use_xwin and not shutil.which("cargo-xwin"):
+        raise SystemExit(
+            "cargo-xwin is required to build the Windows sidecar from "
+            f"{platform.system()}. Install it with `cargo install cargo-xwin` "
+            "and make sure llvm (lld-link) is available."
+        )
     sidecar_name = f"mambotts-server-{target}" + (".exe" if is_windows else "")
     dest_dir = ROOT / "mambotts-desktop" / "src-tauri" / "binaries"
     dest = dest_dir / sidecar_name
     profile_args = [] if args.profile == "debug" else ["--release"]
     cmd = [
         "cargo",
+        *(["xwin"] if use_xwin else []),
         "build",
         "-p",
         "mambotts-server",
@@ -166,7 +200,10 @@ def main() -> int:
     build_env["ORT_LIB_LOCATION"] = str(lib_dir if lib_dir.exists() else ort_root)
     build_env["ORT_PREFER_DYNAMIC_LINK"] = "1"
     if lib_dir.exists():
-        path_key = "PATH" if is_windows else "LD_LIBRARY_PATH" if is_linux else "DYLD_LIBRARY_PATH"
+        # This variable only matters for build scripts and linker helpers that
+        # run on this machine, so it follows the host rather than the target.
+        host = platform.system()
+        path_key = "PATH" if host == "Windows" else "DYLD_LIBRARY_PATH" if host == "Darwin" else "LD_LIBRARY_PATH"
         current = build_env.get(path_key, "")
         build_env[path_key] = f"{lib_dir}{os.pathsep}{current}" if current else str(lib_dir)
         library_path = build_env.get("LIBRARY_PATH", "")
@@ -180,7 +217,7 @@ def main() -> int:
         build_env["RUSTFLAGS"] = f"{build_env.get('RUSTFLAGS', '')} -C link-arg=advapi32.lib".strip()
     subprocess.run(cmd, cwd=ROOT, env=build_env, check=True)
 
-    source = ROOT / "target" / target / args.profile / ("mambotts-server.exe" if is_windows else "mambotts-server")
+    source = cargo_target_dir() / target / args.profile / ("mambotts-server.exe" if is_windows else "mambotts-server")
     if not source.exists():
         raise FileNotFoundError(source)
     dest_dir.mkdir(parents=True, exist_ok=True)
