@@ -222,7 +222,7 @@ async fn streaming_wav_response(server: SharedServer, body: SpeechBody) -> Respo
                 // delay playback because every chunk was already sent above.
                 match wav_bytes(&audio, sample_rate) {
                     Ok(wav) => {
-                        let _ = tx.blocking_send(Ok(frame(2, wav)));
+                        send_final_wav(&tx, wav);
                     }
                     Err(err) => {
                         let _ = tx.blocking_send(Ok(frame(3, err.to_string().into_bytes())));
@@ -247,6 +247,40 @@ async fn streaming_wav_response(server: SharedServer, body: SpeechBody) -> Respo
         .headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     response
+}
+
+/// How much of the finished recording travels in one frame.
+///
+/// The final frame carries the whole normalised recording, so on a long text
+/// it runs to hundreds of megabytes. Sent whole it forces both ends to hold the
+/// entire recording in memory at once and overruns any sane frame ceiling the
+/// client sets, which loses the result after all the synthesis work is already
+/// paid for. Slicing it lets a recording of any length through on a bounded
+/// buffer at each end.
+const FINAL_SLICE_BYTES: usize = 8 * 1024 * 1024;
+
+/// Send the finished recording as bounded slices.
+///
+/// Every slice but the last is a continuation for the client to append. The
+/// last one is what marks the audio complete, so a stream that stops early is
+/// never mistaken for a finished file.
+fn send_final_wav(tx: &tokio::sync::mpsc::Sender<Result<Bytes, std::io::Error>>, wav: Vec<u8>) {
+    let mut offset = 0usize;
+    loop {
+        let end = (offset + FINAL_SLICE_BYTES).min(wav.len());
+        let last = end >= wav.len();
+        let kind = if last { 2 } else { 4 };
+        if tx
+            .blocking_send(Ok(frame(kind, wav[offset..end].to_vec())))
+            .is_err()
+        {
+            return;
+        }
+        offset = end;
+        if last {
+            return;
+        }
+    }
 }
 
 fn frame(kind: u8, payload: Vec<u8>) -> Bytes {

@@ -237,6 +237,7 @@ async fn stream_speech_response(
     let mut stream = response.bytes_stream();
     let mut pending = Vec::<u8>::new();
     let mut chunk_index = 0usize;
+    let mut final_started = false;
     let mut complete = false;
 
     while let Some(next) = stream.next().await {
@@ -278,13 +279,13 @@ async fn stream_speech_response(
                     app.emit("synthesis-chunk", &path)
                         .map_err(|err| format!("failed to emit streamed audio chunk: {err}"))?;
                 }
-                2 => {
-                    tokio::fs::write(output_path, payload)
-                        .await
-                        .map_err(|err| {
-                            format!("failed to write final audio {output_path}: {err}")
-                        })?;
-                    complete = true;
+                // The finished recording arrives in slices so neither side has
+                // to hold a long one in memory as a single frame. Kind 4 is a
+                // continuation; kind 2 is the last slice and the only thing
+                // that marks the file complete.
+                2 | 4 => {
+                    write_final_audio(output_path, &payload, &mut final_started).await?;
+                    complete = kind == 2;
                 }
                 3 => {
                     return Err(String::from_utf8_lossy(&payload).into_owned());
@@ -313,4 +314,28 @@ fn chunk_output_path(output_path: &str, index: usize) -> String {
         .as_os_str()
         .to_string_lossy()
         .into_owned()
+}
+
+/// Write one slice of the finished recording, replacing the file on the first
+/// slice and appending afterwards.
+async fn write_final_audio(
+    output_path: &str,
+    payload: &[u8],
+    started: &mut bool,
+) -> Result<(), String> {
+    use tokio::io::AsyncWriteExt;
+
+    let mut file = tokio::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(!*started)
+        .append(*started)
+        .open(output_path)
+        .await
+        .map_err(|err| format!("failed to open final audio {output_path}: {err}"))?;
+    file.write_all(payload)
+        .await
+        .map_err(|err| format!("failed to write final audio {output_path}: {err}"))?;
+    *started = true;
+    Ok(())
 }
