@@ -1,6 +1,6 @@
 [package]
 name = "mambotts"
-version = "1.0.9"
+version = "1.2.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"

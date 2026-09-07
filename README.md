@@ -107,8 +107,9 @@ MamboTTS builds on these open-source projects:
 ## Python
 
 `crates/mambotts-py` exposes the same engine to Python and ships a FastAPI
-server over it, so the HTTP API is available on platforms the desktop app
-does not ship an installer for. See its [README](crates/mambotts-py/README.md).
+server over it, so the HTTP API is available on the platforms the desktop app
+does not ship an installer for, such as Intel macOS and Arm Linux. See its
+[README](crates/mambotts-py/README.md).
 
 ## Build
 
@@ -120,4 +121,4 @@ Want to ship another open-source TTS model or voice bundle with MamboTTS? See [d
 
 ---
 
-The is code taken from [Chirp](https://github.com/thewh1teagle/chirp).
+This code is taken from [Chirp](https://github.com/thewh1teagle/chirp).

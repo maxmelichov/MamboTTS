@@ -33,7 +33,7 @@
     model file that already downloaded correctly is kept.
 
 .PARAMETER Version
-    Install a specific release, for example 1.1.2. Defaults to the newest
+    Install a specific release, for example 1.2.0. Defaults to the newest
     desktop release published on GitHub.
 
 .PARAMETER Server
@@ -80,7 +80,7 @@ $TagPrefix = 'mambotts-desktop-'
 # Used when the GitHub API cannot be reached, which is common enough from a
 # shared address that a hard failure would be the wrong default. Keep this in
 # step with the newest published desktop release.
-$FallbackVersion = '1.1.2'
+$FallbackVersion = '1.2.0'
 $ModelSubDir = 'models\bluetts-2.5'
 
 function Write-Step { param([string] $Message) Write-Host "==> $Message" -ForegroundColor Cyan }
