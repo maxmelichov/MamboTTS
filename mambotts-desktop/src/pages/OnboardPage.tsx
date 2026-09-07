@@ -93,7 +93,7 @@ export function OnboardPage({ bundle, setBundle }: PageProps) {
       id: "blue",
       name: "BlueTTS",
       version: "blue-onnx-v2",
-      size: "~560 MB",
+      size: "~1.4 GB",
       description: "Local speech in Hebrew, English, Spanish, German, and Italian",
       files: [],
       directory: "blue-onnx-v2",
@@ -200,7 +200,7 @@ export function OnboardPage({ bundle, setBundle }: PageProps) {
                 <Eyebrow>Local Infrastructure</Eyebrow>
                 <h3 className="text-base font-semibold tracking-tight">{bundles[runtime]?.version ?? "blue-onnx-v2"}</h3>
                 <p className="text-xs text-secondary opacity-40">
-                  {bundles[runtime]?.installed ? "Already installed locally" : "Initial setup: ~560 MB storage (BlueTTS + RenikudPlus)"}
+                  {bundles[runtime]?.installed ? "Already installed locally" : "Initial setup: ~1.4 GB storage (BlueTTS + RenikudPlus)"}
                 </p>
               </div>
               <Button onClick={() => selectRuntime(runtime)} disabled={busy} className="h-11 px-6 text-sm shadow-lg shadow-primary/5">

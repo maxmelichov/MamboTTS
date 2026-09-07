@@ -125,7 +125,7 @@ const BLUE: RuntimeManifest = RuntimeManifest {
     id: DEFAULT_RUNTIME_ID,
     name: "BlueTTS",
     version: "bluetts-2.5",
-    size: "~570 MB",
+    size: "~1.4 GB",
     description: "Fast local speech for Hebrew, English, Spanish, German, and Italian.",
     // A new directory: 2.5 changes the IO contract, so it must not land on
     // top of a v2 install.
