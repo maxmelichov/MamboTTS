@@ -1,8 +1,19 @@
 {
   "bundle": {
     "externalBin": ["binaries/mambotts-server"],
-    "resources": [
-      "binaries/onnxruntime*.dll"
-    ]
+    "resources": {
+      "binaries/onnxruntime.dll": "onnxruntime.dll",
+      "binaries/onnxruntime_providers_shared.dll": "onnxruntime_providers_shared.dll",
+      "binaries/espeak-ng-data": "espeak-ng-data"
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "embedBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
   }
 }

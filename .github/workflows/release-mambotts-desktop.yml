@@ -21,11 +21,38 @@ jobs:
           - platform: macos-14
             args: --target aarch64-apple-darwin
             target: aarch64-apple-darwin
+            ort-lib-location: crates/blue-rs/.ort/onnxruntime-osx-arm64-1.23.2
+            release-body: "MamboTTS desktop build for macOS (Apple Silicon)."
+          - platform: windows-latest
+            args: --target x86_64-pc-windows-msvc --bundles nsis
+            target: x86_64-pc-windows-msvc
+            ort-lib-location: crates/blue-rs/.ort/onnxruntime-win-x64-1.23.2/lib
+            release-body: "MamboTTS desktop build for Windows (x86_64)."
 
     runs-on: ${{ matrix.platform }}
 
     steps:
       - uses: actions/checkout@v4
+
+      # Must run before the Rust cache step, which snapshots the target dir.
+      - name: Configure Windows build environment
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # espeak-ng compiles its phoneme data with fixed 180 byte path buffers,
+          # so the default D:\a\MamboTTS\MamboTTS\target path truncates generated
+          # file names and fails the sidecar build (see docs/BUILDING.md).
+          # scripts/pre_build.py reads CARGO_TARGET_DIR when it stages the sidecar.
+          echo "CARGO_TARGET_DIR=D:/t" | Out-File -FilePath $env:GITHUB_ENV -Append
+          # crates/espeak-rs-sys/build.rs always runs bindgen, which needs libclang.
+          $llvmBin = "C:\Program Files\LLVM\bin"
+          if (Test-Path "$llvmBin\libclang.dll") {
+            echo "LIBCLANG_PATH=$llvmBin" | Out-File -FilePath $env:GITHUB_ENV -Append
+          }
+          # Same build script drives espeak-ng through CMake.
+          if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
+            throw "cmake was not found on PATH; crates/espeak-rs-sys/build.rs needs it"
+          }
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -51,7 +78,8 @@ jobs:
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
-          workspaces: mambotts-desktop/src-tauri
+          # The Cargo workspace root is the repo root, not the Tauri crate.
+          workspaces: .
 
       - name: Install frontend dependencies
         run: pnpm install
@@ -61,7 +89,7 @@ jobs:
         run: uv run scripts/pre_build.py --target ${{ matrix.target }}
 
       - name: Build Tauri release
-        if: ${{ !inputs.sign-macos }}
+        if: ${{ runner.os != 'macOS' || !inputs.sign-macos }}
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -69,18 +97,18 @@ jobs:
           APTABASE_BASE_URL: ${{ secrets.APTABASE_BASE_URL }}
           ORT_STRATEGY: system
           ORT_PREFER_DYNAMIC_LINK: "1"
-          ORT_LIB_LOCATION: crates/blue-rs/.ort/onnxruntime-osx-arm64-1.23.2
+          ORT_LIB_LOCATION: ${{ matrix.ort-lib-location }}
         with:
           tagName: mambotts-desktop-v__VERSION__
           releaseName: MamboTTS Desktop v__VERSION__
-          releaseBody: "MamboTTS desktop build for macOS (Apple Silicon)."
+          releaseBody: ${{ matrix.release-body }}
           prerelease: false
           projectPath: mambotts-desktop
           tauriScript: pnpm exec tauri
           args: ${{ matrix.args }}
 
       - name: Build signed macOS Tauri release
-        if: ${{ inputs.sign-macos }}
+        if: ${{ runner.os == 'macOS' && inputs.sign-macos }}
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -94,12 +122,34 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           ORT_STRATEGY: system
           ORT_PREFER_DYNAMIC_LINK: "1"
-          ORT_LIB_LOCATION: crates/blue-rs/.ort/onnxruntime-osx-arm64-1.23.2
+          ORT_LIB_LOCATION: ${{ matrix.ort-lib-location }}
         with:
           tagName: mambotts-desktop-v__VERSION__
           releaseName: MamboTTS Desktop v__VERSION__
-          releaseBody: "MamboTTS desktop build for macOS (Apple Silicon)."
+          releaseBody: ${{ matrix.release-body }}
           prerelease: false
           projectPath: mambotts-desktop
           tauriScript: pnpm exec tauri
           args: ${{ matrix.args }}
+
+      # Bundled separately so a WiX failure still leaves the NSIS installer
+      # published, the same split the GitLab windows:desktop job uses.
+      - name: Build Windows MSI installer
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APTABASE_APP_KEY: ${{ secrets.APTABASE_APP_KEY }}
+          APTABASE_BASE_URL: ${{ secrets.APTABASE_BASE_URL }}
+          ORT_STRATEGY: system
+          ORT_PREFER_DYNAMIC_LINK: "1"
+          ORT_LIB_LOCATION: ${{ matrix.ort-lib-location }}
+        with:
+          tagName: mambotts-desktop-v__VERSION__
+          releaseName: MamboTTS Desktop v__VERSION__
+          releaseBody: ${{ matrix.release-body }}
+          prerelease: false
+          projectPath: mambotts-desktop
+          tauriScript: pnpm exec tauri
+          args: --target ${{ matrix.target }} --bundles msi

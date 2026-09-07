@@ -1,8 +1,11 @@
 {
   "bundle": {
-    "externalBin": ["binaries/mambotts-server"],
+    "externalBin": [
+      "binaries/mambotts-server"
+    ],
     "resources": [
-      "binaries/libonnxruntime*.dylib"
+      "binaries/libonnxruntime*.dylib",
+      "binaries/espeak-ng-data/**/*"
     ],
     "macOS": {
       "entitlements": "entitlements.plist",

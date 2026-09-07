@@ -16,7 +16,7 @@ right ONNX Runtime library into the installer.
 
 - **Linux x86_64**: built end to end in the container from `scripts/Dockerfile.linux-build`, producing `.deb`, `.rpm`, and `.AppImage` bundles. The bundles have not been launched on a Linux desktop from this repository.
 - **macOS Apple Silicon**: the shipping platform. Built here into a `.dmg` and a `.app`, with the sidecar and ONNX Runtime staged inside the bundle. The bundle was not launched as part of that check.
-- **Windows x86_64**: the sidecar is cross-compiled and verified as a PE32+ binary. The installer itself has to be produced on Windows, which nothing in this repository can do from macOS, so the Windows commands below are written for a Windows machine and have not been executed.
+- **Windows x86_64**: built, installed, and run on Windows 10. The NSIS installer produced by `tauri build --bundles nsis` was installed, the app launched, the sidecar started under it, and all five languages were synthesized to WAV through the running app. Killing the app from Task Manager takes the sidecar with it.
 
 ## Shared prerequisites
 
@@ -200,10 +200,24 @@ target\x86_64-pc-windows-msvc\release\bundle\nsis\
 ```
 
 `onnxruntime.dll` and `onnxruntime_providers_shared.dll` are bundled as
-resources into a `binaries` folder beside the installed executable. The desktop
-shell prepends both the executable directory and that `binaries` folder to
-`PATH` before it spawns the sidecar, which is how the sidecar finds ONNX
-Runtime.
+resources directly beside the installed executables rather than into a
+subfolder, and that placement is load-bearing. Windows ships its own much
+older `onnxruntime.dll` in `System32` for Windows ML, and the executable's
+own directory is the only step of the DLL search order that comes before the
+system directories. A copy anywhere else, including one reachable through
+`PATH`, loses to the System32 file, and the sidecar then dies inside the
+loader with `0xC000007B` (`STATUS_INVALID_IMAGE_FORMAT`) before it can run a
+line of its own code or write a word to stderr.
+
+`espeak-ng-data` ships beside the executables too, and the desktop shell
+also passes `PIPER_ESPEAKNG_DATA_DIRECTORY` explicitly when it spawns the
+sidecar. That value has any `\\?\` prefix stripped first: espeak-ng joins
+the directory with its own relative paths using forward slashes, and Windows
+does not normalise those inside a verbatim path the way it does for an
+ordinary one, so a `\\?\` value makes every lookup under the data
+directory fail. Without it espeak-ng falls back to the path baked in when it
+was compiled, which belongs to the build machine, and every language except
+Hebrew stops working.
 
 ### Cross-compile the Windows sidecar from macOS or Linux
 

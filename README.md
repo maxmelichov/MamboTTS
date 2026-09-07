@@ -33,7 +33,7 @@
 - Saved voices: Noa, Lily, Daniel, and Adam
 - Supported languages: Hebrew, English, Spanish, German, and Italian
 - Audio preview after creation
-- 💻 Desktop builds for `macOS` on Apple Silicon and `Linux` on x86_64, plus a local server build for `Windows` on x86_64
+- 💻 Desktop apps for `macOS` on Apple Silicon, `Linux` on x86_64, and `Windows` on x86_64
 - Local HTTP API with Swagger docs for tools and automation
 - Agent-ready `/skill` instructions for AI workflows
 
@@ -80,24 +80,21 @@ manager can take the `.deb` or `.rpm` from the
 irm https://github.com/maxmelichov/MamboTTS/releases/latest/download/install.ps1 | iex
 ```
 
-Windows gets the local server and its HTTP API rather than the desktop app.
-There is no MamboTTS window on Windows and this script does not pretend to
-install one. Producing a Windows installer needs WiX and NSIS running on a
-Windows machine, and this project is built on a Mac. What does cross-compile
-cleanly is the server, which is the part that actually holds the BlueTTS
-runtime, so that is what ships.
+This downloads the desktop installer and runs it. The NSIS window is left
+visible on purpose: the command above is pasted from the internet, and the
+installer is the one place you get to see where the app is going and say no.
+Pass `-Silent` if you are installing unattended.
 
-The script unpacks the server into `%LOCALAPPDATA%\MamboTTS`, downloads the
-BlueTTS model and the Renikud phonemizer beside it, and writes a
-`MamboTTS-Server.cmd` launcher that starts the server and opens the Swagger
-page. From there `/docs` is a working console over `/v1/audio/speech`,
-`/v1/voices`, `/v1/phonemize`, and `/skill`, which is everything the desktop app
-uses to make audio.
+The app installs for the current user, so nothing asks for an administrator.
+On first launch the onboarding screen downloads the BlueTTS model and the
+Renikud phonemizer, around 1.5 GB, into the app data folder. That is the only
+part that needs the network; generation after it is offline.
 
-`install.ps1` has not been executed. There is no Windows machine here and no
-`pwsh` on the build host, so it has been parsed and analyzed rather than run.
-The server binary and the DLLs inside the zip are verified PE32+ artifacts. If
-it fails on your machine, please open an issue with the output.
+If you want the HTTP API without the window, `-Server` installs the headless
+server into `%LOCALAPPDATA%\MamboTTS` with a `MamboTTS-Server.cmd` launcher
+that starts it and opens the Swagger page. From there `/docs` is a working
+console over `/v1/audio/speech`, `/v1/voices`, `/v1/phonemize`, and `/skill`,
+which is everything the desktop app uses to make audio.
 
 ## Models and phonemizers
 

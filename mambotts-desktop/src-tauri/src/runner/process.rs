@@ -12,6 +12,10 @@ use crate::model;
 
 use super::dto::ReadySignal;
 
+/// espeak-rs reads this to find its phoneme data, ahead of any other probe.
+const ESPEAK_DATA_ENV: &str = "PIPER_ESPEAKNG_DATA_DIRECTORY";
+const ESPEAK_DATA_DIR_NAME: &str = "espeak-ng-data";
+
 pub struct RunnerState {
     pub process: Mutex<Option<RunnerProcess>>,
 }
@@ -39,6 +43,7 @@ impl RunnerProcess {
             }
         }
         prepend_native_library_paths(&mut cmd, app, binary_path);
+        set_espeak_data_dir(&mut cmd, app, binary_path);
 
         #[cfg(target_os = "windows")]
         {
@@ -52,6 +57,9 @@ impl RunnerProcess {
                 binary_path.display()
             )
         })?;
+
+        #[cfg(target_os = "windows")]
+        confine_to_job_object(&child);
 
         let mut stderr = child.stderr.take();
         let stdout = child
@@ -186,15 +194,7 @@ fn format_runner_start_error(context: &str, error: &str, stderr: &str) -> String
 }
 
 fn prepend_native_library_paths(cmd: &mut Command, app: &tauri::AppHandle, binary_path: &Path) {
-    let mut dirs: Vec<PathBuf> = Vec::new();
-    if let Some(parent) = binary_path.parent() {
-        dirs.push(parent.to_path_buf());
-    }
-    if let Ok(resource_dir) = app.path().resource_dir() {
-        dirs.push(resource_dir.join("binaries"));
-        dirs.push(resource_dir);
-    }
-    dirs.retain(|dir| dir.exists());
+    let dirs = sidecar_asset_dirs(app, binary_path);
     if dirs.is_empty() {
         return;
     }
@@ -228,4 +228,134 @@ fn prepend_native_library_paths(cmd: &mut Command, app: &tauri::AppHandle, binar
             cmd.env("DYLD_LIBRARY_PATH", joined);
         }
     }
+}
+
+/// The directories that hold the assets shipped beside the sidecar: the ONNX
+/// Runtime shared libraries and the espeak-ng data.
+///
+/// Tauri does not gather these in one place. `externalBin` puts the sidecar
+/// next to the main executable, while `resources` keeps the declared
+/// `binaries/` prefix underneath the resource directory, so both roots have to
+/// be offered and the caller takes whichever one actually holds what it wants.
+fn sidecar_asset_dirs(app: &tauri::AppHandle, binary_path: &Path) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Some(parent) = binary_path.parent() {
+        dirs.push(parent.to_path_buf());
+    }
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        dirs.push(resource_dir.join("binaries"));
+        dirs.push(resource_dir);
+    }
+    dirs.retain(|dir| dir.exists());
+    dirs
+}
+
+/// Point espeak-ng at the phoneme data that ships with the app.
+///
+/// When it is given nothing, espeak-ng falls back to the data directory that
+/// was baked in when it was compiled. That is a path on the build machine, so
+/// on a user's machine it does not exist and initialisation fails. Everything
+/// that goes through espeak then breaks, which is English, Spanish, German and
+/// Italian; Hebrew survives only because it takes the separate Renikud
+/// phonemizer. An explicit environment variable is used rather than relying on
+/// the executable-directory probe in espeak-rs, because the sidecar and the
+/// data can land in different directories depending on the bundle format.
+fn set_espeak_data_dir(cmd: &mut Command, app: &tauri::AppHandle, binary_path: &Path) {
+    // Respect a deliberate override from the surrounding environment.
+    if env::var_os(ESPEAK_DATA_ENV).is_some() {
+        return;
+    }
+    for dir in sidecar_asset_dirs(app, binary_path) {
+        if dir.join(ESPEAK_DATA_DIR_NAME).is_dir() {
+            cmd.env(ESPEAK_DATA_ENV, plain_path(&dir));
+            return;
+        }
+    }
+}
+
+/// Tie the sidecar's lifetime to this process with a Windows job object.
+///
+/// `--exit-with-parent` is a no-op here: the server's watcher is `#[cfg(unix)]`,
+/// so nothing on that side ever reaps the child. Stopping the runner on exit
+/// covers a clean quit, but not a crash, not an abort (the release profile sets
+/// `panic = "abort"`, so destructors never run) and not "End task" from Task
+/// Manager. A job object with kill-on-close is enforced by the kernel, so the
+/// sidecar goes away however this process dies.
+///
+/// The consequences of getting this wrong are not cosmetic. A survivor keeps
+/// the whole model resident, is invisible because it was spawned with
+/// CREATE_NO_WINDOW, and holds its own executable open, which makes the next
+/// installer run fail with "file in use".
+#[cfg(target_os = "windows")]
+fn confine_to_job_object(child: &Child) {
+    use std::os::windows::io::AsRawHandle;
+    use std::sync::OnceLock;
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+
+    // One job for the whole app, deliberately never closed: the kernel closes
+    // it when this process ends, and that close is what kills the children.
+    static JOB: OnceLock<isize> = OnceLock::new();
+
+    let job = *JOB.get_or_init(|| unsafe {
+        let handle = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+        if handle.is_null() {
+            return 0;
+        }
+        let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        let applied = SetInformationJobObject(
+            handle,
+            JobObjectExtendedLimitInformation,
+            std::ptr::addr_of!(limits).cast(),
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        );
+        if applied == 0 { 0 } else { handle as isize }
+    });
+
+    if job == 0 {
+        // Losing the job object is not worth refusing to start over. The
+        // ordinary shutdown path still stops the sidecar; only the abnormal
+        // exits leak, which is exactly where we were before.
+        tracing::warn!("could not confine the MamboTTS server to a job object");
+        return;
+    }
+
+    let assigned =
+        unsafe { AssignProcessToJobObject(job as _, child.as_raw_handle() as _) };
+    if assigned == 0 {
+        tracing::warn!("could not assign the MamboTTS server to the job object");
+    }
+}
+
+/// Remove the `\\?\` extended-length prefix from a path.
+///
+/// espeak-ng joins the data directory with its own relative paths using forward
+/// slashes. Windows normalises those to backslashes for an ordinary path but
+/// deliberately does not inside a verbatim `\\?\` path, where the string reaches
+/// the filesystem untouched, so every lookup under the directory fails. Tauri
+/// hands back verbatim paths on Windows, so the prefix has to come off before
+/// the value goes to a C library that will build paths out of it.
+#[cfg(target_os = "windows")]
+fn plain_path(path: &Path) -> PathBuf {
+    use std::path::{Component, Prefix};
+
+    let mut components = path.components();
+    if let Some(Component::Prefix(prefix)) = components.next() {
+        // Only a plain drive has a shorter spelling. A verbatim UNC path does
+        // not, so it is left exactly as it came.
+        if let Prefix::VerbatimDisk(letter) = prefix.kind() {
+            let root = format!("{}:\\", letter as char);
+            return PathBuf::from(root).join(components.as_path());
+        }
+    }
+    path.to_path_buf()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn plain_path(path: &Path) -> PathBuf {
+    path.to_path_buf()
 }

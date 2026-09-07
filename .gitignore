@@ -20,6 +20,8 @@ target/
 */target/
 mambotts-desktop/src-tauri/binaries/mambotts-*
 mambotts-desktop/src-tauri/binaries/mambotts-runner-*
+# Staged by scripts/pre_build.py from the espeak-rs-sys build output.
+mambotts-desktop/src-tauri/binaries/espeak-ng-data/
 *.o
 *.a
 *.so

@@ -103,8 +103,15 @@ jobs:
       - name: Package mambotts server
         shell: bash
         run: |
+          # The espeak-ng data has to ship beside the binary. Left out, espeak
+          # falls back to the data path baked in when it was compiled, which only
+          # exists on the build machine, so every language that goes through
+          # espeak fails on a user's machine.
+          target_dir="${CARGO_TARGET_DIR:-target}"
+          espeak_data="$(ls -dt "${target_dir}/${{ matrix.target }}"/release/build/espeak-rs-sys-*/out/share/espeak-ng-data | head -1)"
           uv run python scripts/package-server.py \
             --binary "dist/mambotts-server-${{ matrix.platform }}/${{ matrix.binary }}" \
+            --espeak-data "${espeak_data}" \
             --out "dist/mambotts-server-${{ matrix.platform }}.${{ matrix.archive_ext }}" \
             --platform "${{ matrix.platform }}" \
             --version "${VERSION}"

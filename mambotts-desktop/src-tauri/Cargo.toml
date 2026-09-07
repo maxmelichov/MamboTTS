@@ -35,3 +35,8 @@ showfile = "0.1.1"
 tar = "0.4"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "rt-multi-thread"] }
 tauri-plugin-clipboard-manager = "2"
+
+# A job object is the only reliable way to stop the sidecar outliving this
+# process on Windows; see runner::process::confine_to_job_object.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }

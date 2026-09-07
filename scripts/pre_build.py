@@ -144,6 +144,48 @@ def install_ort_libs(target: str, dest_dir: Path) -> list[Path]:
     return installed
 
 
+def find_espeak_data(target: str, profile: str) -> Path:
+    """Locate the espeak-ng data tree that espeak-rs-sys built into its OUT_DIR.
+
+    Cargo keeps one `build/espeak-rs-sys-<hash>` directory for the compiled
+    build script and another for its output, and stale hashes from earlier
+    builds are never cleaned up, so several can exist side by side. Only the
+    output directories carry `out/share/espeak-ng-data`, and the newest of those
+    is the one the sidecar we just built corresponds to.
+    """
+    build_root = cargo_target_dir() / target / profile / "build"
+    candidates = [
+        path
+        for path in build_root.glob("espeak-rs-sys-*/out/share/espeak-ng-data")
+        if path.is_dir() and any(path.iterdir())
+    ]
+    if not candidates:
+        raise FileNotFoundError(
+            f"no espeak-ng-data directory found under {build_root}/espeak-rs-sys-*/out/share. "
+            "espeak-rs looks for this directory beside the executable at runtime and otherwise "
+            "falls back to a path baked in at compile time, which does not exist on end-user "
+            "machines, so every non-Hebrew language (English, Spanish, German, Italian) will fail "
+            "to synthesize. Build espeak-rs-sys first (a full `cargo build -p mambotts-server "
+            f"--target {target}`) and re-run, or point CARGO_TARGET_DIR at the target directory "
+            "that holds the build."
+        )
+    return max(candidates, key=lambda path: path.stat().st_mtime)
+
+
+def install_espeak_data(target: str, profile: str, dest_dir: Path) -> Path:
+    """Stage espeak-ng-data beside the sidecar so Tauri bundles it as a resource."""
+    source = find_espeak_data(target, profile)
+    dest = dest_dir / "espeak-ng-data"
+    # Copy onto a clean destination so voices dropped upstream do not survive in
+    # the staging directory and get shipped forever.
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.copytree(source, dest, dirs_exist_ok=True)
+    file_count = sum(1 for path in dest.rglob("*") if path.is_file())
+    print(f"Installed espeak-ng data from {source}: {file_count} files")
+    return dest
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build the MamboTTS server sidecar for Tauri builds")
     parser.add_argument("--target", help="Rust target triple, for example x86_64-unknown-linux-gnu")
@@ -226,6 +268,7 @@ def main() -> int:
         dest.chmod(dest.stat().st_mode | 0o111)
 
     install_ort_libs(target, dest_dir)
+    install_espeak_data(target, args.profile, dest_dir)
 
     if is_macos:
         for rpath in (
