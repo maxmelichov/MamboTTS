@@ -73,3 +73,55 @@ select {
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(17, 17, 17, 0.1);
 }
+
+/* Speech speed slider. Native range inputs ignore almost everything Tailwind
+   can say about them, so the track and thumb are drawn here to match the
+   Progress bar and the Button primitives rather than the browser default. */
+.speed-range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  border-radius: 9999px;
+  background: linear-gradient(
+    to right,
+    var(--color-primary) 0%,
+    var(--color-primary) var(--speed-fill, 50%),
+    rgba(226, 223, 213, 0.55) var(--speed-fill, 50%),
+    rgba(226, 223, 213, 0.55) 100%
+  );
+  outline: none;
+  cursor: pointer;
+}
+
+.speed-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 18px;
+  width: 18px;
+  border-radius: 9999px;
+  background: var(--color-primary);
+  border: 3px solid #ffffff;
+  box-shadow: 0 1px 4px rgba(17, 17, 17, 0.28);
+  transition: transform 0.15s ease;
+}
+
+.speed-range:hover::-webkit-slider-thumb {
+  transform: scale(1.12);
+}
+
+.speed-range:active::-webkit-slider-thumb {
+  transform: scale(1.04);
+}
+
+.speed-range:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 4px rgba(17, 17, 17, 0.12);
+}
+
+.speed-range:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.speed-range:disabled::-webkit-slider-thumb {
+  cursor: not-allowed;
+}
