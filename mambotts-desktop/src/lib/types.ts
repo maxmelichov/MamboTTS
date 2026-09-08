@@ -66,6 +66,7 @@ export type StudioState = {
   blueVoiceIds: string[];
   speaker: number;
   targetSpeaker: number;
+  speed: number;
   audioPath: string;
   streamChunkPaths: string[];
   audioAutoplayPending: boolean;

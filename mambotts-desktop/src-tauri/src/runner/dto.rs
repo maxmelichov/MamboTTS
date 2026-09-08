@@ -56,6 +56,7 @@ pub struct SpeechRequest {
     pub output_path: Option<String>,
     pub language: Option<String>,
     pub input_is_phonemes: Option<bool>,
+    pub speed: Option<f32>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -26,6 +26,7 @@ pub trait Runtime: Send {
         text: &str,
         voice: Option<&str>,
         language: &str,
+        speed: f32,
         on_chunk: &mut dyn FnMut(&[f32], u32) -> Result<()>,
     ) -> Result<Vec<f32>>;
     fn synthesize_phonemes_streaming(
@@ -33,6 +34,7 @@ pub trait Runtime: Send {
         phonemes: &str,
         voice: Option<&str>,
         language: &str,
+        speed: f32,
         on_chunk: &mut dyn FnMut(&[f32], u32) -> Result<()>,
     ) -> Result<Vec<f32>>;
     fn synthesize_to_file(
@@ -41,6 +43,7 @@ pub trait Runtime: Send {
         voice: Option<&str>,
         output_path: &Path,
         language: &str,
+        speed: f32,
     ) -> Result<()>;
 }
 

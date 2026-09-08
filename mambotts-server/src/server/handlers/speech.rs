@@ -11,7 +11,7 @@ use super::super::{
     dto::{PhonemeInventoryResponse, PhonemizeBody, PhonemizeResponse, SpeechBody},
     errors::write_error,
     state::SharedServer,
-    util::first_non_empty,
+    util::{first_non_empty, first_non_zero_float},
 };
 
 pub async fn phonemize(
@@ -131,6 +131,7 @@ pub async fn speech(State(server): State<SharedServer>, Json(body): Json<SpeechB
 
     let out_path = tmp.path().to_path_buf();
     let voice = first_non_empty([body.voice_reference.clone(), body.voice.clone()]);
+    let speed = resolve_speed(body.speed);
     {
         let mut inner = server.inner.lock().await;
         let Some(ctx) = inner.ctx.as_mut() else {
@@ -145,6 +146,7 @@ pub async fn speech(State(server): State<SharedServer>, Json(body): Json<SpeechB
             (!voice.is_empty()).then_some(voice.as_str()),
             &out_path,
             &body.language,
+            speed,
         ) {
             return write_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -182,6 +184,7 @@ async fn streaming_wav_response(server: SharedServer, body: SpeechBody) -> Respo
     }
 
     let voice = first_non_empty([body.voice_reference.clone(), body.voice.clone()]);
+    let speed = resolve_speed(body.speed);
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(2);
     tokio::task::spawn_blocking(move || {
         let mut inner = server.inner.blocking_lock();
@@ -206,6 +209,7 @@ async fn streaming_wav_response(server: SharedServer, body: SpeechBody) -> Respo
                 &body.input,
                 (!voice.is_empty()).then_some(voice.as_str()),
                 &body.language,
+                speed,
                 &mut send_chunk,
             )
         } else {
@@ -213,6 +217,7 @@ async fn streaming_wav_response(server: SharedServer, body: SpeechBody) -> Respo
                 &body.input,
                 (!voice.is_empty()).then_some(voice.as_str()),
                 &body.language,
+                speed,
                 &mut send_chunk,
             )
         };
@@ -281,6 +286,27 @@ fn send_final_wav(tx: &tokio::sync::mpsc::Sender<Result<Bytes, std::io::Error>>,
             return;
         }
     }
+}
+
+/// The pace MamboTTS has always shipped.
+///
+/// The request carries a multiplier rather than an engine value, so a speed of
+/// 1.0 reproduces exactly what every previous version produced and the control
+/// changes nothing until somebody moves it.
+const BASELINE_SPEED: f32 = 0.95;
+
+/// The outer bounds the API will accept. 0.75 to 2.0 measured clean; below
+/// 0.75 the audio loses level and articulation rather than simply slowing,
+/// which is why the app's own slider stops there. The wider clamp is kept for
+/// API callers who want to experiment, and only guards against nonsense.
+const MIN_SPEED: f32 = 0.5;
+const MAX_SPEED: f32 = 2.0;
+
+fn resolve_speed(requested: f32) -> f32 {
+    // Absent, zero and negative all mean "unspecified" here, because serde
+    // defaults a missing float to zero and no caller means to ask for silence.
+    let multiplier = if requested > 0.0 { requested } else { 1.0 };
+    BASELINE_SPEED * multiplier.clamp(MIN_SPEED, MAX_SPEED)
 }
 
 fn frame(kind: u8, payload: Vec<u8>) -> Bytes {

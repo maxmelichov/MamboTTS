@@ -3,7 +3,7 @@ import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Check, Clipboard, ExternalLink, Loader2, Server, Terminal } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { RunnerInfo } from "../../lib/types";
 import { cn } from "../../lib/classNames";
 import { Button, Card, ErrorBlock } from "../ui";
@@ -11,11 +11,40 @@ import { Button, Card, ErrorBlock } from "../ui";
 export function AgentsPanel() {
   const [error, setError] = useState("");
   const [apiUrl, setApiUrl] = useState("");
-  const [startingApi, setStartingApi] = useState(false);
+  const [transition, setTransition] = useState<"starting" | "stopping" | "">("");
   const [copied, setCopied] = useState<"agent" | "curl" | "">("");
+  // A transition owns the button until it resolves, so a poll landing
+  // mid-start cannot flip the label back and forth under the cursor.
+  const busy = transition !== "";
+  const busyRef = useRef(false);
+  busyRef.current = busy;
+
+  // The server is the authority on whether it is up. The panel used to trust a
+  // value captured when it mounted, so it kept claiming "Running" after the
+  // sidecar exited, and only told the truth again once a tab change remounted
+  // it. Ask on mount and keep asking while the panel is open.
+  useEffect(() => {
+    let cancelled = false;
+    async function refresh() {
+      if (busyRef.current) return;
+      try {
+        const url = await invoke<string | null>("get_runner_url");
+        if (!cancelled) setApiUrl(url ?? "");
+      } catch {
+        // A failed probe says nothing about the server, so leave the last
+        // known state alone rather than reporting it as stopped.
+      }
+    }
+    refresh();
+    const timer = window.setInterval(refresh, 2500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
 
   async function startApi() {
-    setStartingApi(true);
+    setTransition("starting");
     setError("");
     try {
       const info = await invoke<RunnerInfo>("start_runner");
@@ -25,8 +54,29 @@ export function AgentsPanel() {
       setError(String(err));
       return "";
     } finally {
-      setStartingApi(false);
+      setTransition("");
     }
+  }
+
+  async function stopApi() {
+    setTransition("stopping");
+    setError("");
+    try {
+      await invoke("stop_runner");
+      setApiUrl("");
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setTransition("");
+    }
+  }
+
+  // Studio calls ensure_runner before it synthesizes, so stopping the server
+  // here costs the next generation a restart rather than breaking it.
+  async function toggleApi() {
+    if (busy) return;
+    if (apiUrl) await stopApi();
+    else await startApi();
   }
 
   async function openApiDocs() {
@@ -52,6 +102,17 @@ export function AgentsPanel() {
     }
   }
 
+  // Four distinct states. The old control said "Running" on a button that still
+  // called start, so a second press looked like it should stop the server and
+  // silently did nothing.
+  const buttonLabel =
+    transition === "starting"
+      ? "Starting"
+      : transition === "stopping"
+        ? "Stopping"
+        : apiUrl
+          ? "Stop API"
+          : "Start API";
   const shownApiUrl = apiUrl || "Start the local API to see the URL";
   const curlExamples = apiUrl
     ? `curl ${apiUrl}/health
@@ -83,16 +144,17 @@ curl http://127.0.0.1:<port>/openapi.json`;
             </div>
             <Button
               variant={apiUrl ? "secondary" : "primary"}
-              onClick={startApi}
-              disabled={startingApi}
+              onClick={toggleApi}
+              disabled={busy}
+              title={apiUrl ? "Stop the local API server" : "Start the local API server"}
               className="h-8 shrink-0 gap-2 rounded-full px-3 text-[10px] font-black uppercase tracking-[0.16em]"
             >
-              {startingApi ? (
+              {busy ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
                 <span className={cn("h-1.5 w-1.5 rounded-full", apiUrl ? "bg-green-500" : "bg-white/70")} />
               )}
-              {apiUrl ? "Running" : "Start API"}
+              {buttonLabel}
             </Button>
           </div>
 

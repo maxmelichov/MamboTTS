@@ -28,7 +28,7 @@ type HomePageProps = PageProps & {
 
 export function HomePage({ bundle, setBundle, studio, setStudio, advancedMode, hebrewG2pEngine, phonikudPath }: HomePageProps) {
   const navigate = useNavigate();
-  const { text, phonemes, diacritics, languages, language, blueVoice, blueVoiceIds, speaker, targetSpeaker, audioPath, streamChunkPaths, audioAutoplayPending, step, status, busy, error } = studio;
+  const { text, phonemes, diacritics, languages, language, blueVoice, blueVoiceIds, speaker, targetSpeaker, speed, audioPath, streamChunkPaths, audioAutoplayPending, step, status, busy, error } = studio;
   const loadingLanguagesRef = useRef(false);
 
   const audioSrc = useMemo(() => (audioPath ? convertFileSrc(audioPath) : ""), [audioPath]);
@@ -200,6 +200,7 @@ export function HomePage({ bundle, setBundle, studio, setStudio, advancedMode, h
           voice: synthesisVoice || undefined,
           language: synthesisLanguage,
           input_is_phonemes: advancedMode && Boolean(phonemes.trim()),
+          speed,
         },
       });
       // Chunk files exist solely for low-latency playback while inference is
@@ -266,10 +267,15 @@ export function HomePage({ bundle, setBundle, studio, setStudio, advancedMode, h
               hebrewG2pEngine={hebrewG2pEngine}
               speaker={speaker}
               targetSpeaker={targetSpeaker}
+              speed={speed}
               setLanguage={(nextLanguage) => updateStudio({ language: nextLanguage })}
               setBlueVoice={(nextVoice) => updateStudio({ blueVoice: nextVoice })}
               setSpeaker={(nextSpeaker) => updateStudio({ speaker: nextSpeaker, phonemes: "" })}
               setTargetSpeaker={(nextSpeaker) => updateStudio({ targetSpeaker: nextSpeaker, phonemes: "" })}
+              setSpeed={(nextSpeed) => {
+                localStorage.setItem("speech-speed", String(nextSpeed));
+                updateStudio({ speed: nextSpeed });
+              }}
             />
 
             <AnimatePresence>

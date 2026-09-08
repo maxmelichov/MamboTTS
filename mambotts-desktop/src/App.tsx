@@ -33,6 +33,9 @@ function App() {
     blueVoiceIds: [],
     speaker: 0,
     targetSpeaker: 0,
+    // A pace someone chose once is a preference, not a per-utterance
+    // choice, so it outlives the session. 1.0 is the shipped pace.
+    speed: Number(localStorage.getItem("speech-speed")) || 1,
     audioPath: "",
     streamChunkPaths: [],
     audioAutoplayPending: false,

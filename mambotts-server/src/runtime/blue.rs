@@ -179,6 +179,7 @@ impl Runtime for BlueRuntime {
         text: &str,
         voice: Option<&str>,
         language: &str,
+        speed: f32,
         on_chunk: &mut dyn FnMut(&[f32], u32) -> Result<()>,
     ) -> Result<Vec<f32>> {
         let (detected_language, language_code) = Self::language_for(text, language)?;
@@ -202,7 +203,7 @@ impl Runtime for BlueRuntime {
                     lang: language_code.to_owned(),
                     total_step: 8,
                     cfg_scale: 4.0,
-                    speed: 0.95,
+                    speed,
                     chunking: Some(blue_rs::ChunkingOptions {
                         enabled: true,
                         silence_seconds: 0.15,
@@ -222,7 +223,7 @@ impl Runtime for BlueRuntime {
                 lang: language_code.to_owned(),
                 total_step: 8,
                 cfg_scale: 4.0,
-                speed: 0.95,
+                speed,
                 chunking: Some(blue_rs::ChunkingOptions {
                     enabled: true,
                     silence_seconds: 0.15,
@@ -238,6 +239,7 @@ impl Runtime for BlueRuntime {
         phonemes: &str,
         voice: Option<&str>,
         language: &str,
+        speed: f32,
         on_chunk: &mut dyn FnMut(&[f32], u32) -> Result<()>,
     ) -> Result<Vec<f32>> {
         let (_, language_code) = Self::language_for(phonemes, language)?;
@@ -259,7 +261,7 @@ impl Runtime for BlueRuntime {
                 lang: language_code.to_owned(),
                 total_step: 8,
                 cfg_scale: 4.0,
-                speed: 0.95,
+                speed,
                 chunking: Some(blue_rs::ChunkingOptions {
                     enabled: true,
                     silence_seconds: 0.15,
@@ -277,6 +279,7 @@ impl Runtime for BlueRuntime {
         voice: Option<&str>,
         output_path: &Path,
         language: &str,
+        speed: f32,
     ) -> Result<()> {
         let (_language, language_code) = Self::language_for(text, language)?;
         let voice = Self::normalize_voice(voice.unwrap_or(DEFAULT_BLUE_VOICE));
@@ -298,7 +301,7 @@ impl Runtime for BlueRuntime {
                 lang: language_code.to_owned(),
                 total_step: 8,
                 cfg_scale: 4.0,
-                speed: 0.95,
+                speed,
                 chunking: None,
             },
         )?;
