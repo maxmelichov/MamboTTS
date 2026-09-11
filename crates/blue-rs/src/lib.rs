@@ -279,6 +279,17 @@ impl BlueTts {
             for (chunk_index, raw_chunk) in raw_chunks.iter().enumerate() {
                 let chunk = phonemizer.g2p(raw_chunk, language)?;
                 if chunk.is_empty() {
+                    // A chunk of nothing but punctuation or whitespace has no
+                    // speech in it and is fine to skip. A chunk that had
+                    // letters and came back empty is a phonemizer failure,
+                    // and skipping it was how a document could lose most of
+                    // its text with no error and a "success" at the end.
+                    if raw_chunk.chars().any(char::is_alphabetic) {
+                        anyhow::bail!(
+                            "no phonemes were produced for this text, so it cannot be spoken: {:?}",
+                            raw_chunk.trim()
+                        );
+                    }
                     continue;
                 }
                 let audio = self.synthesize_chunk(
@@ -354,6 +365,17 @@ impl BlueTts {
             for (chunk_index, raw_chunk) in raw_chunks.iter().enumerate() {
                 let chunk = phonemizer.g2p(raw_chunk, language)?;
                 if chunk.is_empty() {
+                    // A chunk of nothing but punctuation or whitespace has no
+                    // speech in it and is fine to skip. A chunk that had
+                    // letters and came back empty is a phonemizer failure,
+                    // and skipping it was how a document could lose most of
+                    // its text with no error and a "success" at the end.
+                    if raw_chunk.chars().any(char::is_alphabetic) {
+                        anyhow::bail!(
+                            "no phonemes were produced for this text, so it cannot be spoken: {:?}",
+                            raw_chunk.trim()
+                        );
+                    }
                     continue;
                 }
                 let mut audio = self.synthesize_chunk(

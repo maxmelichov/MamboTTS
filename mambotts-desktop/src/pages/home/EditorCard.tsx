@@ -2,6 +2,7 @@ import { Loader2, Play } from "lucide-react";
 import { useRef, useState } from "react";
 import { cn } from "../../lib/classNames";
 import { Button, Card } from "../../components/ui";
+import { GenerationControls } from "./GenerationControls";
 
 const hebrewPhonemeGroups = [
   { label: "Stress", items: [{ symbol: "ˈ", name: "Stress" }] },
@@ -80,6 +81,11 @@ function groupHebrewWords(clusters: ReturnType<typeof hebrewLetterClusters>) {
 }
 
 type EditorCardProps = {
+  blueVoice: string;
+  blueVoiceIds: string[];
+  speed: number;
+  setBlueVoice: (voice: string) => void;
+  setSpeed: (speed: number) => void;
   busy: boolean;
   text: string;
   setText: (text: string) => void;
@@ -109,6 +115,11 @@ export function EditorCard({
   setPhonemes,
   convertToPhonemes,
   createVoice,
+  blueVoice,
+  blueVoiceIds,
+  speed,
+  setBlueVoice,
+  setSpeed,
 }: EditorCardProps) {
   const [tab, setTab] = useState<"text" | "diacritics" | "phonemes">("text");
   const phonemeInput = useRef<HTMLTextAreaElement>(null);
@@ -299,7 +310,16 @@ export function EditorCard({
           )}
         </div>
       )}
-      <div className="flex items-center justify-between border-t border-border/10 bg-background/10 px-8 py-5">
+      <div className="space-y-4 border-t border-border/10 bg-background/10 px-8 py-5">
+        <GenerationControls
+          busy={busy}
+          blueVoice={blueVoice}
+          blueVoiceIds={blueVoiceIds}
+          speed={speed}
+          setBlueVoice={setBlueVoice}
+          setSpeed={setSpeed}
+        />
+        <div className="flex items-center justify-between">
         <div className="flex items-center gap-4 text-[10px] font-bold uppercase tracking-[0.2em] text-secondary opacity-40">
           <span className={cn("transition-colors", (advancedMode && phonemes ? phonemes : text).length > 500 ? "text-amber-600 opacity-100" : "")}>{(advancedMode && phonemes ? phonemes : text).length} Characters</span>
           {advancedMode && phonemes && <span>IPA input</span>}
@@ -317,6 +337,7 @@ export function EditorCard({
             </span>
           )}
         </Button>
+        </div>
       </div>
     </Card>
   );

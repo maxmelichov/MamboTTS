@@ -11,7 +11,7 @@ use super::super::{
     dto::{PhonemeInventoryResponse, PhonemizeBody, PhonemizeResponse, SpeechBody},
     errors::write_error,
     state::SharedServer,
-    util::{first_non_empty, first_non_zero_float},
+    util::first_non_empty,
 };
 
 pub async fn phonemize(

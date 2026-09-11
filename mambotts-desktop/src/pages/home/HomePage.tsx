@@ -239,6 +239,14 @@ export function HomePage({ bundle, setBundle, studio, setStudio, advancedMode, h
               setPhonemes={(nextPhonemes) => updateStudio({ phonemes: nextPhonemes })}
               convertToPhonemes={convertToPhonemes}
               createVoice={createVoice}
+              blueVoice={blueVoice}
+              blueVoiceIds={blueVoiceIds}
+              speed={speed}
+              setBlueVoice={(nextVoice) => updateStudio({ blueVoice: nextVoice })}
+              setSpeed={(nextSpeed) => {
+                localStorage.setItem("speech-speed", String(nextSpeed));
+                updateStudio({ speed: nextSpeed });
+              }}
             />
 
             <AnimatePresence>
@@ -262,20 +270,12 @@ export function HomePage({ bundle, setBundle, studio, setStudio, advancedMode, h
               busy={busy}
               language={language}
               languages={languages}
-              blueVoice={blueVoice}
-              blueVoiceIds={blueVoiceIds}
               hebrewG2pEngine={hebrewG2pEngine}
               speaker={speaker}
               targetSpeaker={targetSpeaker}
-              speed={speed}
               setLanguage={(nextLanguage) => updateStudio({ language: nextLanguage })}
-              setBlueVoice={(nextVoice) => updateStudio({ blueVoice: nextVoice })}
               setSpeaker={(nextSpeaker) => updateStudio({ speaker: nextSpeaker, phonemes: "" })}
               setTargetSpeaker={(nextSpeaker) => updateStudio({ targetSpeaker: nextSpeaker, phonemes: "" })}
-              setSpeed={(nextSpeed) => {
-                localStorage.setItem("speech-speed", String(nextSpeed));
-                updateStudio({ speed: nextSpeed });
-              }}
             />
 
             <AnimatePresence>

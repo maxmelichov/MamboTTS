@@ -23,6 +23,27 @@ pub struct BlueRuntime {
     phonikud_path: Option<PathBuf>,
 }
 
+/// Hand a finished recording to the stream in pieces a client can play.
+///
+/// The main path streams as it generates, so its frames are naturally small.
+/// The Phonikud and phoneme-input paths synthesize the whole text first and
+/// used to send the result as a single frame. The desktop refuses any frame
+/// over 128 MB, about 25 minutes of audio, so on a long document those two
+/// paths did every minute of the work and then failed at the end. Cutting the
+/// recording into short windows keeps every frame small and gives the client
+/// something to play before the end instead of a wait and then everything.
+fn emit_in_windows(
+    audio: &[f32],
+    sample_rate: u32,
+    on_chunk: &mut dyn FnMut(&[f32], u32) -> Result<()>,
+) -> Result<()> {
+    let window = (sample_rate as usize) * 10;
+    for piece in audio.chunks(window.max(1)) {
+        on_chunk(piece, sample_rate)?;
+    }
+    Ok(())
+}
+
 impl BlueRuntime {
     pub fn load(
         model_dir: PathBuf,
@@ -211,7 +232,7 @@ impl Runtime for BlueRuntime {
                     }),
                 },
             )?;
-            on_chunk(&audio, self.tts.sample_rate())?;
+            emit_in_windows(&audio, self.tts.sample_rate(), on_chunk)?;
             return Ok(audio);
         }
         let sample_rate = self.tts.sample_rate();
@@ -269,7 +290,7 @@ impl Runtime for BlueRuntime {
                 }),
             },
         )?;
-        on_chunk(&audio, self.tts.sample_rate())?;
+        emit_in_windows(&audio, self.tts.sample_rate(), on_chunk)?;
         Ok(audio)
     }
 

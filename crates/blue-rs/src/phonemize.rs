@@ -6,7 +6,7 @@ use ort::session::Session;
 use regex::Regex;
 use renikud_plus_rs::G2P;
 
-use crate::handling::{NikudPhonemizer, contains_nikud, prepare_text_for_synthesis};
+use crate::handling::{NikudPhonemizer, contains_nikud, prepare_text_for_synthesis, strip_nikud};
 
 /// Languages supported by the BlueTTS model.
 ///
@@ -312,10 +312,17 @@ impl Phonemizer {
         }
 
         if contains_nikud(text) {
-            let nikud = self.nikud.as_deref_mut().ok_or_else(|| {
-                anyhow!("vocalized Hebrew requires a NikudPhonemizer; attach one with with_nikud_phonemizer")
-            })?;
-            return nikud.phonemize_nikud(text);
+            if let Some(nikud) = self.nikud.as_deref_mut() {
+                return nikud.phonemize_nikud(text);
+            }
+            // No vocalized-text phonemizer is attached, and none ships by
+            // default. Refusing here used to throw away a whole document over
+            // one vocalized poem or quotation, because `contains_nikud` is a
+            // whole-chunk check. Read it the way a person who ignores the
+            // marks would: drop the nikud and let Renikud infer the vowels,
+            // which is exactly what it does for the unvocalized text around it.
+            let plain = strip_nikud(text);
+            return self.phonemize_renikud(&plain);
         }
 
         self.phonemize_renikud(text)
