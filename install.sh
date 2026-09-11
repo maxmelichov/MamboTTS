@@ -24,7 +24,7 @@ TAG_PREFIX="mambotts-desktop-"
 # Used when the GitHub API cannot be reached, which happens often enough from
 # shared or rate limited addresses that a hard failure would be the wrong
 # default. Keep this in step with the newest published desktop release.
-FALLBACK_VERSION="1.2.0"
+FALLBACK_VERSION="1.3.0"
 
 APP_NAME="MamboTTS"
 APPLICATIONS_DIR="${APPLICATIONS_DIR:-/Applications}"

@@ -19,6 +19,11 @@ export function WorkspaceHeader({ bundle, active }: { bundle: ModelBundle | null
     getVersion().then(setAppVersion).catch(() => undefined);
   }, []);
 
+  // The app version and the model version are different things, and the badge
+  // used to show the model's as soon as one loaded, which hid the app's for
+  // the whole of normal use. Nobody could tell which build they were running.
+  const modelVersion = bundle?.version.split("-").pop();
+
   return (
     <header className="flex h-[88px] items-center justify-between">
       <div className="flex items-center gap-6">
@@ -27,7 +32,9 @@ export function WorkspaceHeader({ bundle, active }: { bundle: ModelBundle | null
       </div>
       <div className="flex items-center gap-4">
         <span className="text-[10px] font-medium tracking-widest text-secondary opacity-40 uppercase">
-          {bundle?.version.split("-").pop() ?? appVersion}
+          {appVersion && `v${appVersion}`}
+          {appVersion && modelVersion && " · "}
+          {modelVersion && `model ${modelVersion}`}
         </span>
         <Link to="/settings" className="flex h-8 w-8 items-center justify-center rounded-full border border-border/60 text-secondary transition-all hover:border-primary hover:text-primary">
           <Settings className="h-4 w-4" />
