@@ -7,7 +7,7 @@
 use anyhow::{Result, bail};
 use regex::{Captures, Regex};
 
-use crate::hebrew_numbers::{normalize_gematria_years, normalize_hebrew_numbers};
+use crate::hebrew_numbers::normalize_hebrew_numbers;
 
 /// Primary stress mark used by Phonikud (`U+02C8`).
 pub const STRESS_MARK: char = '\u{02c8}';
@@ -343,9 +343,6 @@ pub fn prepare_text_for_synthesis(text: &str, lang: &str) -> String {
     let mut text = strip_helper_markup(text);
     text = normalize_common_text(&text);
     if lang == "he" {
-        // Hebrew calendar years are letters plus a gershayim, so they have to
-        // be recognized before the gershayim is normalized away.
-        text = normalize_gematria_years(&text);
         text = normalize_hebrew_punctuation(&text);
         text = expand_geresh_loanwords(&text);
         text = expand_dialogue_quotes(&text);
