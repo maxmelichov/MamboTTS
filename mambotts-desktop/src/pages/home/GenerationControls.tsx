@@ -10,11 +10,13 @@ const voiceLabels: Record<string, string> = {
   Adam: "Adam · warm masculine",
 };
 
-// Measured on Windows: from 0.75 upward the pace changes cleanly. Slower than
-// that the model spreads the text over a canvas it cannot fill and the audio
-// loses level and articulation, so the slider does not offer it.
-export const SPEED_MIN = 0.75;
-export const SPEED_MAX = 1.5;
+// 0.75 was measured as the point where the pace still changes cleanly, but in
+// use it does not hold up: the model spreads the text over a canvas it cannot
+// fill and the take comes back indistinct rather than merely slow. The far end
+// has the same problem in reverse. The slider now offers only the range that
+// sounds like the same voice at a different pace.
+export const SPEED_MIN = 0.9;
+export const SPEED_MAX = 1.1;
 
 /// The two choices that decide how a take sounds. They sit with the text and
 /// the Generate button because they get changed between takes, unlike the

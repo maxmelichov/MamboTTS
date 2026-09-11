@@ -10,7 +10,16 @@ import { HomePage } from "./pages/home/HomePage";
 import { OnboardPage } from "./pages/OnboardPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { ModelBundle, StudioState } from "./lib/types";
+import { SPEED_MAX, SPEED_MIN } from "./pages/home/GenerationControls";
 import { sampleText } from "./lib/constants";
+
+/// Keeps a stored speed inside the range the slider offers. The bounds have
+/// moved once already, and a value saved under the old ones would otherwise
+/// outlive them and keep asking for a pace the app no longer has.
+function clampSpeed(speed: number): number {
+  if (!Number.isFinite(speed)) return 1;
+  return Math.min(SPEED_MAX, Math.max(SPEED_MIN, speed));
+}
 
 function App() {
   const location = useLocation();
@@ -35,7 +44,9 @@ function App() {
     targetSpeaker: 0,
     // A pace someone chose once is a preference, not a per-utterance
     // choice, so it outlives the session. 1.0 is the shipped pace.
-    speed: Number(localStorage.getItem("speech-speed")) || 1,
+    // A speed saved under the older, wider slider would otherwise outlive it and
+    // keep asking for a pace the app no longer offers.
+    speed: clampSpeed(Number(localStorage.getItem("speech-speed")) || 1),
     audioPath: "",
     streamChunkPaths: [],
     audioAutoplayPending: false,

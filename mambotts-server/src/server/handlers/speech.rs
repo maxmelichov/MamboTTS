@@ -295,10 +295,10 @@ fn send_final_wav(tx: &tokio::sync::mpsc::Sender<Result<Bytes, std::io::Error>>,
 /// changes nothing until somebody moves it.
 const BASELINE_SPEED: f32 = 0.95;
 
-/// The outer bounds the API will accept. 0.75 to 2.0 measured clean; below
-/// 0.75 the audio loses level and articulation rather than simply slowing,
-/// which is why the app's own slider stops there. The wider clamp is kept for
-/// API callers who want to experiment, and only guards against nonsense.
+/// The outer bounds the API will accept. These only guard against nonsense.
+/// The app's own slider is much tighter, 0.9 to 1.1, because outside that the
+/// audio loses level and articulation rather than simply changing pace. The
+/// wider clamp is kept for API callers who want to experiment.
 const MIN_SPEED: f32 = 0.5;
 const MAX_SPEED: f32 = 2.0;
 

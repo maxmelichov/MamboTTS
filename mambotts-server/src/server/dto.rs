@@ -98,9 +98,10 @@ pub struct SpeechBody {
     /// Pace multiplier. 1.0 is the pace the app has always used; below one
     /// is slower, above one is faster. Zero or absent means 1.0.
     ///
-    /// Measured clean from 0.75 to 2.0. Slower than that the model spreads
-    /// the text over a canvas it cannot fill, and the audio goes quiet and
-    /// indistinct rather than merely slow, so the app's slider stops at 0.75.
+    /// The API accepts 0.5 to 2.0, which only guards against nonsense. The
+    /// app's own slider offers 0.9 to 1.1, because further out the model
+    /// spreads the text over a canvas it cannot fill and the take stops
+    /// sounding like the same voice at a different pace.
     #[serde(default)]
     pub speed: f32,
 }
