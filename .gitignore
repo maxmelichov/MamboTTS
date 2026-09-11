@@ -51,3 +51,6 @@ __pycache__/
 .pnpm-store
 mambotts-desktop/src-tauri/binaries/libonnxruntime.so.1
 mambotts-desktop/src-tauri/binaries/libonnxruntime.so.1.23.2
+
+# Agent worktrees and scratch, never part of the tree.
+.claude/
