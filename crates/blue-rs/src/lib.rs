@@ -1,6 +1,7 @@
 mod chunking;
 mod npz;
 pub mod handling;
+pub mod hebrew_numbers;
 pub mod phonemize;
 pub mod style;
 mod text;

@@ -7,6 +7,8 @@
 use anyhow::{Result, bail};
 use regex::{Captures, Regex};
 
+use crate::hebrew_numbers::normalize_hebrew_numbers;
+
 /// Primary stress mark used by Phonikud (`U+02C8`).
 pub const STRESS_MARK: char = '\u{02c8}';
 /// Internal boundaries for segments that need slower, clearer synthesis.
@@ -353,6 +355,10 @@ pub fn prepare_text_for_synthesis(text: &str, lang: &str) -> String {
         text = expand_phone_numbers(&text);
         text = expand_times(&text);
         text = expand_dates(&text);
+        // Hebrew number words depend on gender, on the noun that follows and
+        // on whether the digits are a year, an ordinal or a range, so Hebrew
+        // gets its own pass and leaves nothing for the generic ones below.
+        text = normalize_hebrew_numbers(&text);
     }
     text = expand_percent_symbols(&text, &lang);
     text = expand_ratios(&text, &lang);

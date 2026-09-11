@@ -499,6 +499,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "espeak-rs 0.1.9 (git+https://github.com/thewh1teagle/piper-rs?rev=616e6823cc29955bb0cf66532637b352b26fa292)",
+ "heb-tts-normalizer",
  "hound",
  "ndarray",
  "ort",
@@ -1438,6 +1439,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fancy-regex"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e24cb5a94bcae1e5408b0effca5cd7172ea3c5755049c5f3af4cd283a165298"
+dependencies = [
+ "bit-set",
+ "regex-automata",
+ "regex-syntax",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2059,6 +2071,19 @@ name = "hashbrown"
 version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4f467dd6dccf739c208452f8014c75c18bb8301b050ad1cfb27153803edb0f51"
+
+[[package]]
+name = "heb-tts-normalizer"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "86604f08a13dadbef0801e570c901bb55892dc5d5ae1b3bcd94c79d7dbc9268b"
+dependencies = [
+ "fancy-regex",
+ "once_cell",
+ "serde",
+ "serde_json",
+ "unicode-normalization",
+]
 
 [[package]]
 name = "heck"
