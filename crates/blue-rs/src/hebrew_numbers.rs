@@ -24,10 +24,14 @@ fn config() -> &'static Config {
     })
 }
 
-/// Angle bracket literals are passed through to the phonemizer verbatim, so
-/// digits inside them are markup rather than something to read aloud. The
-/// normalizer has no way to know that, and left to itself it turns
-/// `<break time="300ms"/>` into `<break time="שלוש מאותms"/>`.
+/// Digits inside an angle bracket span are markup rather than something to read
+/// aloud, and the normalizer would otherwise turn `<break time="300ms"/>` into
+/// `<break time="שלוש מאותms"/>`.
+///
+/// Nothing in the text path relies on this today: `normalize_common_text` runs
+/// first and rewrites such a tag beyond recognition anyway. It is here so that
+/// this pass is not the thing that breaks markup if the steps above it ever
+/// learn to carry it.
 fn literal_spans() -> &'static Regex {
     static SPANS: OnceLock<Regex> = OnceLock::new();
     SPANS.get_or_init(|| Regex::new(r"<[^>]*>").expect("valid regex"))
