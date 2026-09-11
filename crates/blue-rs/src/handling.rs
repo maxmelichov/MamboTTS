@@ -1044,7 +1044,7 @@ fn month_name(month: u8) -> Option<&'static str> {
     })
 }
 
-fn is_hebrew_letter(character: char) -> bool {
+pub fn is_hebrew_letter(character: char) -> bool {
     ('\u{05d0}'..='\u{05ea}').contains(&character)
 }
 

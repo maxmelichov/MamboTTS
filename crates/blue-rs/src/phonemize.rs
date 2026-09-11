@@ -109,7 +109,9 @@ impl Phonemizer {
             inline_tag_re: Regex::new(
                 r"(?is)<(en|en-us|he|es|de|ge|it)>(.*?)</(?:en|en-us|he|es|de|ge|it)>",
             )?,
-            nikud: None,
+            // Reads explicit vowel marks. Without it a writer's nikud was
+            // stripped, and the one way to correct a misread word was lost.
+            nikud: Some(Box::new(crate::nikud::phonemize_vocalized)),
             speaker: 0,
             target_speaker: 0,
         })
@@ -131,7 +133,9 @@ impl Phonemizer {
             inline_tag_re: Regex::new(
                 r"(?is)<(en|en-us|he|es|de|ge|it)>(.*?)</(?:en|en-us|he|es|de|ge|it)>",
             )?,
-            nikud: None,
+            // Reads explicit vowel marks. Without it a writer's nikud was
+            // stripped, and the one way to correct a misread word was lost.
+            nikud: Some(Box::new(crate::nikud::phonemize_vocalized)),
             speaker: 0,
             target_speaker: 0,
         })
@@ -312,20 +316,62 @@ impl Phonemizer {
         }
 
         if contains_nikud(text) {
-            if let Some(nikud) = self.nikud.as_deref_mut() {
-                return nikud.phonemize_nikud(text);
-            }
-            // No vocalized-text phonemizer is attached, and none ships by
-            // default. Refusing here used to throw away a whole document over
-            // one vocalized poem or quotation, because `contains_nikud` is a
-            // whole-chunk check. Read it the way a person who ignores the
-            // marks would: drop the nikud and let Renikud infer the vowels,
-            // which is exactly what it does for the unvocalized text around it.
-            let plain = strip_nikud(text);
-            return self.phonemize_renikud(&plain);
+            return self.phonemize_mixed(text);
         }
 
         self.phonemize_renikud(text)
+    }
+
+    /// Text where some words carry nikud and some do not.
+    ///
+    /// A vocalized word is read from its marks, because the writer put them
+    /// there to say how it is pronounced. Everything else still goes through
+    /// Renikud, and it goes through as the whole sentence rather than word by
+    /// word, since Renikud's vowel choices depend on context. The two outputs
+    /// are then merged by word position.
+    fn phonemize_mixed(&mut self, text: &str) -> Result<String> {
+        let Some(nikud) = self.nikud.as_deref_mut() else {
+            // Nothing can read the marks, so read the text as a person who
+            // ignores them would, rather than failing the whole document.
+            let plain = strip_nikud(text);
+            return self.phonemize_renikud(&plain);
+        };
+        let tokens: Vec<&str> = text.split_whitespace().collect();
+        let mut vocalized: Vec<Option<String>> = Vec::with_capacity(tokens.len());
+        for token in &tokens {
+            vocalized.push(if crate::nikud::is_vocalized(token) {
+                Some(nikud.phonemize_nikud(token)?.trim().to_owned())
+            } else {
+                None
+            });
+        }
+        if vocalized.iter().all(Option::is_some) {
+            return Ok(vocalized.into_iter().flatten().collect::<Vec<_>>().join(" "));
+        }
+
+        let plain = strip_nikud(text);
+        let renikud = self.phonemize_renikud(&plain)?;
+        let renikud_words: Vec<&str> = renikud.split_whitespace().collect();
+        if renikud_words.len() == tokens.len() {
+            let merged: Vec<&str> = vocalized
+                .iter()
+                .zip(&renikud_words)
+                .map(|(from_marks, inferred)| from_marks.as_deref().unwrap_or(inferred))
+                .collect();
+            return Ok(merged.join(" "));
+        }
+
+        // Renikud did not keep one output word per input word, so positions
+        // cannot be trusted. Fall back to reading the plain words one at a
+        // time; it costs context but never mixes words up.
+        let mut out: Vec<String> = Vec::with_capacity(tokens.len());
+        for (token, from_marks) in tokens.iter().zip(vocalized) {
+            match from_marks {
+                Some(ipa) => out.push(ipa),
+                None => out.push(self.phonemize_renikud(token)?.trim().to_owned()),
+            }
+        }
+        Ok(out.join(" "))
     }
 
     fn phonemize_renikud(&mut self, text: &str) -> Result<String> {
