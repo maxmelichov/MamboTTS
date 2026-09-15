@@ -78,6 +78,54 @@ fn marked_consonant(c: char, marks: &str) -> Option<&'static str> {
     }
 }
 
+/// True when the letter's vowel is written on the vav that follows it. A vav
+/// carrying holam or shuruk is the vowel of the consonant before it rather than
+/// a syllable of its own, and the model, which reads the plain letters, has
+/// already put that vowel on the consonant. Counting both spells it twice.
+fn before_mater_vav(normalized: &str, nikud: &HashMap<usize, String>, c: char, marks: &str, end: usize) -> bool {
+    c != 'ו'
+        && marked_vowel(marks).is_none()
+        && normalized[end..].starts_with('ו')
+        && {
+            let vav = nikud.get(&end).map(String::as_str).unwrap_or("");
+            vav.contains('\u{05b9}') || vav.contains('\u{05bc}')
+        }
+}
+
+/// True for an unpointed yod that follows an explicit hiriq, tsere or segol: a
+/// vowel letter, not an extra /j/ inferred from the stripped word.
+fn mater_yod(normalized: &str, nikud: &HashMap<usize, String>, c: char, marks: &str, start: usize) -> bool {
+    c == 'י'
+        && marks.is_empty()
+        && normalized[..start].char_indices().next_back().is_some_and(|(offset, previous)| {
+            matches!(
+                explicit_vowel(previous, nikud.get(&offset).map(String::as_str).unwrap_or("")),
+                Some("i" | "e")
+            )
+        })
+}
+
+/// The vowel a letter actually contributes: the writer's mark wins over the
+/// model's guess, and a letter whose vowel is carried by a following mater
+/// contributes none. The stress search and the output have to agree on this,
+/// or the stress lands on a letter that then spells no vowel and is lost.
+fn effective_vowel<'a>(
+    normalized: &str,
+    nikud: &HashMap<usize, String>,
+    start: usize,
+    end: usize,
+    model: &'a str,
+) -> &'a str {
+    let Some(c) = normalized[start..end].chars().next() else {
+        return model;
+    };
+    let marks = nikud.get(&start).map(String::as_str).unwrap_or("");
+    if mater_yod(normalized, nikud, c, marks, start) || before_mater_vav(normalized, nikud, c, marks, end) {
+        return "\u{2205}";
+    }
+    explicit_vowel(c, marks).unwrap_or(model)
+}
+
 fn explicit_vowel(c: char, marks: &str) -> Option<&'static str> {
     marked_vowel(marks).or_else(|| (c == 'ו' && marks.contains('ּ')).then_some("u"))
 }
@@ -313,16 +361,16 @@ impl G2P {
                         end > start
                             && start >= *ws
                             && start < *we
-                            && explicit_vowel(
-                                normalized[start..end].chars().next().unwrap(),
-                                nikud.get(&start).map(String::as_str).unwrap_or(""),
-                            )
-                            .unwrap_or_else(|| {
+                            && effective_vowel(
+                                &normalized,
+                                &nikud,
+                                start,
+                                end,
                                 self.vowel_vocab
                                     .get(&vowel_ids[tok_idx])
                                     .map(String::as_str)
-                                    .unwrap_or("∅")
-                            }) != "∅"
+                                    .unwrap_or("∅"),
+                            ) != "∅"
                     })
                     .map(|(i, _)| i)
                     .collect();
@@ -418,31 +466,13 @@ impl G2P {
                 .unwrap_or("∅");
 
             let marks = nikud.get(&start).map(String::as_str).unwrap_or("");
-            // An unpointed yod following an explicit hiriq/tsere/segol is a
-            // vowel letter, not an extra /j/ inferred from the stripped word.
-            let mater_yod = c == 'י'
-                && marks.is_empty()
-                && normalized[..start].char_indices().next_back().is_some_and(
-                    |(offset, previous)| {
-                        matches!(
-                            explicit_vowel(
-                                previous,
-                                nikud.get(&offset).map(String::as_str).unwrap_or("")
-                            ),
-                            Some("i" | "e")
-                        )
-                    },
-                );
+            let mater_yod = mater_yod(&normalized, &nikud, c, marks, start);
             let consonant = if mater_yod {
                 "∅"
             } else {
                 marked_consonant(c, marks).unwrap_or(consonant)
             };
-            let vowel = if mater_yod {
-                "∅"
-            } else {
-                explicit_vowel(c, marks).unwrap_or(vowel)
-            };
+            let vowel = effective_vowel(&normalized, &nikud, start, end, vowel);
 
             let word_final = end >= normalized.len()
                 || normalized[end..].starts_with(|c: char| c.is_whitespace() || !c.is_alphabetic());
@@ -509,5 +539,25 @@ mod tests {
         assert_eq!(explicit_vowel('ו', "ּ"), Some("u"));
         assert_eq!(explicit_vowel('ק', ""), None);
         assert_eq!(separate_nikud("אֶן־שלום׃").0, "אן־שלום׃");
+    }
+
+    #[test]
+    fn a_mater_vav_takes_the_vowel_rather_than_adding_one() {
+        let (plain, marks) = separate_nikud("שָׁלוֹם");
+        let lamed = plain.find('ל').expect("lamed");
+        let end = lamed + 'ל'.len_utf8();
+        // The lamed carries no vowel of its own; the holam vav after it does.
+        assert!(before_mater_vav(&plain, &marks, 'ל', "", end));
+        // So the model's guess for the lamed is dropped rather than kept
+        // alongside the writer's mark, which is what spelled שלום as ʃalˈoom.
+        assert_eq!(effective_vowel(&plain, &marks, lamed, end, "o"), "∅");
+    }
+
+    #[test]
+    fn a_consonant_with_its_own_vowel_keeps_it_before_a_vav() {
+        let (plain, marks) = separate_nikud("שָׁלוֹם");
+        let shin = plain.find('ש').expect("shin");
+        let end = shin + 'ש'.len_utf8();
+        assert_eq!(effective_vowel(&plain, &marks, shin, end, "∅"), "a");
     }
 }
