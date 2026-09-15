@@ -92,6 +92,32 @@ uv run scripts/pre_build.py
 `scripts/pre_build.py` reads `CARGO_TARGET_DIR`, so it still finds the sidecar
 and stages it correctly. Moving the checkout itself somewhere shorter works too.
 
+### If the espeak-ng build fails with "speak_lib.h file not found"
+
+```text
+./espeak-ng/src/include/espeak-ng/espeak_ng.h:22:10: fatal error: 'espeak-ng/speak_lib.h' file not found
+```
+
+The header is there in the checkout, so this looks like a broken vendored
+dependency. It is not. `espeak-rs-sys` copies the espeak-ng tree into its
+`OUT_DIR` only `if !espeak_dst.exists()`, so a build interrupted partway
+through that copy leaves a directory that exists but is incomplete, and no
+later build repairs it. Every build after that fails the same way.
+
+Delete the copies and build again:
+
+```console
+rm -rf "$CARGO_TARGET_DIR"/*/build/espeak-rs-sys-*
+```
+
+The usual cause is a build that was killed, either by hand or by the system
+under memory pressure. On a machine with little memory free, capping the
+parallelism avoids the kill in the first place:
+
+```console
+export CARGO_BUILD_JOBS=2 CMAKE_BUILD_PARALLEL_LEVEL=2
+```
+
 ## Linux on x86_64
 
 ### System packages
