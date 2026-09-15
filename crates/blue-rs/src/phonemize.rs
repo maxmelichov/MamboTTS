@@ -6,7 +6,7 @@ use ort::session::Session;
 use regex::Regex;
 use renikud_plus_rs::G2P;
 
-use crate::handling::{NikudPhonemizer, contains_nikud, prepare_text_for_synthesis, strip_nikud};
+use crate::handling::{NikudPhonemizer, contains_nikud, prepare_text_for_synthesis};
 
 /// Languages supported by the BlueTTS model.
 ///
@@ -311,24 +311,39 @@ impl Phonemizer {
             return Ok(text.to_string());
         }
 
-        if contains_nikud(text) {
-            if let Some(nikud) = self.nikud.as_deref_mut() {
-                return nikud.phonemize_nikud(text);
+        if contains_nikud(text) && self.nikud.is_some() {
+            let mut output = String::new();
+            // Preserve punctuation and spacing; only vocalized words use the
+            // optional adapter. All other words still go through Renikud.
+            let words = Regex::new(
+                r"[\u{05d0}-\u{05ea}][\u{0591}-\u{05bd}\u{05bf}\u{05c1}-\u{05c2}\u{05c4}-\u{05c5}\u{05c7}\u{05d0}-\u{05ea}]*",
+            )?;
+            let mut last = 0;
+            for word in words
+                .find_iter(text)
+                .filter(|word| contains_nikud(word.as_str()))
+            {
+                output.push_str(&self.phonemize_renikud(&text[last..word.start()])?);
+                let source = self.phonemize_renikud(word.as_str())?;
+                let vocalized = self
+                    .nikud
+                    .as_deref_mut()
+                    .unwrap()
+                    .phonemize_nikud(word.as_str())?;
+                output.push_str(&crate::handling::transfer_stress(&source, &vocalized));
+                last = word.end();
             }
-            // No vocalized-text phonemizer is attached, and none ships by
-            // default. Refusing here used to throw away a whole document over
-            // one vocalized poem or quotation, because `contains_nikud` is a
-            // whole-chunk check. Read it the way a person who ignores the
-            // marks would: drop the nikud and let Renikud infer the vowels,
-            // which is exactly what it does for the unvocalized text around it.
-            let plain = strip_nikud(text);
-            return self.phonemize_renikud(&plain);
+            output.push_str(&self.phonemize_renikud(&text[last..])?);
+            return Ok(output);
         }
 
         self.phonemize_renikud(text)
     }
 
     fn phonemize_renikud(&mut self, text: &str) -> Result<String> {
+        if !contains_hebrew(text) {
+            return Ok(text.to_owned());
+        }
         let Some(g2p) = self.hebrew.as_mut() else {
             bail!("Hebrew phonemization needs a RenikudPlus model path");
         };
@@ -383,4 +398,41 @@ fn email_to_spoken_english(email: &str) -> String {
         .collect::<Vec<_>>()
         .join(" dot ");
     format!("{local} at {domain}")
+}
+
+#[cfg(test)]
+mod regression_tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires RENIKUD_MODEL pointing to an ONNX model"]
+    fn user_nikud_with_real_model() {
+        let model = std::env::var("RENIKUD_MODEL").expect("set RENIKUD_MODEL");
+        let mut phonemizer = Phonemizer::new(Some(model)).unwrap();
+        for (text, expected) in [("אֶן", "en"), ("קֶלְוִין", "kelvin"), ("לכן תשובה ב׳", "bet")]
+        {
+            let ipa = phonemizer.g2p(text, Language::Hebrew).unwrap();
+            println!("{text}: {ipa}");
+            assert!(ipa.replace('ˈ', "").contains(expected), "{text}: {ipa}");
+        }
+        let plain = phonemizer.g2p("שלום", Language::Hebrew).unwrap();
+        let mixed = phonemizer.g2p("אֶן שלום קֶלְוִין", Language::Hebrew).unwrap();
+        println!("plain: {plain}; mixed: {mixed}");
+        assert!(mixed.replace('ˈ', "").contains("en"));
+        assert!(mixed.replace('ˈ', "").contains("kelvin"));
+        assert!(!mixed.chars().any(|c| ('א'..='ת').contains(&c)));
+        assert!(mixed.contains(plain.trim_start_matches("<he>").trim_end_matches("</he>")));
+        let paused = phonemizer
+            .g2p("לכן תשובה ב׳: אֶן", Language::Hebrew)
+            .unwrap();
+        assert!(paused.contains('.'), "{paused}");
+
+        let mut phonemizer = phonemizer.with_nikud_phonemizer(|word: &str| {
+            assert_eq!(word, "אֶן", "plain words must stay with Renikud");
+            Ok("en".to_owned())
+        });
+        let mixed = phonemizer.g2p("אֶן שלום", Language::Hebrew).unwrap();
+        assert!(mixed.contains("ˈen"));
+        assert!(mixed.contains("ʃalˈom"));
+    }
 }

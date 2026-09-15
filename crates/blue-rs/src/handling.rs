@@ -2,7 +2,7 @@
 //!
 //! Niqqud-bearing words are kept intact for [Phonikud](https://github.com/phonikud/phonikud)
 //! grapheme-to-IPA. Separately, niqqud is stripped so Renikud can run on plain
-//! Hebrew, then Phonikud's stress mark (`ˈ`) is copied onto the Renikud IPA.
+//! Hebrew, then Renikud's stress mark (`ˈ`) is copied onto the vocalized IPA.
 
 use anyhow::{Result, bail};
 use regex::{Captures, Regex};
@@ -38,7 +38,7 @@ pub struct PhoneticSpan {
     pub phonikud_ipa: String,
     /// Renikud IPA from the stripped (plain) form, when available.
     pub renikud_ipa: Option<String>,
-    /// Final IPA: Renikud base with Phonikud stress when both exist,
+    /// Final IPA: Phonikud base with Renikud stress when both exist,
     /// otherwise Phonikud alone.
     pub ipa: String,
 }
@@ -226,23 +226,20 @@ pub fn apply_vowel_stress(ipa: &str, vowel_index: usize) -> String {
     output
 }
 
-/// Copy Phonikud stress placement onto Renikud IPA.
-///
-/// Renikud receives the plain (niqqud-stripped) form; Phonikud keeps stress
-/// from hatama / milra rules. When Phonikud has no stress mark, Renikud IPA is
-/// returned unchanged (aside from whitespace normalize).
-pub fn transfer_stress(phonikud_ipa: &str, renikud_ipa: &str) -> String {
-    let renikud = normalize_spaces(renikud_ipa);
-    match vowel_stress_index(phonikud_ipa) {
-        Some(index) => apply_vowel_stress(&renikud, index),
-        None => renikud,
+/// Copy stress from the source IPA while preserving the target pronunciation.
+/// A source without stress leaves the target unchanged apart from whitespace.
+pub fn transfer_stress(source_ipa: &str, target_ipa: &str) -> String {
+    let target = normalize_spaces(target_ipa);
+    match vowel_stress_index(source_ipa) {
+        Some(index) => apply_vowel_stress(&target, index),
+        None => target,
     }
 }
 
 /// Phonemize one vocalized Hebrew word:
 /// 1. Phonikud on the word **with niqqud**
 /// 2. optionally Renikud on the **stripped** form
-/// 3. merge Phonikud stress onto Renikud IPA
+/// 3. merge Renikud stress onto Phonikud IPA
 pub fn phonemize_nikud_word(
     word: &str,
     phonikud: &mut dyn NikudPhonemizer,
@@ -264,7 +261,7 @@ pub fn phonemize_nikud_word(
             if renikud_ipa.is_empty() {
                 bail!("Renikud returned empty IPA for stripped `{plain}`");
             }
-            let ipa = transfer_stress(&phonikud_ipa, &renikud_ipa);
+            let ipa = transfer_stress(&renikud_ipa, &phonikud_ipa);
             return Ok(PhoneticSpan {
                 source: word.to_owned(),
                 phonikud_ipa,
@@ -344,6 +341,7 @@ pub fn prepare_text_for_synthesis(text: &str, lang: &str) -> String {
     text = normalize_common_text(&text);
     if lang == "he" {
         text = normalize_hebrew_punctuation(&text);
+        text = expand_letter_labels(&text);
         text = expand_geresh_loanwords(&text);
         text = expand_dialogue_quotes(&text);
         text = expand_lamed_before_latin(&text);
@@ -363,7 +361,7 @@ pub fn prepare_text_for_synthesis(text: &str, lang: &str) -> String {
     text = expand_percent_symbols(&text, &lang);
     text = expand_ratios(&text, &lang);
     text = expand_numbers(&text, &lang);
-    strip_silent_separator_tokens(&text)
+    strip_silent_separator_tokens(&text.replace(':', ". "))
 }
 
 fn canonical_lang(lang: &str) -> String {
@@ -402,6 +400,26 @@ fn normalize_common_text(text: &str) -> String {
 
 fn mark_slow_segment(text: impl AsRef<str>) -> String {
     format!("{REF_CODE_MARK_OPEN}{}{REF_CODE_MARK_CLOSE}", text.as_ref())
+}
+
+fn expand_letter_labels(text: &str) -> String {
+    // Restrict expansion to answer/section labels so loanword geresh stays intact.
+    let labels = Regex::new(r"((?:תשובה|אפשרות|סעיף)\s+)([אבגדהו])[׳'’](\s|[.,:;!?]|$)")
+        .expect("valid letter label regex");
+    labels
+        .replace_all(text, |caps: &Captures| {
+            let name = match &caps[2] {
+                "א" => "אָלֶף",
+                "ב" => "בֵּת",
+                "ג" => "גִּימֶל",
+                "ד" => "דָּלֶת",
+                "ה" => "הֵא",
+                "ו" => "וָו",
+                _ => unreachable!(),
+            };
+            format!("{}{name}{}", &caps[1], &caps[3])
+        })
+        .into_owned()
 }
 
 fn expand_geresh_loanwords(text: &str) -> String {
@@ -1067,6 +1085,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn colon_pauses_and_answer_labels_keep_explicit_vowels() {
+        assert_eq!(
+            prepare_text_for_synthesis("לכן תשובה ב׳: אֶן קֶלְוִין", "he"),
+            "לכן תשובה בֵּת. אֶן קֶלְוִין"
+        );
+        for quote in ["'", "׳", "’"] {
+            assert_eq!(
+                prepare_text_for_synthesis(&format!("תשובה ב{quote}"), "he"),
+                "תשובה בֵּת"
+            );
+        }
+        assert!(!prepare_text_for_synthesis("בשעה 12:30", "he").contains('.'));
+        assert_eq!(prepare_text_for_synthesis("ג׳אז", "he"), "ג׳אז");
+    }
+
+    #[test]
     fn keeps_nikud_in_text_path() {
         let mut phonikud = |word: &str| Ok(format!("ipa:{word}"));
         let prepared = prepare_text("הַמְּנוֹרָה מאירה.", Some(&mut phonikud), None, true).unwrap();
@@ -1086,15 +1120,15 @@ mod tests {
     }
 
     #[test]
-    fn hybrid_word_uses_renikud_base_and_phonikud_stress() {
+    fn hybrid_word_keeps_user_vowels_and_adds_renikud_stress() {
         let mut phonikud = |_word: &str| Ok("menˈora".to_owned());
         let mut renikud = |plain: &str| {
             assert!(!contains_nikud(plain));
-            Ok("menora".to_owned())
+            Ok("manˈora".to_owned())
         };
         let span = phonemize_nikud_word("מְנוֹרָה", &mut phonikud, Some(&mut renikud)).unwrap();
         assert_eq!(span.phonikud_ipa, "menˈora");
-        assert_eq!(span.renikud_ipa.as_deref(), Some("menora"));
+        assert_eq!(span.renikud_ipa.as_deref(), Some("manˈora"));
         assert_eq!(span.ipa, "menˈora");
     }
 

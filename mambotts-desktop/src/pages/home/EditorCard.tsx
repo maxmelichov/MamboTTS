@@ -1,5 +1,5 @@
 import { Loader2, Play } from "lucide-react";
-import { useRef, useState } from "react";
+import { useRef, useState, type KeyboardEvent } from "react";
 import { cn } from "../../lib/classNames";
 import { Button, Card } from "../../components/ui";
 import { GenerationControls } from "./GenerationControls";
@@ -127,6 +127,16 @@ export function EditorCard({
   const [editorError, setEditorError] = useState("");
   const [selectedLetter, setSelectedLetter] = useState<number | null>(null);
   const isHebrew = language === "he" || (language === "auto" && /[\u0590-\u05ff]/.test(text));
+  const [direction, setDirection] = useState<"rtl" | "ltr" | null>(null);
+  function changeDirection(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (!event.ctrlKey || !event.shiftKey || event.altKey || event.metaKey) return;
+    const next = event.code === "KeyR" || event.code === "ShiftRight" ? "rtl"
+      : event.code === "KeyL" || event.code === "ShiftLeft" ? "ltr" : null;
+    if (next) {
+      event.preventDefault();
+      setDirection(next);
+    }
+  }
   const textPlaceholder = isHebrew ? "הדביקו כאן טקסט בעברית..." : "Paste your text here...";
 
   function insertPhoneme(phoneme: string) {
@@ -216,11 +226,13 @@ export function EditorCard({
           id="text"
           value={text}
           placeholder={textPlaceholder}
-          dir={isHebrew ? "rtl" : "ltr"}
+          dir={direction ?? (isHebrew ? "rtl" : "ltr")}
+          onKeyDown={changeDirection}
+          title="Ctrl+Shift+R: RTL · Ctrl+Shift+L: LTR"
           lang={isHebrew ? "he" : language === "auto" ? undefined : language}
           onChange={(event) => setText(event.currentTarget.value)}
           disabled={busy}
-          className="min-h-[320px] w-full resize-none bg-white p-8 text-left text-lg font-medium leading-relaxed text-primary outline-none placeholder:text-secondary/20"
+          className="min-h-[320px] w-full resize-none bg-white p-8 text-start text-lg font-medium leading-relaxed text-primary outline-none placeholder:text-secondary/20"
         />
       ) : tab === "diacritics" ? (
         <div className="bg-white p-8">
@@ -228,7 +240,7 @@ export function EditorCard({
             <div><p className="text-sm font-semibold text-primary">Vocalized Hebrew</p><p className="text-xs text-secondary/55">Phonikud adds niqqud and phonetic marks before IPA conversion.</p></div>
             <Button variant="outline" onClick={openDiacritics} disabled={busy || converting || !text.trim()} className="h-9 px-3 text-xs">{converting ? "Adding…" : "Refresh from text"}</Button>
           </div>
-          <textarea value={diacritics} onChange={(event) => setDiacritics(event.currentTarget.value)} dir="rtl" lang="he" disabled={busy} className="min-h-48 w-full resize-y rounded-lg border border-border/50 bg-background/30 p-4 text-lg leading-relaxed text-primary outline-none focus:border-primary/50" />
+          <textarea value={diacritics} onChange={(event) => setDiacritics(event.currentTarget.value)} dir={direction ?? "rtl"} onKeyDown={changeDirection} lang="he" disabled={busy} className="min-h-48 w-full resize-y rounded-lg border border-border/50 bg-background/30 p-4 text-lg leading-relaxed text-primary outline-none focus:border-primary/50" />
           {editorError && <p className="mt-3 text-xs text-red-600">{editorError}</p>}
           <div className="mt-5 space-y-3">
             <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-secondary/40">Pick a letter in your vocalized text</p>

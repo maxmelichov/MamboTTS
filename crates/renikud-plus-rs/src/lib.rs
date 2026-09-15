@@ -29,6 +29,59 @@ fn normalize_graphemes(text: &str) -> String {
         .collect()
 }
 
+// Keep marks aligned to plain-text byte offsets: the model sees its usual input,
+// while decoding can honor the user's vowels and consonant marks.
+fn separate_nikud(text: &str) -> (String, HashMap<usize, String>) {
+    let mut plain = String::new();
+    let mut marks = HashMap::<usize, String>::new();
+    let mut letter = None;
+    for c in text.nfd() {
+        if matches!(c, '\u{0591}'..='\u{05bd}' | '\u{05bf}' | '\u{05c1}'..='\u{05c2}' | '\u{05c4}'..='\u{05c5}' | '\u{05c7}')
+        {
+            if let Some(offset) = letter {
+                marks.entry(offset).or_default().push(c);
+            }
+        } else {
+            letter = is_hebrew(c).then_some(plain.len());
+            plain.push(c);
+        }
+    }
+    (plain, marks)
+}
+
+fn marked_vowel(marks: &str) -> Option<&'static str> {
+    marks.chars().find_map(|c| match c {
+        'ְ' => Some("∅"),
+        'ֱ' | 'ֵ' | 'ֶ' => Some("e"),
+        'ֲ' | 'ַ' | 'ָ' => Some("a"),
+        'ֳ' | 'ֹ' | 'ֺ' | 'ׇ' => Some("o"),
+        'ִ' => Some("i"),
+        'ֻ' => Some("u"),
+        _ => None,
+    })
+}
+
+fn marked_consonant(c: char, marks: &str) -> Option<&'static str> {
+    match c {
+        'ב' if marks.contains('ּ') => Some("b"),
+        'כ' | 'ך' if marks.contains('ּ') => Some("k"),
+        'פ' | 'ף' if marks.contains('ּ') => Some("p"),
+        'ב' if marks.contains('ֿ') => Some("v"),
+        'כ' | 'ך' if marks.contains('ֿ') => Some("χ"),
+        'פ' | 'ף' if marks.contains('ֿ') => Some("f"),
+        'ש' if marks.contains('ׁ') => Some("ʃ"),
+        'ש' if marks.contains('ׂ') => Some("s"),
+        'ו' if marks.contains('ּ') && marked_vowel(marks).is_none() => Some("∅"),
+        'ו' if marks.contains('ֹ') => Some("∅"),
+        'ו' if marked_vowel(marks).is_some() => Some("v"),
+        _ => None,
+    }
+}
+
+fn explicit_vowel(c: char, marks: &str) -> Option<&'static str> {
+    marked_vowel(marks).or_else(|| (c == 'ו' && marks.contains('ּ')).then_some("u"))
+}
+
 pub struct G2P {
     session: Session,
     vocab: HashMap<char, i64>,
@@ -117,7 +170,8 @@ impl G2P {
             .filter_map(|(k, v)| k.parse::<i64>().ok().map(|id| (id, v)))
             .collect();
 
-        let raw_mask: HashMap<String, Vec<i64>> = serde_json::from_str(&letter_consonant_mask_json)?;
+        let raw_mask: HashMap<String, Vec<i64>> =
+            serde_json::from_str(&letter_consonant_mask_json)?;
         let letter_consonant_mask: HashMap<char, Vec<i64>> = raw_mask
             .into_iter()
             .filter_map(|(k, v)| k.chars().next().map(|c| (c, v)))
@@ -180,7 +234,7 @@ impl G2P {
         }
 
         let text = normalize_graphemes(text);
-        let normalized: String = text.nfd().collect();
+        let (normalized, nikud) = separate_nikud(&text);
         let (ids, mask, offsets) = self.tokenize(&normalized);
         let len = ids.len();
 
@@ -259,12 +313,16 @@ impl G2P {
                         end > start
                             && start >= *ws
                             && start < *we
-                            && self
-                                .vowel_vocab
-                                .get(&vowel_ids[tok_idx])
-                                .map(String::as_str)
-                                .unwrap_or("∅")
-                                != "∅"
+                            && explicit_vowel(
+                                normalized[start..end].chars().next().unwrap(),
+                                nikud.get(&start).map(String::as_str).unwrap_or(""),
+                            )
+                            .unwrap_or_else(|| {
+                                self.vowel_vocab
+                                    .get(&vowel_ids[tok_idx])
+                                    .map(String::as_str)
+                                    .unwrap_or("∅")
+                            }) != "∅"
                     })
                     .map(|(i, _)| i)
                     .collect();
@@ -359,9 +417,35 @@ impl G2P {
                 .map(String::as_str)
                 .unwrap_or("∅");
 
+            let marks = nikud.get(&start).map(String::as_str).unwrap_or("");
+            // An unpointed yod following an explicit hiriq/tsere/segol is a
+            // vowel letter, not an extra /j/ inferred from the stripped word.
+            let mater_yod = c == 'י'
+                && marks.is_empty()
+                && normalized[..start].char_indices().next_back().is_some_and(
+                    |(offset, previous)| {
+                        matches!(
+                            explicit_vowel(
+                                previous,
+                                nikud.get(&offset).map(String::as_str).unwrap_or("")
+                            ),
+                            Some("i" | "e")
+                        )
+                    },
+                );
+            let consonant = if mater_yod {
+                "∅"
+            } else {
+                marked_consonant(c, marks).unwrap_or(consonant)
+            };
+            let vowel = if mater_yod {
+                "∅"
+            } else {
+                explicit_vowel(c, marks).unwrap_or(vowel)
+            };
+
             let word_final = end >= normalized.len()
-                || normalized[end..]
-                    .starts_with(|c: char| c.is_whitespace() || !c.is_alphabetic());
+                || normalized[end..].starts_with(|c: char| c.is_whitespace() || !c.is_alphabetic());
             if c == 'ח' && word_final && vowel == "a" {
                 if stressed {
                     result.push_str(STRESS);
@@ -386,5 +470,44 @@ impl G2P {
 
         drop(outputs);
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nikud_stays_aligned_in_mixed_text() {
+        let (plain, marks) = separate_nikud("לכן אֶן קֶלְוִין שלום");
+        assert_eq!(plain, "לכן אן קלוין שלום");
+        assert_eq!(
+            explicit_vowel('א', &marks[&plain.find('א').unwrap()]),
+            Some("e")
+        );
+        assert_eq!(
+            explicit_vowel('ק', &marks[&plain.find('ק').unwrap()]),
+            Some("e")
+        );
+        assert_eq!(
+            explicit_vowel('ל', &marks[&(plain.find('ק').unwrap() + 2)]),
+            Some("∅")
+        );
+        assert_eq!(
+            explicit_vowel('ו', &marks[&plain.find('ו').unwrap()]),
+            Some("i")
+        );
+        assert!(!marks.contains_key(&plain.find('ש').unwrap()));
+    }
+
+    #[test]
+    fn explicit_consonants_and_vowels_override_predictions() {
+        assert_eq!(marked_consonant('ב', "ֵּ"), Some("b"));
+        assert_eq!(marked_consonant('ש', "ׂ"), Some("s"));
+        assert_eq!(marked_consonant('ו', "ִ"), Some("v"));
+        assert_eq!(marked_consonant('ו', "ּ"), Some("∅"));
+        assert_eq!(explicit_vowel('ו', "ּ"), Some("u"));
+        assert_eq!(explicit_vowel('ק', ""), None);
+        assert_eq!(separate_nikud("אֶן־שלום׃").0, "אן־שלום׃");
     }
 }
