@@ -1,0 +1,9 @@
+# Shell scripts run through `sh` on macOS and Linux, and a carriage return at
+# the end of each line breaks them: `set -eu` arrives as `set -eu\r` and the
+# shell rejects it. A Windows checkout with core.autocrlf converts line endings
+# unless told otherwise, and install.sh was uploaded to five releases that way,
+# which broke the one-line install on both platforms. Pin them to LF.
+*.sh text eol=lf
+
+# PowerShell is happy with either, but it is only ever run on Windows.
+*.ps1 text eol=crlf
