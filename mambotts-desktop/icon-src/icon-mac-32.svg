@@ -1,0 +1,8 @@
+<!-- macOS-only 32 px tier. Rounded square kept; record enlarged, label plus
+     spindle hole instead of the "MT", which is unreadable at this size. -->
+<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+  <rect x="0" y="0" width="32" height="32" rx="2.7" fill="#FFD23F"/>
+  <circle cx="16" cy="16" r="12.4" fill="#33270F"/>
+  <circle cx="16" cy="16" r="5.8" fill="#FFF4DC"/>
+  <circle cx="16" cy="16" r="1.4" fill="#33270F"/>
+</svg>

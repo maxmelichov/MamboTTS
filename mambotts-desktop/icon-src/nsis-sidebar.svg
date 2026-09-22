@@ -1,0 +1,56 @@
+<!-- Source for src-tauri/installer/sidebar.bmp - the 164x314 panel NSIS shows on
+     the welcome and finish pages. Exported as a 24-bit BMP at exactly 164x314. -->
+<svg width="164" height="314" viewBox="0 0 164 314" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3D2F12"/>
+      <stop offset="1" stop-color="#241A08"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="164" height="314" fill="url(#bg)"/>
+  <g stroke="#FFD23F" fill="none" opacity="0.10">
+    <circle cx="82" cy="116" r="86"/>
+    <circle cx="82" cy="116" r="102"/>
+    <circle cx="82" cy="116" r="120"/>
+  </g>
+  <g transform="translate(28,58) scale(0.844)">
+    <circle cx="64" cy="64" r="60.8" fill="#FFD23F"/>
+    <circle cx="64" cy="64" r="59.6" fill="none" stroke="#E0A81E" stroke-width="2.4"/>
+    <g transform="translate(64,64)">
+      <g fill="#2B1F0E" opacity="0.85">
+        <path d="M0 -57 L4.5 -43.6 L-4.5 -43.6 Z"/>
+        <path d="M54.2 -17.9 L41.4 -12.3 L44.2 -21.2 Z"/>
+        <path d="M54.2 17.9 L44.2 21.2 L41.4 12.3 Z"/>
+        <path d="M0 57 L-4.5 43.6 L4.5 43.6 Z"/>
+        <path d="M-54.2 17.9 L-41.4 12.3 L-44.2 21.2 Z"/>
+        <path d="M-54.2 -17.9 L-44.2 -21.2 L-41.4 -12.3 Z"/>
+      </g>
+      <g transform="rotate(-5)">
+        <circle cx="2.2" cy="3.4" r="37" fill="#C79A10"/>
+        <circle cx="0" cy="0" r="37" fill="#33270F" stroke="#F5F0E8" stroke-width="2.4"/>
+        <circle cx="0" cy="0" r="29" fill="none" stroke="#6B5622" stroke-width="2"/>
+        <circle cx="0" cy="0" r="24.6" fill="none" stroke="#6B5622" stroke-width="2"/>
+        <path d="M-25.7 -18.4 A31.9 31.9 0 0 1 -5.6 -31.3" fill="none" stroke="#F5F0E8"
+              stroke-width="2.4" stroke-linecap="round" opacity="0.8"/>
+        <circle cx="0" cy="0" r="19" fill="#FFF4DC"/>
+        <circle cx="0" cy="0" r="19" fill="none" stroke="#D8CFC0" stroke-width="1.6"/>
+        <g transform="scale(1.45)" fill="none" stroke="#33270F" stroke-width="3.2"
+           stroke-linecap="round" stroke-linejoin="round">
+          <path d="M-10 6 V-6 L-5.5 0 L-1 -6 V6"/>
+          <path d="M2 -6 H10"/>
+          <path d="M6 -6 V6"/>
+        </g>
+      </g>
+    </g>
+  </g>
+  <text x="82" y="222" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif"
+        font-size="24" font-weight="700" fill="#FFD23F">MamboTTS</text>
+  <rect x="62" y="232" width="40" height="3" rx="1.5" fill="#4ECDC4"/>
+  <text x="82" y="256" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif"
+        font-size="11" fill="#F5F0E8" opacity="0.75">Hebrew text to speech</text>
+  <text x="82" y="272" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif"
+        font-size="11" fill="#F5F0E8" opacity="0.75">that runs on your machine</text>
+  <circle cx="72" cy="294" r="3" fill="#FF6B35"/>
+  <circle cx="82" cy="294" r="3" fill="#FFD23F" opacity="0.6"/>
+  <circle cx="92" cy="294" r="3" fill="#4ECDC4"/>
+</svg>

@@ -1,0 +1,8 @@
+<!-- macOS-only 16 px tier (Finder list view, Cmd-Tab is never this small).
+     macOS keeps the full-bleed rounded square, so here the simplification is
+     just "record only, blown up on the yellow tile". -->
+<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+  <rect x="0" y="0" width="16" height="16" rx="1.4" fill="#FFD23F"/>
+  <circle cx="8" cy="8" r="5.6" fill="#33270F"/>
+  <circle cx="8" cy="8" r="2.5" fill="#FFF4DC"/>
+</svg>

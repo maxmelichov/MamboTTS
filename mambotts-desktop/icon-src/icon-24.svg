@@ -1,0 +1,8 @@
+<!-- MamboTTS mark, 24 px tier (21-28 px).
+     Same three shapes as the 16 px tier, with a touch of separation between the
+     record edge and the label so the vinyl reads as a ring, not a dot. -->
+<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="12" cy="12" r="11.3" fill="#FFD23F"/>
+  <circle cx="12" cy="12" r="8.3" fill="#33270F"/>
+  <circle cx="12" cy="12" r="3.6" fill="#FFF4DC"/>
+</svg>
