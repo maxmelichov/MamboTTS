@@ -8,5 +8,7 @@ description = "RenikudPlus Hebrew G2P via ONNX (gender-conditioned speaker input
 [dependencies]
 anyhow = "1"
 ort = { version = "=2.0.0-rc.11", features = ["ndarray"] }
+regex = "1"
 serde_json = "1"
 unicode-normalization = "0.1"
+unicode-properties = { version = "0.1", default-features = false, features = ["general-category"] }
