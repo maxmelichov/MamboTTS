@@ -370,6 +370,62 @@ fn email_to_spoken_english(email: &str) -> String {
 }
 
 #[cfg(test)]
+mod espeak_tests {
+    use super::*;
+
+    /// Issue #12: eSpeak-backed languages came back as one run-on token, with
+    /// no word breaks and no punctuation for the model to pause on.
+    #[test]
+    fn keeps_word_breaks_and_punctuation() {
+        let mut phonemizer = Phonemizer::with_language(None::<&str>, Language::English).unwrap();
+        for (language, text, expected) in [
+            (
+                Language::English,
+                "Hello, world. Goodbye!",
+                "<en>həlˈoʊ, wˈɜːld. ɡʊdbˈaɪ!</en>",
+            ),
+            (
+                Language::Spanish,
+                "Hola, mundo. ¡Adiós!",
+                "<es>ˈola, mˈundo. ¡aðjˈos!</es>",
+            ),
+            (
+                Language::German,
+                "Hallo, Welt. Tschüss!",
+                "<de>hˈaloː, vˈɛlt. tʃˈʏs!</de>",
+            ),
+            (
+                Language::Italian,
+                "Ciao, mondo. Arrivederci!",
+                "<it>tʃˈao, mˈondo. arɾivedˈɛrtʃɪ!</it>",
+            ),
+        ] {
+            let ipa = phonemizer.g2p(text, language).unwrap();
+            assert_eq!(ipa, expected, "{}", language.code());
+        }
+    }
+
+    #[test]
+    fn keeps_question_marks_and_sentence_breaks() {
+        let mut phonemizer = Phonemizer::with_language(None::<&str>, Language::English).unwrap();
+        let ipa = phonemizer
+            .g2p(
+                "How are you today? I am fine, thank you.",
+                Language::English,
+            )
+            .unwrap();
+        assert!(ipa.contains("? "), "{ipa}");
+        assert!(ipa.contains(", "), "{ipa}");
+        assert!(ipa.ends_with(".</en>"), "{ipa}");
+        // One word break per word, bar the pairs espeak runs together.
+        assert!(
+            ipa.split_whitespace().count() >= 7,
+            "{ipa} has too few word breaks"
+        );
+    }
+}
+
+#[cfg(test)]
 mod regression_tests {
     use super::*;
 

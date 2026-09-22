@@ -498,7 +498,7 @@ name = "blue-rs"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "espeak-rs 0.1.9 (git+https://github.com/thewh1teagle/piper-rs?rev=616e6823cc29955bb0cf66532637b352b26fa292)",
+ "espeak-rs",
  "heb-tts-normalizer",
  "hound",
  "ndarray",
@@ -1387,30 +1387,12 @@ checksum = "dea2df4cf52843e0452895c455a1a2cfbb842a1e7329671acf418fdc53ed4c59"
 name = "espeak-rs"
 version = "0.1.9"
 dependencies = [
- "espeak-rs-sys 0.1.9",
-]
-
-[[package]]
-name = "espeak-rs"
-version = "0.1.9"
-source = "git+https://github.com/thewh1teagle/piper-rs?rev=616e6823cc29955bb0cf66532637b352b26fa292#616e6823cc29955bb0cf66532637b352b26fa292"
-dependencies = [
- "espeak-rs-sys 0.1.9 (git+https://github.com/thewh1teagle/piper-rs?rev=616e6823cc29955bb0cf66532637b352b26fa292)",
+ "espeak-rs-sys",
 ]
 
 [[package]]
 name = "espeak-rs-sys"
 version = "0.1.9"
-dependencies = [
- "bindgen 0.69.5",
- "cmake",
- "glob",
-]
-
-[[package]]
-name = "espeak-rs-sys"
-version = "0.1.9"
-source = "git+https://github.com/thewh1teagle/piper-rs?rev=616e6823cc29955bb0cf66532637b352b26fa292#616e6823cc29955bb0cf66532637b352b26fa292"
 dependencies = [
  "bindgen 0.69.5",
  "cmake",

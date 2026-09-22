@@ -7,7 +7,7 @@ edition = "2024"
 zip = { version = "2.2", default-features = false, features = ["deflate"] }
 anyhow = "1"
 heb-tts-normalizer = "=0.2.0"
-espeak-rs = { git = "https://github.com/thewh1teagle/piper-rs", rev = "616e6823cc29955bb0cf66532637b352b26fa292", package = "espeak-rs" }
+espeak-rs = { path = "../espeak-rs" }
 hound = "3.5.1"
 ndarray = "0.17"
 ort = { version = "=2.0.0-rc.11", features = ["ndarray"] }
