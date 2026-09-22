@@ -1,6 +1,6 @@
 use std::{
-    path::Path,
     collections::HashMap,
+    path::Path,
     sync::{
         Arc, Mutex as StdMutex, RwLock, RwLockReadGuard,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -354,30 +354,36 @@ mod tests {
         .await;
         assert!(queued.is_err(), "engine work should wait for the holder");
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use std::path::Path;
-
-    use super::ServerState;
-
-    fn state(loaded: bool) -> ServerState {
-        ServerState {
-            ctx: None,
-            runtime: if loaded { "blue".into() } else { String::new() },
-            model_name: String::new(),
+    fn info(loaded: bool) -> ModelInfo {
+        ModelInfo {
+            loaded,
+            runtime: "blue".into(),
             model_path: "/m/bluetts-2.5".into(),
             codec_path: "/m/bluetts-2.5/renikud-plus.onnx".into(),
+            ..ModelInfo::default()
         }
     }
 
     #[test]
-    fn nothing_counts_as_loaded_without_a_runtime() {
+    fn nothing_counts_as_loaded_until_a_model_is_in_place() {
         let model = Path::new("/m/bluetts-2.5");
         let renikud = Path::new("/m/bluetts-2.5/renikud-plus.onnx");
-        // No ctx means nothing is loaded, whatever the recorded paths say.
-        assert!(!state(true).has_loaded("blue", model, renikud));
-        assert!(!state(false).has_loaded("blue", model, renikud));
+        // The recorded paths mean nothing while no model is loaded, which is
+        // what keeps the reuse shortcut from skipping the very first load.
+        assert!(!info(false).has_loaded("blue", model, renikud));
+        assert!(info(true).has_loaded("blue", model, renikud));
+    }
+
+    #[test]
+    fn a_different_model_is_not_the_loaded_one() {
+        let renikud = Path::new("/m/bluetts-2.5/renikud-plus.onnx");
+        assert!(!info(true).has_loaded("blue", Path::new("/m/other"), renikud));
+        assert!(!info(true).has_loaded(
+            "blue",
+            Path::new("/m/bluetts-2.5"),
+            Path::new("/m/other/renikud-plus.onnx"),
+        ));
+        assert!(!info(true).has_loaded("kokoro", Path::new("/m/bluetts-2.5"), renikud));
     }
 }
