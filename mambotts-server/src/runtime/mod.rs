@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::Result;
 use serde::Serialize;
@@ -37,14 +37,6 @@ pub trait Runtime: Send {
         speed: f32,
         on_chunk: &mut dyn FnMut(&[f32], u32) -> Result<()>,
     ) -> Result<Vec<f32>>;
-    fn synthesize_to_file(
-        &mut self,
-        text: &str,
-        voice: Option<&str>,
-        output_path: &Path,
-        language: &str,
-        speed: f32,
-    ) -> Result<()>;
 }
 
 pub enum RuntimeParams {

@@ -20,6 +20,9 @@ Recommended flow:
 5. Optional IPA preview: POST /v1/phonemize, then edit phonemes client-side.
 6. Call POST /v1/audio/speech to synthesize speech. For edited IPA, set `input_is_phonemes: true` and `stream: true` (phoneme input requires streaming).
 7. Non-streaming responses return a standalone WAV (`stream: false`). Streaming responses use MamboTTS binary frames.
+8. A streaming response carries an `x-mambotts-generation-id` header. POST it to /v1/audio/speech/cancel as `{"id":"..."}` to stop that generation; an empty body stops every running one. Dropping the response also stops it, at the next chunk boundary.
+
+Status endpoints (/health, /v1/models, /v1/voices, /v1/languages, /v1/phonemes) answer while a synthesis is running; `/health` reports `busy`. Anything that needs the engine (speech, phonemize, diacritize, model load) waits its turn.
 
 Example:
 
@@ -48,6 +51,7 @@ Useful endpoints for the desktop Phoneme editor:
 - GET /v1/phonemes → BlueTTS phoneme inventory
 - POST /v1/diacritize with `{"input":"..."}` → `{"phonemes":"<Hebrew with niqqud>"}` (RenikudPlus; typed niqqud is kept, stress marked with the hatama U+05AB)
 - POST /v1/audio/speech with `input_is_phonemes: true` and `stream: true` to speak edited IPA
+- POST /v1/audio/speech/cancel with `{"id":"<x-mambotts-generation-id>"}` to stop a generation
 
 If the API returns no_model, ask the user to install the MamboTTS model in the desktop app first.
 "#;

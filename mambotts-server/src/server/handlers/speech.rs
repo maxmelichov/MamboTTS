@@ -2,17 +2,42 @@ use axum::{
     Json,
     body::{Body, Bytes},
     extract::State,
-    http::{HeaderValue, StatusCode, header},
+    http::{HeaderName, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
 use futures_util::stream;
 
 use super::super::{
-    dto::{PhonemeInventoryResponse, PhonemizeBody, PhonemizeResponse, SpeechBody},
+    dto::{
+        CancelBody, CancelResponse, PhonemeInventoryResponse, PhonemizeBody, PhonemizeResponse,
+        SpeechBody,
+    },
     errors::write_error,
-    state::SharedServer,
+    state::{Cancelled, EngineError, SharedServer},
     util::first_non_empty,
 };
+
+/// Identifies a streamed generation so a client can cancel it by id through
+/// `POST /v1/audio/speech/cancel`.
+pub const GENERATION_ID_HEADER: HeaderName = HeaderName::from_static("x-mambotts-generation-id");
+
+fn engine_error(err: EngineError) -> Response {
+    match err {
+        EngineError::NoModel => write_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "no_model",
+            "no model loaded",
+        ),
+        EngineError::Cancelled => {
+            write_error(StatusCode::CONFLICT, "cancelled", Cancelled.to_string())
+        }
+        EngineError::Failed(err) => write_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            err.to_string(),
+        ),
+    }
+}
 
 pub async fn phonemize(
     State(server): State<SharedServer>,
@@ -25,37 +50,29 @@ pub async fn phonemize(
             "request body must contain input",
         );
     }
-    let mut inner = server.inner.lock().await;
-    let Some(ctx) = inner.ctx.as_mut() else {
-        return write_error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "no_model",
-            "no model loaded",
-        );
-    };
-    match ctx.phonemize(&body.input, &body.language) {
+    let PhonemizeBody { input, language } = body;
+    match server
+        .with_engine(move |ctx| ctx.phonemize(&input, &language))
+        .await
+    {
         Ok(phonemes) => Json(PhonemizeResponse { phonemes }).into_response(),
-        Err(err) => write_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal_error",
-            err.to_string(),
-        ),
+        Err(err) => engine_error(err),
     }
 }
 
 pub async fn phoneme_inventory(State(server): State<SharedServer>) -> Response {
-    let inner = server.inner.lock().await;
-    let Some(ctx) = inner.ctx.as_ref() else {
+    let info = server.info();
+    if !info.loaded {
         return write_error(
             StatusCode::SERVICE_UNAVAILABLE,
             "no_model",
             "no model loaded",
         );
-    };
+    }
     Json(PhonemeInventoryResponse {
-        phonemes: ctx
-            .supported_phonemes()
-            .into_iter()
+        phonemes: info
+            .phonemes
+            .iter()
             .filter(|character| character.is_alphabetic() || !character.is_ascii())
             .map(|character| character.to_string())
             .collect(),
@@ -74,29 +91,18 @@ pub async fn diacritize(
             "request body must contain input",
         );
     }
-    let mut inner = server.inner.lock().await;
-    let Some(ctx) = inner.ctx.as_mut() else {
-        return write_error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "no_model",
-            "no model loaded",
-        );
-    };
-    match ctx.diacritize(&body.input) {
+    let input = body.input;
+    match server.with_engine(move |ctx| ctx.diacritize(&input)).await {
         Ok(text) => Json(PhonemizeResponse { phonemes: text }).into_response(),
-        Err(err) => write_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal_error",
-            err.to_string(),
-        ),
+        Err(err) => engine_error(err),
     }
 }
 
 /// Whether the loaded runtime can clone a voice from a reference
 /// recording, read from the registry so the answer tracks the manifest
 /// rather than a hardcoded runtime name.
-async fn supports_voice_reference(server: &SharedServer) -> bool {
-    let runtime = server.inner.lock().await.runtime.clone();
+fn supports_voice_reference(server: &SharedServer) -> bool {
+    let runtime = server.info().runtime.clone();
     mambotts_registry::runtime(&runtime)
         .is_some_and(|manifest| manifest.capabilities.voice_reference)
 }
@@ -105,7 +111,14 @@ async fn supports_voice_reference(server: &SharedServer) -> bool {
     post,
     path = "/v1/audio/speech",
     request_body = SpeechBody,
-    responses((status = 200, content_type = "audio/wav"), (status = 400), (status = 503), (status = 500))
+    responses(
+        (status = 200, content_type = "audio/wav",
+         headers(("x-mambotts-generation-id" = String, description = "Streamed responses only: the id to pass to /v1/audio/speech/cancel"))),
+        (status = 400),
+        (status = 409, description = "The generation was cancelled"),
+        (status = 503),
+        (status = 500)
+    )
 )]
 pub async fn speech(State(server): State<SharedServer>, Json(body): Json<SpeechBody>) -> Response {
     if body.input.is_empty() {
@@ -122,7 +135,7 @@ pub async fn speech(State(server): State<SharedServer>, Json(body): Json<SpeechB
             "only wav response_format is supported",
         );
     }
-    if !body.voice_reference.is_empty() && !supports_voice_reference(&server).await {
+    if !body.voice_reference.is_empty() && !supports_voice_reference(&server) {
         return write_error(
             StatusCode::BAD_REQUEST,
             "invalid_request",
@@ -131,7 +144,7 @@ pub async fn speech(State(server): State<SharedServer>, Json(body): Json<SpeechB
         );
     }
     if body.stream {
-        return streaming_wav_response(server, body).await;
+        return streaming_wav_response(server, body);
     }
     if body.input_is_phonemes {
         return write_error(
@@ -141,53 +154,79 @@ pub async fn speech(State(server): State<SharedServer>, Json(body): Json<SpeechB
         );
     }
 
-    let Ok(tmp) = tempfile::Builder::new()
-        .prefix("mambotts-speech-")
-        .suffix(".wav")
-        .tempfile()
-    else {
-        return write_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal_error",
-            "failed to create temp output",
-        );
-    };
-
-    let out_path = tmp.path().to_path_buf();
     let voice = first_non_empty([body.voice_reference.clone(), body.voice.clone()]);
     let speed = resolve_speed(body.speed);
-    {
-        let mut inner = server.inner.lock().await;
-        let Some(ctx) = inner.ctx.as_mut() else {
-            return write_error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "no_model",
-                "no model loaded",
-            );
-        };
-        if let Err(err) = ctx.synthesize_to_file(
-            &body.input,
-            (!voice.is_empty()).then_some(voice.as_str()),
-            &out_path,
-            &body.language,
-            speed,
-        ) {
-            return write_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal_error",
-                err.to_string(),
-            );
-        }
+    let generation = server.begin_generation();
+    let cancel = generation.cancel_flag();
+    // If this handler is dropped (the connection went away), stop the work.
+    let _cancel_on_drop = cancel.cancel_on_drop();
+    let SpeechBody {
+        input, language, ..
+    } = body;
+    let result = server
+        .with_engine(move |ctx| {
+            let _generation = generation;
+            cancel.check()?;
+            let sample_rate = ctx.sample_rate();
+            let audio = ctx.synthesize_streaming(
+                &input,
+                (!voice.is_empty()).then_some(voice.as_str()),
+                &language,
+                speed,
+                &mut |_, _| cancel.check(),
+            )?;
+            wav_bytes(&audio, sample_rate)
+        })
+        .await;
+    match result {
+        Ok(data) => wav_response(data),
+        Err(err) => engine_error(err),
     }
+}
 
-    let Ok(data) = std::fs::read(&out_path) else {
-        return write_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal_error",
-            "failed to read output WAV",
-        );
+#[utoipa::path(
+    post,
+    path = "/v1/audio/speech/cancel",
+    request_body(content = Option<CancelBody>, description = "Omit the body or the id to cancel every generation"),
+    responses(
+        (status = 200, body = CancelResponse),
+        (status = 404, description = "No running generation has that id")
+    )
+)]
+pub async fn cancel_speech(
+    State(server): State<SharedServer>,
+    body: Option<Json<CancelBody>>,
+) -> Response {
+    let body = body.map(|Json(body)| body).unwrap_or_default();
+    let id = match body
+        .id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+    {
+        None => None,
+        Some(raw) => match raw.parse::<u64>() {
+            Ok(id) => Some(id),
+            Err(_) => return generation_not_found(),
+        },
     };
-    wav_response(data)
+    let cancelled = server.cancel_generations(id);
+    if id.is_some() && cancelled == 0 {
+        return generation_not_found();
+    }
+    Json(CancelResponse {
+        status: "cancelled".into(),
+        cancelled,
+    })
+    .into_response()
+}
+
+fn generation_not_found() -> Response {
+    write_error(
+        StatusCode::NOT_FOUND,
+        "not_found",
+        "no running generation has that id",
+    )
 }
 
 /// Stream self-contained WAV chunks using a small binary frame protocol:
@@ -195,86 +234,94 @@ pub async fn speech(State(server): State<SharedServer>, Json(body): Json<SpeechB
 /// playable chunk, `2` is the complete normalized WAV, and `3` is UTF-8 error
 /// text. The desktop client consumes this protocol and emits each chunk to the
 /// webview immediately.
-async fn streaming_wav_response(server: SharedServer, body: SpeechBody) -> Response {
-    {
-        let inner = server.inner.lock().await;
-        if inner.ctx.is_none() {
-            return write_error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "no_model",
-                "no model loaded",
-            );
-        }
+///
+/// The generation stops at the next chunk boundary when it is cancelled
+/// through `/v1/audio/speech/cancel` or when the client drops the response.
+fn streaming_wav_response(server: SharedServer, body: SpeechBody) -> Response {
+    if !server.info().loaded {
+        return write_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "no_model",
+            "no model loaded",
+        );
     }
 
     let voice = first_non_empty([body.voice_reference.clone(), body.voice.clone()]);
     let speed = resolve_speed(body.speed);
+    let generation = server.begin_generation();
+    let generation_id = generation.id();
+    let cancel = generation.cancel_flag();
+    // Owned by the response body: when hyper drops the body because the client
+    // disconnected, the run is cancelled rather than finishing for nobody.
+    let body_guard = cancel.cancel_on_drop();
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(2);
-    tokio::task::spawn_blocking(move || {
-        let mut inner = server.inner.blocking_lock();
-        let Some(ctx) = inner.ctx.as_mut() else {
-            let _ = tx.blocking_send(Ok(frame(3, b"no model loaded".to_vec())));
-            return;
-        };
-        let sample_rate = ctx.sample_rate();
-        let mut send_chunk = |samples: &[f32], sample_rate: u32| -> anyhow::Result<()> {
-            // Text chunking can end with a separator-only segment. Do not send
-            // an empty WAV frame to clients, because it can interrupt queued
-            // playback without contributing any audio.
-            if samples.is_empty() {
-                return Ok(());
-            }
-            let wav = wav_bytes(samples, sample_rate)?;
-            tx.blocking_send(Ok(frame(1, wav)))
-                .map_err(|_| anyhow::anyhow!("streaming client disconnected"))
-        };
-        let result = if body.input_is_phonemes {
-            ctx.synthesize_phonemes_streaming(
-                &body.input,
-                (!voice.is_empty()).then_some(voice.as_str()),
-                &body.language,
-                speed,
-                &mut send_chunk,
-            )
-        } else {
-            ctx.synthesize_streaming(
-                &body.input,
-                (!voice.is_empty()).then_some(voice.as_str()),
-                &body.language,
-                speed,
-                &mut send_chunk,
-            )
-        };
-        match result {
-            Ok(audio) => {
+    let error_tx = tx.clone();
+    let worker = server.clone();
+    tokio::spawn(async move {
+        let result = worker
+            .with_engine(move |ctx| {
+                let _generation = generation;
+                // It may have been cancelled while it waited for the engine.
+                cancel.check()?;
+                let sample_rate = ctx.sample_rate();
+                let mut send_chunk = |samples: &[f32], sample_rate: u32| -> anyhow::Result<()> {
+                    cancel.check()?;
+                    // Text chunking can end with a separator-only segment. Do not send
+                    // an empty WAV frame to clients, because it can interrupt queued
+                    // playback without contributing any audio.
+                    if samples.is_empty() {
+                        return Ok(());
+                    }
+                    let wav = wav_bytes(samples, sample_rate)?;
+                    // A closed channel means the client is gone.
+                    tx.blocking_send(Ok(frame(1, wav)))
+                        .map_err(|_| anyhow::Error::from(Cancelled))
+                };
+                let voice = (!voice.is_empty()).then_some(voice.as_str());
+                let audio = if body.input_is_phonemes {
+                    ctx.synthesize_phonemes_streaming(
+                        &body.input,
+                        voice,
+                        &body.language,
+                        speed,
+                        &mut send_chunk,
+                    )
+                } else {
+                    ctx.synthesize_streaming(
+                        &body.input,
+                        voice,
+                        &body.language,
+                        speed,
+                        &mut send_chunk,
+                    )
+                }?;
+                cancel.check()?;
                 // The final frame is retained for download/save. It does not
                 // delay playback because every chunk was already sent above.
-                match wav_bytes(&audio, sample_rate) {
-                    Ok(wav) => {
-                        send_final_wav(&tx, wav);
-                    }
-                    Err(err) => {
-                        let _ = tx.blocking_send(Ok(frame(3, err.to_string().into_bytes())));
-                    }
-                }
-            }
-            Err(err) => {
-                let _ = tx.blocking_send(Ok(frame(3, err.to_string().into_bytes())));
-            }
-        }
+                send_final_wav(&tx, wav_bytes(&audio, sample_rate)?);
+                Ok(())
+            })
+            .await;
+        let message = match result {
+            Ok(()) => return,
+            Err(EngineError::NoModel) => "no model loaded".to_string(),
+            Err(EngineError::Cancelled) => Cancelled.to_string(),
+            Err(EngineError::Failed(err)) => err.to_string(),
+        };
+        let _ = error_tx.send(Ok(frame(3, message.into_bytes()))).await;
     });
 
-    let body = stream::unfold(rx, |mut receiver| async move {
-        receiver.recv().await.map(|item| (item, receiver))
+    let body = stream::unfold((rx, body_guard), |(mut receiver, guard)| async move {
+        receiver.recv().await.map(|item| (item, (receiver, guard)))
     });
     let mut response = Body::from_stream(body).into_response();
-    response.headers_mut().insert(
+    let headers = response.headers_mut();
+    headers.insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static("application/x-mambotts-audio-chunks"),
     );
-    response
-        .headers_mut()
-        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    headers.insert(GENERATION_ID_HEADER, HeaderValue::from(generation_id));
     response
 }
 
