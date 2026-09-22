@@ -41,7 +41,7 @@ the loading path. See [ADDING_MODELS.md](./ADDING_MODELS.md).
 - fixed `Noa`, `Lily`, `Daniel`, and `Adam` voice styles;
 - no reference-voice cloning;
 - [RenikudPlus](https://github.com/maxmelichov/RenikudPlus) ONNX phonemization for Hebrew, including optional source/target speaker conditioning. `crates/renikud-plus-rs` is a port of the upstream Python package: the exact-MAP cascade decode, niqqud in the input read as hard constraints on that decode, the Hebrew number front end, the long-input windowing and the force lexicon;
-- Hebrew diacritization (`POST /v1/diacritize`) from the same RenikudPlus pass: its per-letter consonant and vowel predictions are written back as niqqud. Niqqud has no stress mark, so the stressed syllable is marked with the hatama (U+05AB), which phonemization reads back — send `"stress": false` for plain niqqud instead.
+- Hebrew diacritization (`POST /v1/diacritize`) from the same RenikudPlus pass: its per-letter consonant and vowel predictions are written back as niqqud. Phonemization reads those points back as hard constraints, so the app's editable niqqud is what gets spoken; the marks pointing alone cannot carry (stress, a silent ו, a consonantal י, a pronounced final ה) are written as the hatama, rafe, shva and mapiq. Send `"stress": false` for niqqud with no stress mark.
 
 Its bundle is installed in the application data directory under `models/blue-onnx-v2/` and requires the [BlueTTS](https://github.com/maxmelichov/BlueTTS) ONNX pipeline, voice embeddings, and `renikud-plus.onnx`.
 

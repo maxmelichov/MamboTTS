@@ -116,18 +116,30 @@ pub(crate) struct Decoded {
     pub stressed: HashSet<usize>,
 }
 
+/// One session run's logits: a row per token for each cascade head.
+pub(crate) struct Heads<'a> {
+    pub consonant: &'a [Vec<f32>],
+    pub vowel: &'a [Vec<f32>],
+    pub stress: &'a [Vec<f32>],
+}
+
+/// The label vocabularies the decode needs, by id and by name.
+pub(crate) struct Labels<'a> {
+    pub consonant_ids: &'a HashMap<String, usize>,
+    pub vowel_ids: &'a HashMap<String, usize>,
+}
+
 /// Greedy argmax over each head, with the stress mark going to the
 /// highest-margin vowel-bearing token of each word.
 pub(crate) fn greedy(
     offsets: &[(usize, usize)],
     chars: &[char],
-    consonant_logits: &[Vec<f32>],
-    vowel_logits: &[Vec<f32>],
-    stress_logits: &[Vec<f32>],
+    heads: &Heads,
     vowel_vocab: &HashMap<usize, String>,
 ) -> Decoded {
-    let consonants: Vec<usize> = consonant_logits.iter().map(|row| argmax(row)).collect();
-    let vowels: Vec<usize> = vowel_logits.iter().map(|row| argmax(row)).collect();
+    let stress_logits = heads.stress;
+    let consonants: Vec<usize> = heads.consonant.iter().map(|row| argmax(row)).collect();
+    let vowels: Vec<usize> = heads.vowel.iter().map(|row| argmax(row)).collect();
 
     let spans = word_spans(chars);
     let mut words: Vec<Vec<usize>> = vec![Vec::new(); spans.len()];
@@ -186,14 +198,14 @@ pub(crate) fn greedy(
 pub(crate) fn exact_map(
     offsets: &[(usize, usize)],
     chars: &[char],
-    consonant_logits: &[Vec<f32>],
-    vowel_logits: &[Vec<f32>],
-    stress_logits: &[Vec<f32>],
+    heads: &Heads,
     cascade: &Cascade,
     constraints: Option<&Constraints>,
-    consonant_ids: &HashMap<String, usize>,
-    vowel_ids: &HashMap<String, usize>,
+    labels: &Labels,
 ) -> Decoded {
+    let (consonant_logits, vowel_logits, stress_logits) =
+        (heads.consonant, heads.vowel, heads.stress);
+    let (consonant_ids, vowel_ids) = (labels.consonant_ids, labels.vowel_ids);
     let seq = consonant_logits.len();
     let n_cons = cascade.wv_c.len();
     let n_vowels = cascade.ws_v.len();
@@ -240,20 +252,22 @@ pub(crate) fn exact_map(
             .collect();
 
         let logc = log_softmax_row(&consonant_logits[t]);
-        for c in 0..n_cons {
+        for (c, &log_consonant) in logc.iter().enumerate() {
             let logv = log_softmax_row(
-                &(0..n_vowels)
-                    .map(|v| base_v[v] + cascade.wv_c[c][v])
+                &base_v
+                    .iter()
+                    .zip(&cascade.wv_c[c])
+                    .map(|(base, weight)| base + weight)
                     .collect::<Vec<_>>(),
             );
-            for v in 0..n_vowels {
+            for (v, &log_vowel) in logv.iter().enumerate() {
                 let logs = log_softmax_row(&[
                     base_s[0] + cascade.ws_c[c][0] + cascade.ws_v[v][0],
                     base_s[1] + cascade.ws_c[c][1] + cascade.ws_v[v][1],
                 ]);
                 let base = t * stride_t + c * stride_c + v * 2;
-                energy[base] = logc[c] + logv[v] + logs[0];
-                energy[base + 1] = logc[c] + logv[v] + logs[1];
+                energy[base] = log_consonant + log_vowel + logs[0];
+                energy[base + 1] = log_consonant + log_vowel + logs[1];
             }
         }
     }

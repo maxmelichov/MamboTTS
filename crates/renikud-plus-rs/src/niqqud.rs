@@ -24,6 +24,9 @@ pub const HATAF_QAMATS: char = '\u{05B3}';
 pub const HOLAM_HASER_FOR_VAV: char = '\u{05BA}';
 pub const QAMATS_QATAN: char = '\u{05C7}';
 pub const DAGESH: char = '\u{05BC}';
+/// Rafe: the mark that says a letter takes no dagesh — and, on a vowel letter,
+/// that it is not a consonant.
+pub const RAFE: char = '\u{05BF}';
 pub const SHIN_DOT: char = '\u{05C1}';
 pub const SIN_DOT: char = '\u{05C2}';
 

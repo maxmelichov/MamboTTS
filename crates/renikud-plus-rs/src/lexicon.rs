@@ -141,33 +141,31 @@ pub fn resolve_align_cells(spec: &str) -> anyhow::Result<Vec<AlignCell>> {
         .collect()
 }
 
+/// One alignment: the IPA each character of the surface accounts for.
+pub type Alignment = Vec<(char, String)>;
+
+/// Memo over `(surface index, IPA index)` for the alignment search.
+type Memo = HashMap<(usize, usize), Option<Alignment>>;
+
 /// DP alignment of a Hebrew surface to an IPA string, or `None` if illegal.
 ///
 /// `cells` empty is the standard aligner; a non-empty `cells` widens it.
-pub fn align_word(
-    heb_word: &str,
-    ipa_word: &str,
-    cells: &[AlignCell],
-) -> Option<Vec<(char, String)>> {
+pub fn align_word(heb_word: &str, ipa_word: &str, cells: &[AlignCell]) -> Option<Alignment> {
     let heb: Vec<char> = heb_word.chars().collect();
     let ipa: Vec<char> = ipa_word.chars().collect();
     if ipa.is_empty() || ipa.iter().filter(|&&c| c == STRESS_MARK).count() > 1 {
         return None;
     }
-    let mut memo: HashMap<(usize, usize), Option<Vec<(char, String)>>> = HashMap::new();
+    let mut memo = Memo::new();
     search(&heb, &ipa, cells, 0, 0, &mut memo)
 }
 
 fn starts_with(rest: &[char], prefix: &str) -> bool {
-    let mut chars = prefix.chars();
-    let mut i = 0;
-    for c in &mut chars {
-        if rest.get(i) != Some(&c) {
-            return false;
-        }
-        i += 1;
-    }
-    true
+    let mut prefix = prefix.chars();
+    rest.iter()
+        .zip(&mut prefix)
+        .all(|(have, want)| *have == want)
+        && prefix.next().is_none()
 }
 
 fn search(
@@ -176,8 +174,8 @@ fn search(
     cells: &[AlignCell],
     h_idx: usize,
     i_idx: usize,
-    memo: &mut HashMap<(usize, usize), Option<Vec<(char, String)>>>,
-) -> Option<Vec<(char, String)>> {
+    memo: &mut Memo,
+) -> Option<Alignment> {
     if let Some(cached) = memo.get(&(h_idx, i_idx)) {
         return cached.clone();
     }
@@ -192,8 +190,8 @@ fn search_uncached(
     cells: &[AlignCell],
     h_idx: usize,
     i_idx: usize,
-    memo: &mut HashMap<(usize, usize), Option<Vec<(char, String)>>>,
-) -> Option<Vec<(char, String)>> {
+    memo: &mut Memo,
+) -> Option<Alignment> {
     if h_idx == heb.len() && i_idx == ipa.len() {
         return Some(Vec::new());
     }

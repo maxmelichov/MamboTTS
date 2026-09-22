@@ -5,7 +5,7 @@ use espeak_rs::text_to_phonemes;
 use ort::session::Session;
 use regex::Regex;
 use renikud_plus_rs::lexicon::{ForceLexicon, OnInvalidEntry};
-use renikud_plus_rs::{G2P, G2PConfig, NiqqudMode};
+use renikud_plus_rs::{G2P, G2PConfig, NiqqudMode, Options};
 
 use crate::handling::prepare_text_for_synthesis;
 
@@ -166,7 +166,16 @@ impl Phonemizer {
         let Some(g2p) = self.hebrew.as_mut() else {
             bail!("Hebrew diacritization needs a RenikudPlus model path");
         };
-        g2p.diacritize(text, self.speaker, self.target_speaker, with_stress)
+        g2p.vocalize_with(
+            text,
+            &Options {
+                with_stress,
+                // The text goes back to the user to edit and then returns
+                // through `g2p`, so it has to read back as what it came from.
+                round_trip: true,
+                ..Options::speakers(self.speaker, self.target_speaker)
+            },
+        )
     }
 
     /// Install a force lexicon over the Hebrew G2P: a `surface<TAB>IPA` file
@@ -443,11 +452,10 @@ mod regression_tests {
             let original = phonemizer.g2p(text, Language::Hebrew).unwrap();
             let round_trip = phonemizer.g2p(&nikud, Language::Hebrew).unwrap();
             println!("{text}\n  {nikud}\n  {original}\n  {round_trip}");
-            // The points pin the reading, so what the pointed text phonemizes
-            // to has the same syllable count and the same stressed syllables.
+            // The points pin the reading, stress included, so phonemizing the
+            // pointed text gives back what the plain text gave.
             assert_eq!(
-                round_trip.matches('ˈ').count(),
-                original.matches('ˈ').count(),
+                round_trip, original,
                 "{text} -> {nikud}: {original} vs {round_trip}"
             );
         }

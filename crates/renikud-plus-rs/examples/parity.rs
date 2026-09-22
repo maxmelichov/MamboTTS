@@ -38,6 +38,7 @@ fn options(request: &Value) -> Options {
             _ => None,
         },
         with_stress: request["with_stress"].as_bool().unwrap_or(false),
+        round_trip: request["round_trip"].as_bool().unwrap_or(false),
     }
 }
 
@@ -85,6 +86,21 @@ fn run(g2p: &mut G2P, request: &Value) -> anyhow::Result<Value> {
             Ok(json!({ "accepted": accepted, "ipa": out }))
         }
         "vocalize" => Ok(json!(g2p.vocalize_with(text, &options(request))?)),
+        "round_trip" => {
+            // What pointing the text and reading it back costs: the IPA of the
+            // text, and the IPA of its own pointed form. Rust-only; upstream
+            // has no stress mark to round-trip.
+            let pointed = g2p.vocalize_with(text, &options(request))?;
+            let read_back = Options {
+                niqqud: Some(NiqqudMode::Use),
+                ..options(request)
+            };
+            Ok(json!({
+                "pointed": pointed,
+                "ipa": g2p.phonemize_with(text, &options(request))?,
+                "read_back": g2p.phonemize_with(&pointed, &read_back)?,
+            }))
+        }
         "phonemize" => Ok(json!(g2p.phonemize_with(text, &options(request))?)),
         other => anyhow::bail!("unknown op `{other}`"),
     }

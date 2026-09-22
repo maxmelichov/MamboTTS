@@ -112,6 +112,16 @@ pub struct Options {
     pub niqqud: Option<NiqqudMode>,
     /// Mark the predicted stress with the hatama (`vocalize` only).
     pub with_stress: bool,
+    /// Point the three letters whose reading pointing alone cannot pin down, so
+    /// the output reads back as the same word (`vocalize` only).
+    ///
+    /// A rafe on a ו the decode reads as silent, a shva on a י it reads as the
+    /// glide /j/, and a mapiq in a word-final ה it reads as /h/. All three are
+    /// ordinary Hebrew marks for exactly that, but upstream writes none of
+    /// them, so this is off by default. On the parity corpus it takes the
+    /// share of texts that phonemize identically after a pointing round trip
+    /// from 274/327 to 322/327.
+    pub round_trip: bool,
 }
 
 impl Options {
@@ -123,6 +133,15 @@ impl Options {
             ..Self::default()
         }
     }
+}
+
+/// What one session run over a window produced: where each token sits in the
+/// window, the labels the decode picked, and the consonant logits the
+/// per-letter fallback needs.
+struct Read {
+    offsets: Vec<(usize, usize)>,
+    decoded: decode::Decoded,
+    consonant_logits: Vec<Vec<f32>>,
 }
 
 /// One Hebrew letter as the decode read it.
@@ -477,7 +496,7 @@ impl G2P {
         chars: &[char],
         options: &Options,
         constraints: Option<&Constraints>,
-    ) -> anyhow::Result<(Vec<(usize, usize)>, decode::Decoded, Vec<Vec<f32>>)> {
+    ) -> anyhow::Result<Read> {
         if options.speaker > 2 || options.target_speaker > 2 {
             anyhow::bail!("speaker and target_speaker must be 0, 1, or 2");
         }
@@ -523,32 +542,34 @@ impl G2P {
                  cannot run with exact_map disabled"
             );
         }
+        let heads = decode::Heads {
+            consonant: &consonant_logits,
+            vowel: &vowel_logits,
+            stress: &stress_logits,
+        };
         let decoded = match (&self.cascade, use_exact) {
             (Some(cascade), true) => decode::exact_map(
                 &offsets,
                 chars,
-                &consonant_logits,
-                &vowel_logits,
-                &stress_logits,
+                &heads,
                 cascade,
                 constraints,
-                &self.consonant_ids,
-                &self.vowel_ids,
+                &decode::Labels {
+                    consonant_ids: &self.consonant_ids,
+                    vowel_ids: &self.vowel_ids,
+                },
             ),
             (None, true) => anyhow::bail!(
                 "this model was exported without the cascade conditioning metadata; re-export \
                  it, or disable exact_map for the greedy decode"
             ),
-            (_, false) => decode::greedy(
-                &offsets,
-                chars,
-                &consonant_logits,
-                &vowel_logits,
-                &stress_logits,
-                &self.vowel_vocab,
-            ),
+            (_, false) => decode::greedy(&offsets, chars, &heads, &self.vowel_vocab),
         };
-        Ok((offsets, decoded, consonant_logits))
+        Ok(Read {
+            offsets,
+            decoded,
+            consonant_logits,
+        })
     }
 
     /// The (consonant, vowel) the model chose for one Hebrew letter.
@@ -596,7 +617,11 @@ impl G2P {
         constraints: Option<&Constraints>,
     ) -> anyhow::Result<String> {
         let chars: Vec<char> = window.chars().collect();
-        let (offsets, decoded, consonant_logits) = self.forward(&chars, options, constraints)?;
+        let Read {
+            offsets,
+            decoded,
+            consonant_logits,
+        } = self.forward(&chars, options, constraints)?;
 
         let mut result = String::new();
         let mut prev_end = 0;
@@ -680,7 +705,11 @@ impl G2P {
         constraints: Option<&Constraints>,
     ) -> anyhow::Result<String> {
         let chars: Vec<char> = window.chars().collect();
-        let (offsets, decoded, consonant_logits) = self.forward(&chars, options, constraints)?;
+        let Read {
+            offsets,
+            decoded,
+            consonant_logits,
+        } = self.forward(&chars, options, constraints)?;
 
         let mut out: Vec<String> = Vec::new();
         let mut records: Vec<Record> = Vec::new();
@@ -749,12 +778,45 @@ impl G2P {
             }
         }
 
-        for record in &records {
+        for (i, record) in records.iter().enumerate() {
             let stress_mark = if options.with_stress && record.stressed && record.vowel != NONE {
                 Some(HATAMA)
             } else {
                 None
             };
+            // What the points alone cannot pin down, marked only when the caller
+            // asks for a pointing that reads back as the same word (a MamboTTS
+            // extension; upstream writes none of these).
+            //   - A bare ו inside a pointed word is the consonant /v/ by the
+            //     rules of pointed text, so a ו the decode reads as silent needs
+            //     its rafe to stay silent.
+            //   - A word-final ה is silent unless it carries the mapiq, so a ה
+            //     the decode reads as /h/ needs one.
+            //   - A bare י after hiriq or tsere is that vowel's mater, so a י
+            //     the decode reads as the glide /j/ (the second half of ej, aj)
+            //     needs the shva that says it closes the syllable instead.
+            //
+            // Only those three: pointing every vowel-less consonant with its
+            // shva, which upstream also leaves out, measures worse rather than
+            // better (see plans/renikud-parity), because a shva admits /e/ as
+            // well as nothing.
+            let round_trip_mark = options.round_trip.then(|| {
+                let word_final = records.get(i + 1).is_none_or(|next| {
+                    chars[record.start + 1..next.start]
+                        .iter()
+                        .any(|&c| pychars::is_space(c))
+                });
+                match (
+                    record.letter,
+                    record.consonant.as_str(),
+                    record.vowel.as_str(),
+                ) {
+                    ('ו', NONE, NONE) => Some(niqqud::RAFE),
+                    ('ה', "h", _) if word_final => Some(niqqud::DAGESH),
+                    ('י', consonant, NONE) if consonant != NONE => Some(niqqud::SHEVA),
+                    _ => None,
+                }
+            });
             let mut piece = String::new();
             piece.push(record.letter);
             if record.letter == 'ו'
@@ -771,6 +833,7 @@ impl G2P {
                 if let Some(point) = consonant_point(record.letter, &record.consonant) {
                     piece.push(point);
                 }
+                piece.extend(round_trip_mark.flatten());
                 if let Some(point) = niqqud_vowel(&record.vowel) {
                     piece.push(point);
                 }
@@ -835,8 +898,10 @@ mod tests {
         // Pointed input is ignored by default...
         assert_eq!(g2p.phonemize("שָׁלוֹם לְכֻּלָּם", 0, 0).unwrap(), "ʃalˈom lekulˈam");
         // ...and read as evidence in "use" mode: the four ספר pointings.
-        let mut used = Options::default();
-        used.niqqud = Some(NiqqudMode::Use);
+        let used = Options {
+            niqqud: Some(NiqqudMode::Use),
+            ..Options::default()
+        };
         for (pointed, expected) in [
             ("סֵפֶר", "sˈefeʁ"),
             ("סַפָּר", "sˈapaʁ"),
@@ -863,6 +928,7 @@ mod tests {
         };
         let stressed = Options {
             with_stress: true,
+            round_trip: true,
             ..used
         };
         for text in [
@@ -874,6 +940,20 @@ mod tests {
         ] {
             let ipa = g2p.phonemize_with(text, &used).unwrap();
             let pointed = g2p.vocalize_with(text, &stressed).unwrap();
+            let round_trip = g2p.phonemize_with(&pointed, &used).unwrap();
+            // With the round-trip marks the pointing carries the whole reading,
+            // stress included, so the IPA comes back unchanged.
+            assert_eq!(round_trip, ipa, "{text} -> {pointed}");
+        }
+        // Without them, the stress still survives (that is what the hatama is
+        // for), even where the reading drifts.
+        let plain_stress = Options {
+            with_stress: true,
+            ..used
+        };
+        for text in ["שלום עולם", "הילדים הלכו לבית הספר בבוקר."] {
+            let ipa = g2p.phonemize_with(text, &used).unwrap();
+            let pointed = g2p.vocalize_with(text, &plain_stress).unwrap();
             let round_trip = g2p.phonemize_with(&pointed, &used).unwrap();
             assert_eq!(
                 round_trip.matches(STRESS).count(),

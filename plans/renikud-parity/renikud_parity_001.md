@@ -45,6 +45,28 @@ decodes.
 
 ## Results
 
-See the report in the branch's final commit message. The run is deterministic:
-the same corpus, the same model file and the same ONNX Runtime give the same
-outputs on both sides.
+**1,969/1,969 identical** (phonemize 471 strip + 399 use, vocalize 331 strip +
+327 use, numbers 377, aligner 40, lexicon 24). No diffs to explain. The run is
+deterministic: the same corpus, the same model file and the same ONNX Runtime
+give the same outputs on both sides.
+
+## `renikud_parity_002.py`: what a pointing round trip costs
+
+`/v1/diacritize` hands the desktop pointed Hebrew, the user edits it, and
+`/v1/phonemize` reads it back, so the pointing has to say everything the
+reading did. Upstream `vocalize` does not: it writes no stress mark, leaves a
+silent ו bare (pointed text reads a bare ו as the consonant /v/), leaves the
+glide י bare (pointed text reads it as a mater) and writes no mapiq. The second
+script measures that, Rust only, over the same corpus:
+
+| pointing | phonemizes back identically |
+|---|---:|
+| upstream `vocalize` | 274/327 |
+| + hatama on the stressed syllable | 274/327 |
+| + rafe / shva / mapiq (`Options::round_trip`) | **322/327** |
+
+Pointing every vowel-less consonant with its shva as well — the other thing
+upstream leaves out — measures worse, not better (309/327, and 257/327 in the
+variant that also skips the letter before a mater ו), because a shva admits
+/e/ as well as nothing. The five that still drift are shva-in-cluster cases
+(`קלוין` comes back as `kelovin`) and a word-initial glide before a holam male.
