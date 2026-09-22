@@ -3,8 +3,8 @@ use utoipa_swagger_ui::SwaggerUi;
 
 use super::{
     dto::{
-        HealthResponse, LanguagesResponse, LoadBody, LoadResponse, ModelsResponse, SpeechBody,
-        StatusResponse, VoicesResponse,
+        CancelBody, CancelResponse, HealthResponse, LanguagesResponse, LoadBody, LoadResponse,
+        ModelsResponse, SpeechBody, StatusResponse, VoicesResponse,
     },
     errors::{ErrorBody, ErrorDetail},
     handlers,
@@ -28,6 +28,7 @@ use crate::runtime::Language;
         handlers::state::languages,
         handlers::state::voices,
         handlers::speech::speech,
+        handlers::speech::cancel_speech,
     ),
     components(schemas(
         ErrorBody,
@@ -40,6 +41,8 @@ use crate::runtime::Language;
         LoadResponse,
         LoadBody,
         SpeechBody,
+        CancelBody,
+        CancelResponse,
         Language,
         ModelSourceFile,
         ModelSource,

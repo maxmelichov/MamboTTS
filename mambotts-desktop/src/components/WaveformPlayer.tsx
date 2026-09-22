@@ -13,9 +13,17 @@ const END_EPSILON = 0.02;
  * decoded buffers, so play / pause / seek / scrub behave identically while the
  * stream is still arriving and after it has finished. Using one engine avoids
  * the handoff bugs that came from mixing an HTML <audio> element with Web Audio.
+ *
+ * The timeline belongs to a session (`sessionKey`, one per take). Within a
+ * session, sources past the ones already decoded extend the timeline, and a
+ * list that shrinks is ignored: the caller releases the streamed chunks once
+ * they are decoded and hands over the finished file, which this player already
+ * holds as buffers. A new session starts over.
  */
 export function WaveformPlayer({
   sources,
+  sessionKey,
+  onSourcesDecoded,
   downloadPath,
   filename,
   complete = false,
@@ -23,6 +31,9 @@ export function WaveformPlayer({
   onAutoPlayConsumed,
 }: {
   sources: string[];
+  sessionKey: number;
+  /** Called with the number of sources decoded so far in this session. */
+  onSourcesDecoded?: (count: number) => void;
   downloadPath: string;
   filename: string;
   complete?: boolean;
@@ -34,7 +45,13 @@ export function WaveformPlayer({
   const buffersRef = useRef<AudioBuffer[]>([]);
   const startsRef = useRef<number[]>([]);
   const totalRef = useRef(0);
-  const decodedUrlsRef = useRef<string[]>([]);
+  const decodedCountRef = useRef(0);
+  const sessionKeyRef = useRef<number | null>(null);
+  const onSourcesDecodedRef = useRef(onSourcesDecoded);
+  // The decode loop reads the list through a ref, so a chunk that arrives
+  // while it is running is picked up by the same pass instead of waiting for
+  // the next one.
+  const sourcesRef = useRef(sources);
   const decodingRef = useRef(false);
   const sessionRef = useRef<{ baseCtxTime: number; baseOffset: number } | null>(null);
   const nodesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
@@ -58,6 +75,8 @@ export function WaveformPlayer({
 
   completeRef.current = complete;
   onAutoPlayConsumedRef.current = onAutoPlayConsumed;
+  onSourcesDecodedRef.current = onSourcesDecoded;
+  sourcesRef.current = sources;
   if (autoPlayOnce) autoPlayPendingRef.current = true;
 
   const getContext = useCallback(() => {
@@ -180,20 +199,24 @@ export function WaveformPlayer({
     decodingRef.current = true;
     try {
       const context = getContext();
-      while (decodedUrlsRef.current.length < sources.length) {
-        const index = decodedUrlsRef.current.length;
-        const url = sources[index];
+      const session = sessionKeyRef.current;
+      while (decodedCountRef.current < sourcesRef.current.length) {
+        const index = decodedCountRef.current;
+        const url = sourcesRef.current[index];
         const response = await fetch(url);
         if (!response.ok) throw new Error(`could not load audio (${response.status})`);
         const data = await response.arrayBuffer();
         const buffer = await context.decodeAudioData(data);
+        // A new take started while this one was decoding.
+        if (sessionKeyRef.current !== session) return;
 
         const segmentStart = totalRef.current;
         buffersRef.current.push(buffer);
         startsRef.current.push(segmentStart);
         totalRef.current = segmentStart + buffer.duration;
-        decodedUrlsRef.current.push(url);
+        decodedCountRef.current = index + 1;
         setDuration(totalRef.current);
+        onSourcesDecodedRef.current?.(decodedCountRef.current);
 
         if (playingRef.current && sessionRef.current) scheduleBuffer(index);
 
@@ -209,22 +232,19 @@ export function WaveformPlayer({
     } finally {
       decodingRef.current = false;
     }
-  }, [getContext, play, scheduleBuffer, sources]);
+  }, [getContext, play, scheduleBuffer]);
 
   // Decode incoming sources. A growing list (streaming) extends the timeline; a
-  // different list (a new generation) resets everything first.
+  // new session (a new take) resets everything first.
   useEffect(() => {
-    const decoded = decodedUrlsRef.current;
-    const isExtension =
-      sources.length >= decoded.length && decoded.every((url, i) => url === sources[i]);
-
-    if (!isExtension) {
+    if (sessionKeyRef.current !== sessionKey) {
+      sessionKeyRef.current = sessionKey;
       stopNodes();
       cancelAnimationFrame(rafRef.current);
       buffersRef.current = [];
       startsRef.current = [];
       totalRef.current = 0;
-      decodedUrlsRef.current = [];
+      decodedCountRef.current = 0;
       sessionRef.current = null;
       playingRef.current = false;
       pausedOffsetRef.current = 0;
@@ -234,9 +254,9 @@ export function WaveformPlayer({
       setDuration(0);
     }
 
-    if (sources.length > 0) void decodeSources();
+    if (sources.length > decodedCountRef.current) void decodeSources();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sources.join("|")]);
+  }, [sessionKey, sources.join("|")]);
 
   useEffect(() => () => {
     playingRef.current = false;

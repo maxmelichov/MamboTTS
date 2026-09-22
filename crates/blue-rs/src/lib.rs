@@ -231,27 +231,62 @@ impl BlueTts {
         opts: SynthesisOptions,
         seed: u64,
     ) -> Result<Vec<f32>> {
+        self.create_seeded_streaming(phonemes, style, opts, seed, |_| Ok(()))
+    }
+
+    /// Phoneme-level synthesis that hands each chunk to `on_chunk` as soon as
+    /// it is ready, before the next one starts. The callback sees exactly the
+    /// samples appended to the returned audio, and returning an error from it
+    /// stops the run, which is how a caller cancels a long synthesis.
+    pub fn create_streaming<F>(
+        &mut self,
+        phonemes: &str,
+        style: &VoiceStyle,
+        opts: SynthesisOptions,
+        on_chunk: F,
+    ) -> Result<Vec<f32>>
+    where
+        F: FnMut(&[f32]) -> Result<()>,
+    {
+        self.create_seeded_streaming(phonemes, style, opts, rand::random(), on_chunk)
+    }
+
+    fn create_seeded_streaming<F>(
+        &mut self,
+        phonemes: &str,
+        style: &VoiceStyle,
+        opts: SynthesisOptions,
+        seed: u64,
+        mut on_chunk: F,
+    ) -> Result<Vec<f32>>
+    where
+        F: FnMut(&[f32]) -> Result<()>,
+    {
         if let Some(chunking) = &opts.chunking {
             if chunking.enabled {
                 let chunks = chunking::split_phonemes(phonemes, chunking.max_chars);
                 let mut ledger = ChunkLedger::default();
                 ledger.expect(chunks.len());
                 let mut audio = Vec::new();
-                let last_idx = chunks.len().saturating_sub(1);
                 for (idx, chunk) in chunks.iter().enumerate() {
+                    let mut piece = Vec::new();
+                    if idx != 0 {
+                        append_silence(&mut piece, self.sample_rate(), chunking.silence_seconds);
+                    }
                     let spoken =
                         self.synthesize_chunk(chunk, style, &opts, seed.wrapping_add(idx as u64))?;
                     ledger.spoken_chunk(spoken.requested_samples, spoken.samples.len());
-                    audio.extend(spoken.samples);
-                    if idx != last_idx {
-                        append_silence(&mut audio, self.sample_rate(), chunking.silence_seconds);
-                    }
+                    piece.extend(spoken.samples);
+                    on_chunk(&piece)?;
+                    audio.extend(piece);
                 }
                 ledger.verify(self.sample_rate())?;
                 return Ok(audio);
             }
         }
-        Ok(self.synthesize_chunk(phonemes, style, &opts, seed)?.samples)
+        let audio = self.synthesize_chunk(phonemes, style, &opts, seed)?.samples;
+        on_chunk(&audio)?;
+        Ok(audio)
     }
 
     /// Prepare, phonemize, and synthesize raw multilingual text.

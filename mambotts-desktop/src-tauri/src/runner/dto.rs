@@ -55,6 +55,17 @@ pub struct SpeechRequest {
     pub language: Option<String>,
     pub input_is_phonemes: Option<bool>,
     pub speed: Option<f32>,
+    /// Chosen by the webview so it can cancel this synthesis by name.
+    pub synthesis_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SpeechResult {
+    /// The finished recording.
+    pub path: String,
+    /// How many chunks went over the channel, so the webview can wait for
+    /// the last of them before it treats playback as complete.
+    pub chunks: usize,
 }
 
 #[derive(Debug, Deserialize)]

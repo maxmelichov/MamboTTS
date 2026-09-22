@@ -53,6 +53,7 @@ fn router(server: SharedServer) -> Router {
         .route("/v1/diacritize", post(handlers::diacritize))
         .route("/v1/phonemes", get(handlers::phoneme_inventory))
         .route("/v1/audio/speech", post(handlers::speech))
+        .route("/v1/audio/speech/cancel", post(handlers::cancel_speech))
         .merge(docs::swagger_ui())
         .with_state(server)
 }

@@ -71,7 +71,10 @@ export type StudioState = {
   targetSpeaker: number;
   speed: number;
   audioPath: string;
-  streamChunkPaths: string[];
+  /** In-memory blob URLs of the streamed chunks, released once the finished WAV takes over. */
+  streamChunkUrls: string[];
+  /** Bumped per take so the player knows a new timeline started. */
+  generation: number;
   audioAutoplayPending: boolean;
   step: CreateStep;
   status: string;

@@ -1,16 +1,22 @@
-use futures_util::StreamExt;
-use tauri::{Emitter, State};
+use std::{path::Path, sync::OnceLock};
+
+use tauri::{
+    State,
+    ipc::{Channel, InvokeResponseBody},
+};
 
 use crate::{analytics, runner::errors::track_runner_err};
 
 use super::{
+    cancel::{SYNTHESIS_CANCELLED, SynthesisRegistry},
     dto::{
         LanguagesResponse, LoadModelRequest, PhonemeInventoryResponse, PhonemizeRequest,
-        PhonemizeResponse, SpeechRequest, VoicesResponse,
+        PhonemizeResponse, SpeechRequest, SpeechResult, VoicesResponse,
     },
     errors::{get_json, json_response, response_error},
     process::RunnerState,
     runner_client,
+    speech_stream::receive_speech_stream,
 };
 
 pub async fn load_model_request(
@@ -144,7 +150,18 @@ pub async fn synthesize_request(
     app: tauri::AppHandle,
     state: State<'_, RunnerState>,
     request: SpeechRequest,
-) -> Result<String, String> {
+    on_chunk: Channel<InvokeResponseBody>,
+) -> Result<SpeechResult, String> {
+    let synthesis_id = request.synthesis_id.clone().unwrap_or_default();
+    let cancelled = state.synthesis.register(&synthesis_id);
+    let _registration = Registration {
+        registry: &state.synthesis,
+        id: &synthesis_id,
+    };
+    if *cancelled.borrow() {
+        return Err(SYNTHESIS_CANCELLED.to_string());
+    }
+
     let (client, base_url) = runner_client(&app, &state)?;
     let output_path = request
         .output_path
@@ -177,44 +194,119 @@ pub async fn synthesize_request(
         })
     };
 
-    let response = client
-        .post(format!("{base_url}/v1/audio/speech"))
-        .json(&body)
-        .send()
-        .await
-        .map_err(|err| {
-            analytics::track_error(
+    let generation_id = OnceLock::<String>::new();
+    let run = async {
+        let response = client
+            .post(format!("{base_url}/v1/audio/speech"))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|err| {
+                analytics::track_error(
+                    &app,
+                    analytics::events::ERROR_SYNTHESIS_FAILED,
+                    format!("failed to send speech request: {err}"),
+                    props(),
+                )
+            })?;
+        if !response.status().is_success() {
+            let err = response_error(response).await;
+            return Err(analytics::track_error(
                 &app,
                 analytics::events::ERROR_SYNTHESIS_FAILED,
-                format!("failed to send speech request: {err}"),
+                err,
                 props(),
-            )
-        })?;
-    if !response.status().is_success() {
-        let err = response_error(response).await;
-        return Err(analytics::track_error(
-            &app,
-            analytics::events::ERROR_SYNTHESIS_FAILED,
-            err,
-            props(),
-        ));
-    }
+            ));
+        }
+        if let Some(id) = response
+            .headers()
+            .get(GENERATION_ID_HEADER)
+            .and_then(|value| value.to_str().ok())
+        {
+            let _ = generation_id.set(id.to_owned());
+        }
+        stream_speech_response(&app, response, &output_path, &on_chunk, props()).await
+    };
 
-    stream_speech_response(&app, response, &output_path, props()).await?;
+    let chunks = tokio::select! {
+        result = run => result?,
+        _ = wait_for_cancel(cancelled) => {
+            // The explicit cancel is what stops the engine promptly. Dropping
+            // `run` on the way out then closes the connection, which the server
+            // also treats as a cancel, and deletes the partial output.
+            cancel_server_generation(&client, &base_url, generation_id.get()).await;
+            return Err(SYNTHESIS_CANCELLED.to_string());
+        }
+    };
     analytics::track_event_handle_with_props(
         &app,
         analytics::events::SYNTHESIS_COMPLETED,
         Some(props()),
     );
-    Ok(output_path)
+    Ok(SpeechResult {
+        path: output_path,
+        chunks,
+    })
+}
+
+/// Resolve once this synthesis has been cancelled, and never otherwise.
+async fn wait_for_cancel(mut cancelled: tokio::sync::watch::Receiver<bool>) {
+    loop {
+        if *cancelled.borrow_and_update() {
+            return;
+        }
+        if cancelled.changed().await.is_err() {
+            // The registration is gone, so nothing can cancel this any more.
+            std::future::pending::<()>().await;
+        }
+    }
+}
+
+/// Stop a synthesis started with the same `synthesis_id`. A cancel that
+/// arrives before the synthesis registers is kept, so a quick Stop still wins.
+pub fn cancel_synthesis_request(state: State<'_, RunnerState>, synthesis_id: String) {
+    state.synthesis.cancel(&synthesis_id);
+}
+
+const GENERATION_ID_HEADER: &str = "x-mambotts-generation-id";
+
+/// Unregisters a synthesis however `synthesize_request` returns.
+struct Registration<'a> {
+    registry: &'a SynthesisRegistry,
+    id: &'a str,
+}
+
+impl Drop for Registration<'_> {
+    fn drop(&mut self) {
+        self.registry.finish(self.id);
+    }
+}
+
+/// Ask the server to stop a generation. Without an id (the response headers
+/// had not arrived yet) this cancels everything the server is running, which
+/// in the app is only ever this one generation.
+async fn cancel_server_generation(client: &reqwest::Client, base_url: &str, id: Option<&String>) {
+    let body = match id {
+        Some(id) => serde_json::json!({ "id": id }),
+        None => serde_json::json!({}),
+    };
+    let request = client
+        .post(format!("{base_url}/v1/audio/speech/cancel"))
+        .json(&body)
+        .timeout(std::time::Duration::from_secs(3))
+        .send();
+    if let Err(err) = request.await {
+        tracing::warn!("failed to cancel the server generation: {err}");
+    }
 }
 
 async fn stream_speech_response(
     app: &tauri::AppHandle,
     response: reqwest::Response,
     output_path: &str,
+    on_chunk: &Channel<InvokeResponseBody>,
     props: serde_json::Value,
-) -> Result<(), String> {
+) -> Result<usize, String> {
     let is_wav = response
         .headers()
         .get(reqwest::header::CONTENT_TYPE)
@@ -232,112 +324,18 @@ async fn stream_speech_response(
         tokio::fs::write(output_path, wav)
             .await
             .map_err(|err| format!("failed to write generated audio {output_path}: {err}"))?;
-        return Ok(());
+        return Ok(0);
     }
 
-    const MAX_FRAME_BYTES: usize = 128 * 1024 * 1024;
-    let mut stream = response.bytes_stream();
-    let mut pending = Vec::<u8>::new();
-    let mut chunk_index = 0usize;
-    let mut final_started = false;
-    let mut complete = false;
-
-    while let Some(next) = stream.next().await {
-        let bytes = next.map_err(|err| {
-            analytics::track_error(
-                app,
-                analytics::events::ERROR_SYNTHESIS_FAILED,
-                format!("failed to read speech stream: {err}"),
-                props.clone(),
-            )
-        })?;
-        pending.extend_from_slice(&bytes);
-
-        while pending.len() >= 5 {
-            let kind = pending[0];
-            let length =
-                u32::from_be_bytes([pending[1], pending[2], pending[3], pending[4]]) as usize;
-            if length > MAX_FRAME_BYTES {
-                return Err(analytics::track_error(
-                    app,
-                    analytics::events::ERROR_SYNTHESIS_FAILED,
-                    "received an invalidly large speech frame".to_string(),
-                    props,
-                ));
-            }
-            if pending.len() < 5 + length {
-                break;
-            }
-            let payload = pending[5..5 + length].to_vec();
-            pending.drain(..5 + length);
-
-            match kind {
-                1 => {
-                    let path = chunk_output_path(output_path, chunk_index);
-                    chunk_index += 1;
-                    tokio::fs::write(&path, payload).await.map_err(|err| {
-                        format!("failed to write streamed audio chunk {path}: {err}")
-                    })?;
-                    app.emit("synthesis-chunk", &path)
-                        .map_err(|err| format!("failed to emit streamed audio chunk: {err}"))?;
-                }
-                // The finished recording arrives in slices so neither side has
-                // to hold a long one in memory as a single frame. Kind 4 is a
-                // continuation; kind 2 is the last slice and the only thing
-                // that marks the file complete.
-                2 | 4 => {
-                    write_final_audio(output_path, &payload, &mut final_started).await?;
-                    complete = kind == 2;
-                }
-                3 => {
-                    return Err(String::from_utf8_lossy(&payload).into_owned());
-                }
-                _ => return Err("received an unknown speech stream frame".to_string()),
-            }
-        }
-    }
-
-    if !pending.is_empty() {
-        return Err("speech stream ended with an incomplete frame".to_string());
-    }
-    if !complete {
-        return Err("speech stream ended before the final WAV was received".to_string());
-    }
-    Ok(())
-}
-
-fn chunk_output_path(output_path: &str, index: usize) -> String {
-    let path = std::path::Path::new(output_path);
-    let stem = path
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .unwrap_or("speech");
-    path.with_file_name(format!("{stem}-chunk-{index:04}.wav"))
-        .as_os_str()
-        .to_string_lossy()
-        .into_owned()
-}
-
-/// Write one slice of the finished recording, replacing the file on the first
-/// slice and appending afterwards.
-async fn write_final_audio(
-    output_path: &str,
-    payload: &[u8],
-    started: &mut bool,
-) -> Result<(), String> {
-    use tokio::io::AsyncWriteExt;
-
-    let mut file = tokio::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(!*started)
-        .append(*started)
-        .open(output_path)
-        .await
-        .map_err(|err| format!("failed to open final audio {output_path}: {err}"))?;
-    file.write_all(payload)
-        .await
-        .map_err(|err| format!("failed to write final audio {output_path}: {err}"))?;
-    *started = true;
-    Ok(())
+    // Chunks go to the webview as raw bytes over the channel rather than as
+    // files beside the output, so nothing is left behind in the temp folder.
+    receive_speech_stream(response.bytes_stream(), Path::new(output_path), |chunk| {
+        on_chunk
+            .send(InvokeResponseBody::Raw(chunk))
+            .map_err(|err| format!("failed to deliver streamed audio chunk: {err}"))
+    })
+    .await
+    .map_err(|err| {
+        analytics::track_error(app, analytics::events::ERROR_SYNTHESIS_FAILED, err, props)
+    })
 }

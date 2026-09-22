@@ -9,6 +9,8 @@ pub struct HealthResponse {
     pub loaded: bool,
     pub model: String,
     pub runtime: String,
+    /// True while a synthesis is running or waiting for the engine.
+    pub busy: bool,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -100,6 +102,22 @@ pub struct SpeechBody {
     /// sounding like the same voice at a different pace.
     #[serde(default)]
     pub speed: f32,
+}
+
+/// Which generation to stop. Without an id, every running and queued
+/// generation is cancelled.
+#[derive(Debug, Default, Deserialize, ToSchema)]
+pub struct CancelBody {
+    /// The `x-mambotts-generation-id` header of the speech response.
+    #[serde(default)]
+    pub id: Option<String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct CancelResponse {
+    pub status: String,
+    /// How many generations were told to stop.
+    pub cancelled: usize,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]

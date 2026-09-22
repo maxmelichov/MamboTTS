@@ -37,11 +37,11 @@ pub async fn model_load(
             format!("failed to load model: {err}"),
         );
     }
-    let inner = server.inner.lock().await;
+    let info = server.info();
     Json(LoadResponse {
         status: "loaded".into(),
-        runtime: inner.runtime.clone(),
-        model: inner.model_name.clone(),
+        runtime: info.runtime.clone(),
+        model: info.model_name.clone(),
     })
     .into_response()
 }

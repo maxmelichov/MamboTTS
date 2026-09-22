@@ -1,7 +1,4 @@
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-};
+use std::{collections::HashMap, path::PathBuf};
 
 use anyhow::{Context, Result, bail};
 use blue_rs::{
@@ -18,27 +15,6 @@ pub struct BlueRuntime {
     phonemizer: Phonemizer,
     styles: HashMap<String, VoiceStyle>,
     languages: Vec<RuntimeLanguage>,
-}
-
-/// Hand a finished recording to the stream in pieces a client can play.
-///
-/// The main path streams as it generates, so its frames are naturally small.
-/// The phoneme-input path synthesizes the whole text first and used to send
-/// the result as a single frame. The desktop refuses any frame over 128 MB,
-/// about 25 minutes of audio, so on a long document that path did every
-/// minute of the work and then failed at the end. Cutting the
-/// recording into short windows keeps every frame small and gives the client
-/// something to play before the end instead of a wait and then everything.
-fn emit_in_windows(
-    audio: &[f32],
-    sample_rate: u32,
-    on_chunk: &mut dyn FnMut(&[f32], u32) -> Result<()>,
-) -> Result<()> {
-    let window = (sample_rate as usize) * 10;
-    for piece in audio.chunks(window.max(1)) {
-        on_chunk(piece, sample_rate)?;
-    }
-    Ok(())
 }
 
 impl BlueRuntime {
@@ -209,7 +185,11 @@ impl Runtime for BlueRuntime {
                     .join(", ")
             )
         })?;
-        let audio = self.tts.create(
+        let sample_rate = self.tts.sample_rate();
+        // Streamed chunk by chunk like the text path, so the client hears the
+        // start early, every frame stays small, and a cancel from the callback
+        // stops the run at the next chunk instead of after the whole text.
+        self.tts.create_streaming(
             phonemes,
             style,
             SynthesisOptions {
@@ -223,55 +203,8 @@ impl Runtime for BlueRuntime {
                     max_chars: Some(200),
                 }),
             },
-        )?;
-        emit_in_windows(&audio, self.tts.sample_rate(), on_chunk)?;
-        Ok(audio)
-    }
-
-    fn synthesize_to_file(
-        &mut self,
-        text: &str,
-        voice: Option<&str>,
-        output_path: &Path,
-        language: &str,
-        speed: f32,
-    ) -> Result<()> {
-        let (_language, language_code) = Self::language_for(text, language)?;
-        let voice = Self::normalize_voice(voice.unwrap_or(DEFAULT_BLUE_VOICE));
-        let style = self.styles.get(voice).ok_or_else(|| {
-            anyhow::anyhow!(
-                "unknown Blue voice `{voice}`; this bundle has {}",
-                BLUE_VOICES
-                    .iter()
-                    .map(|voice| voice.name)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-        })?;
-        let audio = self.tts.synthesize_text(
-            &mut self.phonemizer,
-            text,
-            style,
-            SynthesisOptions {
-                lang: language_code.to_owned(),
-                total_step: 8,
-                cfg_scale: 4.0,
-                speed,
-                chunking: None,
-            },
-        )?;
-        let spec = hound::WavSpec {
-            channels: 1,
-            sample_rate: self.tts.sample_rate(),
-            bits_per_sample: 16,
-            sample_format: hound::SampleFormat::Int,
-        };
-        let mut writer = hound::WavWriter::create(output_path, spec)?;
-        for sample in audio {
-            writer.write_sample((sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)?;
-        }
-        writer.finalize()?;
-        Ok(())
+            |chunk| on_chunk(chunk, sample_rate),
+        )
     }
 }
 
