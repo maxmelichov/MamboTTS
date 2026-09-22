@@ -58,6 +58,30 @@ nothing useful about why. Clearing the quarantine flag is the same approval as
 right-clicking the app and choosing Open, granted once, out in the open, to an
 app you asked for by name.
 
+**Manual install from the DMG**
+
+If you open `MamboTTS_<version>_aarch64.dmg` yourself and drag `MamboTTS.app`
+into `/Applications` instead of running the installer above, the app will
+refuse to open and Finder will not tell you why. Dragging out of the mounted
+DMG keeps the quarantine attribute the installer would otherwise clear, so
+clear it yourself:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/MamboTTS.app
+```
+
+If it still will not open after that, the bundle's ad-hoc signature was never
+sealed over its resources (`codesign -dvvv /Applications/MamboTTS.app` shows
+`Sealed Resources=none` when this is the problem). Re-apply the signature
+over the whole bundle:
+
+```sh
+codesign --force --deep --sign - /Applications/MamboTTS.app
+```
+
+This is exactly what the one-line installer does for you, which is why it is
+the recommended path.
+
 **Linux on x86_64**
 
 ```sh
