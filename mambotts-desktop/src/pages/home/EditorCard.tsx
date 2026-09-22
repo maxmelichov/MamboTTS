@@ -1,4 +1,4 @@
-import { Loader2, Play, Sparkles, X } from "lucide-react";
+import { Loader2, Play, Sparkles, Square, X } from "lucide-react";
 import { useRef, useState, type KeyboardEvent } from "react";
 import { cn } from "../../lib/classNames";
 import type { EditorInputSource } from "../../lib/types";
@@ -115,6 +115,9 @@ type EditorCardProps = {
   setPhonemes: (phonemes: string) => void;
   convertToPhonemes: () => Promise<void>;
   createVoice: () => void;
+  /** Stops the generation in progress. */
+  stopVoice: () => void;
+  stopping: boolean;
 };
 
 export function EditorCard({
@@ -134,6 +137,8 @@ export function EditorCard({
   setPhonemes,
   convertToPhonemes,
   createVoice,
+  stopVoice,
+  stopping,
   blueVoice,
   blueVoiceIds,
   speed,
@@ -429,19 +434,23 @@ export function EditorCard({
               </button>
             )}
           </div>
-          <Button onClick={createVoice} disabled={busy || !synthesisInput.trim()} className="h-12 px-8 text-sm shadow-xl shadow-primary/5 transition-transform hover:scale-[1.01]">
           {busy ? (
-            <span className="flex items-center gap-2">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Generating...
-            </span>
+            // While a take is generating the same slot becomes Stop, so a long
+            // document started by mistake can be abandoned without quitting.
+            <Button variant="outline" onClick={stopVoice} disabled={stopping} title="Stop generating" className="h-12 px-8 text-sm">
+              <span className="flex items-center gap-2">
+                {stopping ? <Loader2 className="h-4 w-4 animate-spin" /> : <Square className="h-3.5 w-3.5 fill-current" />}
+                {stopping ? "Stopping..." : "Stop"}
+              </span>
+            </Button>
           ) : (
-            <span className="flex items-center gap-2">
-              <Play className="h-3.5 w-3.5 fill-current" />
-              Generate
-            </span>
+            <Button onClick={createVoice} disabled={!synthesisInput.trim()} className="h-12 px-8 text-sm shadow-xl shadow-primary/5 transition-transform hover:scale-[1.01]">
+              <span className="flex items-center gap-2">
+                <Play className="h-3.5 w-3.5 fill-current" />
+                Generate
+              </span>
+            </Button>
           )}
-        </Button>
         </div>
       </div>
     </Card>

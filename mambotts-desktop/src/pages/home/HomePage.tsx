@@ -1,7 +1,6 @@
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { AnimatePresence, motion } from "framer-motion";
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { useNavigate } from "react-router-dom";
 import type { EditorInputSource, ModelBundle, RunnerInfo, StudioState } from "../../lib/types";
@@ -18,6 +17,19 @@ type PageProps = {
   setBundle: (bundle: ModelBundle) => void;
 };
 
+/** What the `synthesize` command resolves with. */
+type SpeechResult = {
+  path: string;
+  /** Chunks sent over the channel; playback is complete once all of them arrived. */
+  chunks: number;
+};
+
+/** The rejection text of a synthesis stopped with `cancel_synthesis`. */
+const SYNTHESIS_CANCELLED = "synthesis cancelled";
+
+/** How long to wait for chunk messages still in flight after the command returns. */
+const CHUNK_DRAIN_TIMEOUT_MS = 5000;
+
 type HomePageProps = PageProps & {
   studio: StudioState;
   setStudio: Dispatch<SetStateAction<StudioState>>;
@@ -25,19 +37,24 @@ type HomePageProps = PageProps & {
 
 export function HomePage({ bundle, setBundle, studio, setStudio }: HomePageProps) {
   const navigate = useNavigate();
-  const { text, phonemes, diacritics, diacriticsSource, languages, language, blueVoice, blueVoiceIds, speaker, targetSpeaker, speed, audioPath, streamChunkPaths, audioAutoplayPending, step, status, busy, error } = studio;
+  const { text, phonemes, diacritics, diacriticsSource, languages, language, blueVoice, blueVoiceIds, speaker, targetSpeaker, speed, audioPath, streamChunkUrls, generation, audioAutoplayPending, step, status, busy, error } = studio;
   const loadingLanguagesRef = useRef(false);
+  const [stopping, setStopping] = useState(false);
+  // The take in flight: its cancel id, whether Stop was pressed, and whether
+  // the synthesize command has been sent (only then is there anything to cancel).
+  const synthesisIdRef = useRef("");
+  const stopRequestedRef = useRef(false);
+  const synthesizeSentRef = useRef(false);
+  const activeGenerationRef = useRef(generation);
+  // How many of the current take's sources the mounted player has decoded.
+  const decodedCountRef = useRef(0);
 
   const audioSrc = useMemo(() => (audioPath ? convertFileSrc(audioPath) : ""), [audioPath]);
-  const streamedAudioSrcs = useMemo(
-    () => streamChunkPaths.map((path) => convertFileSrc(path)),
-    [streamChunkPaths],
-  );
   // Prefer the streamed chunks (available first, identical audio) and fall back
-  // to the finalized WAV for replays of history where no chunks were captured.
+  // to the finalized WAV once the chunks are released or were never streamed.
   const playerSources = useMemo(
-    () => (streamedAudioSrcs.length ? streamedAudioSrcs : audioSrc ? [audioSrc] : []),
-    [streamedAudioSrcs, audioSrc],
+    () => (streamChunkUrls.length ? streamChunkUrls : audioSrc ? [audioSrc] : []),
+    [streamChunkUrls, audioSrc],
   );
   const updateStudio = (patch: Partial<StudioState>) => setStudio((current) => ({ ...current, ...patch }));
   const isHebrew = language === "he" || (language === "auto" && /[֐-׿]/.test(text));
@@ -50,23 +67,27 @@ export function HomePage({ bundle, setBundle, studio, setStudio }: HomePageProps
   const inputSource: EditorInputSource = phonemes.trim() ? "phonemes" : vocalized ? "diacritics" : "text";
   const synthesisInput = inputSource === "phonemes" ? phonemes : inputSource === "diacritics" ? vocalized : text;
 
-  useEffect(() => {
-    const unlisten = listen<string>("synthesis-chunk", ({ payload }) => {
-      setStudio((current) => (
-        current.streamChunkPaths.includes(payload)
-          ? current
-          : {
-              ...current,
-              streamChunkPaths: [...current.streamChunkPaths, payload],
-              audioAutoplayPending: true,
-              status: "Playing generated audio...",
-            }
-      ));
+  // Streamed chunks live in memory as blob URLs, never on disk. Once the
+  // finished WAV exists and the player has decoded every chunk, the chunks are
+  // released: the player keeps its decoded audio, and a later remount plays
+  // the finished file instead.
+  const releaseChunksIfDone = useCallback(() => {
+    setStudio((current) => {
+      if (!current.audioPath || current.streamChunkUrls.length === 0) return current;
+      if (decodedCountRef.current < current.streamChunkUrls.length) return current;
+      current.streamChunkUrls.forEach((url) => URL.revokeObjectURL(url));
+      return { ...current, streamChunkUrls: [] };
     });
-    return () => {
-      void unlisten.then((remove) => remove());
-    };
   }, [setStudio]);
+
+  useEffect(() => {
+    releaseChunksIfDone();
+  }, [audioPath, releaseChunksIfDone]);
+
+  const handleSourcesDecoded = useCallback((count: number) => {
+    decodedCountRef.current = count;
+    releaseChunksIfDone();
+  }, [releaseChunksIfDone]);
 
   useEffect(() => {
     if (!bundle?.installed || busy || loadingLanguagesRef.current) return;
@@ -158,10 +179,33 @@ export function HomePage({ bundle, setBundle, studio, setStudio }: HomePageProps
       return;
     }
 
-    updateStudio({ busy: true, error: "", audioPath: "", streamChunkPaths: [], audioAutoplayPending: false });
+    const takeGeneration = generation + 1;
+    const synthesisId = crypto.randomUUID();
+    activeGenerationRef.current = takeGeneration;
+    synthesisIdRef.current = synthesisId;
+    stopRequestedRef.current = false;
+    synthesizeSentRef.current = false;
+    decodedCountRef.current = 0;
+    setStopping(false);
+    setStudio((current) => {
+      current.streamChunkUrls.forEach((url) => URL.revokeObjectURL(url));
+      return {
+        ...current,
+        busy: true,
+        error: "",
+        audioPath: "",
+        streamChunkUrls: [],
+        generation: takeGeneration,
+        audioAutoplayPending: false,
+      };
+    });
+    const throwIfStopped = () => {
+      if (stopRequestedRef.current) throw new Error(SYNTHESIS_CANCELLED);
+    };
     try {
       updateStudio({ step: "starting", status: "Initializing Engine..." });
       await invoke<RunnerInfo>("start_runner");
+      throwIfStopped();
 
       updateStudio({ step: "loading", status: "Loading models..." });
       await invoke("load_model", {
@@ -174,6 +218,7 @@ export function HomePage({ bundle, setBundle, studio, setStudio }: HomePageProps
         },
       });
 
+      throwIfStopped();
       const supportedLanguages = await invoke<string[]>("get_languages");
       const nextStudio: Partial<StudioState> = { languages: supportedLanguages.length ? supportedLanguages : ["auto"] };
       try {
@@ -196,29 +241,85 @@ export function HomePage({ bundle, setBundle, studio, setStudio }: HomePageProps
         ? (/[֐-׿]/.test(text) ? "he" : "en")
         : selectedLanguage;
 
+      throwIfStopped();
       updateStudio({ step: "creating", status: "Generating audio..." });
-      const output = await invoke<string>("synthesize", {
+
+      // Each chunk arrives as raw WAV bytes while inference runs. Messages can
+      // still be in flight when the command resolves, so the take is only
+      // complete once as many chunks arrived as the command reports.
+      let received = 0;
+      let expected = Number.POSITIVE_INFINITY;
+      let markAllReceived = () => {};
+      const allReceived = new Promise<void>((resolve) => {
+        markAllReceived = resolve;
+      });
+      const onChunk = new Channel<ArrayBuffer>();
+      onChunk.onmessage = (data) => {
+        if (activeGenerationRef.current !== takeGeneration) return;
+        const url = URL.createObjectURL(new Blob([data], { type: "audio/wav" }));
+        received += 1;
+        setStudio((current) => ({
+          ...current,
+          streamChunkUrls: [...current.streamChunkUrls, url],
+          audioAutoplayPending: true,
+          status: "Playing generated audio...",
+        }));
+        if (received >= expected) markAllReceived();
+      };
+
+      synthesizeSentRef.current = true;
+      const result = await invoke<SpeechResult>("synthesize", {
         request: {
           input,
           voice: synthesisVoice || undefined,
           language: synthesisLanguage,
           input_is_phonemes: inputIsPhonemes,
           speed,
+          synthesis_id: synthesisId,
         },
+        onChunk,
       });
-      // Chunk files exist solely for low-latency playback while inference is
-      // running. Keep their playlist alive until the Web Audio queue finishes;
-      // clearing it here would unmount the scheduler and cut off playback.
+      expected = result.chunks;
+      if (received >= expected) markAllReceived();
+      await Promise.race([
+        allReceived,
+        new Promise((resolve) => setTimeout(resolve, CHUNK_DRAIN_TIMEOUT_MS)),
+      ]);
+      // The chunk playlist stays until the player has decoded all of it;
+      // clearing it here would reset the timeline and cut off playback.
       updateStudio({
-        audioPath: output,
+        audioPath: result.path,
         audioAutoplayPending: false,
         step: "done",
         status: "Generation complete.",
       });
     } catch (err) {
-      updateStudio({ step: "idle", error: String(err), status: "Generation failed." });
+      if (stopRequestedRef.current || String(err).includes(SYNTHESIS_CANCELLED)) {
+        updateStudio({ step: "idle", error: "", status: "Generation stopped." });
+      } else {
+        updateStudio({ step: "idle", error: String(err), status: "Generation failed." });
+      }
     } finally {
+      synthesisIdRef.current = "";
+      synthesizeSentRef.current = false;
+      setStopping(false);
       updateStudio({ busy: false });
+    }
+  }
+
+  async function stopVoice() {
+    if (!busy || stopRequestedRef.current) return;
+    stopRequestedRef.current = true;
+    setStopping(true);
+    updateStudio({ status: "Stopping..." });
+    // Before the synthesize command is sent, the steps above notice the flag
+    // on their own. After it, the command has to be told.
+    if (synthesizeSentRef.current && synthesisIdRef.current) {
+      try {
+        await invoke("cancel_synthesis", { synthesisId: synthesisIdRef.current });
+      } catch {
+        // The synthesis may have finished in the meantime; nothing to stop.
+      }
     }
   }
 
@@ -245,6 +346,8 @@ export function HomePage({ bundle, setBundle, studio, setStudio }: HomePageProps
               setPhonemes={(nextPhonemes) => updateStudio({ phonemes: nextPhonemes })}
               convertToPhonemes={convertToPhonemes}
               createVoice={createVoice}
+              stopVoice={stopVoice}
+              stopping={stopping}
               blueVoice={blueVoice}
               blueVoiceIds={blueVoiceIds}
               speed={speed}
@@ -256,13 +359,15 @@ export function HomePage({ bundle, setBundle, studio, setStudio }: HomePageProps
             />
 
             <AnimatePresence>
-              {(audioPath || streamedAudioSrcs.length > 0) && (
+              {playerSources.length > 0 && (
                 <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 8 }}>
                   <WaveformPlayer
                     sources={playerSources}
+                    sessionKey={generation}
+                    onSourcesDecoded={handleSourcesDecoded}
                     downloadPath={audioPath}
-                    complete={Boolean(audioPath)}
-                    filename={(audioPath || streamChunkPaths[0] || "generated-audio.wav").split(/[\\/]/).pop() || "generated-audio.wav"}
+                    complete={Boolean(audioPath) || !busy}
+                    filename={(audioPath || "generated-audio.wav").split(/[\\/]/).pop() || "generated-audio.wav"}
                     autoPlayOnce={audioAutoplayPending}
                     onAutoPlayConsumed={() => updateStudio({ audioAutoplayPending: false })}
                   />

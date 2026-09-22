@@ -1,9 +1,11 @@
 mod binary;
+mod cancel;
 mod client;
 mod dto;
 mod errors;
 mod file_ops;
 mod process;
+mod speech_stream;
 
 use std::{
     env,
@@ -14,13 +16,14 @@ use tauri::{Manager, State};
 
 use crate::analytics;
 
-pub use dto::{LoadModelRequest, PhonemizeRequest, RunnerInfo, SpeechRequest};
+pub use dto::{LoadModelRequest, PhonemizeRequest, RunnerInfo, SpeechRequest, SpeechResult};
 pub use process::RunnerState;
 
 use binary::resolve_runner_binary;
 use client::{
-    get_languages_request, get_phoneme_inventory_request, get_voices_request, load_model_request,
-    diacritize_request, phonemize_request, synthesize_request,
+    cancel_synthesis_request, diacritize_request, get_languages_request,
+    get_phoneme_inventory_request, get_voices_request, load_model_request, phonemize_request,
+    synthesize_request,
 };
 use errors::track_err;
 use file_ops::copy_audio_file_request;
@@ -133,13 +136,37 @@ pub async fn get_phoneme_inventory(
     get_phoneme_inventory_request(app, state).await
 }
 
+/// Synthesize speech. Playable chunks arrive on `on_chunk` as raw WAV bytes
+/// while inference runs; the result names the finished recording.
 #[tauri::command]
 pub async fn synthesize(
     app: tauri::AppHandle,
     state: State<'_, RunnerState>,
     request: SpeechRequest,
-) -> Result<String, String> {
-    synthesize_request(app, state, request).await
+    on_chunk: tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>,
+) -> Result<SpeechResult, String> {
+    synthesize_request(app, state, request, on_chunk).await
+}
+
+/// Stop the synthesis started with this id. It rejects with
+/// "synthesis cancelled" and leaves no files behind.
+#[tauri::command]
+pub async fn cancel_synthesis(
+    state: State<'_, RunnerState>,
+    synthesis_id: String,
+) -> Result<(), String> {
+    cancel_synthesis_request(state, synthesis_id);
+    Ok(())
+}
+
+/// Remove chunk files that earlier versions left in the temp folder.
+pub fn sweep_legacy_chunk_files() {
+    std::thread::spawn(|| {
+        let removed = speech_stream::sweep_legacy_chunk_files(&env::temp_dir());
+        if removed > 0 {
+            tracing::info!("removed {removed} leftover streamed chunk files");
+        }
+    });
 }
 
 #[tauri::command]

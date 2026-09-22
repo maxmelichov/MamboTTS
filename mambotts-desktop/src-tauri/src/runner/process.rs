@@ -10,7 +10,7 @@ use tauri::Manager;
 
 use crate::model;
 
-use super::dto::ReadySignal;
+use super::{cancel::SynthesisRegistry, dto::ReadySignal};
 
 /// espeak-rs reads this to find its phoneme data, ahead of any other probe.
 const ESPEAK_DATA_ENV: &str = "PIPER_ESPEAKNG_DATA_DIRECTORY";
@@ -18,6 +18,7 @@ const ESPEAK_DATA_DIR_NAME: &str = "espeak-ng-data";
 
 pub struct RunnerState {
     pub process: Mutex<Option<RunnerProcess>>,
+    pub synthesis: SynthesisRegistry,
 }
 
 pub struct RunnerProcess {

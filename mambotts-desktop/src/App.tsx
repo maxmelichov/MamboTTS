@@ -46,7 +46,8 @@ function App() {
     // keep asking for a pace the app no longer offers.
     speed: clampSpeed(Number(localStorage.getItem("speech-speed")) || 1),
     audioPath: "",
-    streamChunkPaths: [],
+    streamChunkUrls: [],
+    generation: 0,
     audioAutoplayPending: false,
     step: "idle",
     status: "Ready to generate.",

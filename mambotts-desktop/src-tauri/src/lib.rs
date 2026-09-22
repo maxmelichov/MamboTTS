@@ -19,6 +19,7 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(runner::RunnerState {
             process: std::sync::Mutex::new(None),
+            synthesis: Default::default(),
         })
         .invoke_handler(tauri::generate_handler![
             greet,
@@ -37,6 +38,7 @@ pub fn run() {
             runner::diacritize,
             runner::get_phoneme_inventory,
             runner::synthesize,
+            runner::cancel_synthesis,
             runner::copy_audio_file,
             voices::download_voice,
         ]);
@@ -60,6 +62,7 @@ pub fn run() {
     app.run(|app, event| match event {
         tauri::RunEvent::Ready => {
             analytics::track_event_handle(app, analytics::events::APP_STARTED);
+            runner::sweep_legacy_chunk_files();
         }
         tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit => {
             runner::stop_managed_runner(app);
