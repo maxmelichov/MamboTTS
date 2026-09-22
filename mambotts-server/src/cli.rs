@@ -33,6 +33,12 @@ enum Command {
         model_dir: Option<PathBuf>,
         #[arg(long)]
         renikud: Option<PathBuf>,
+        /// A `surface<TAB>IPA` file whose entries always win in Hebrew G2P.
+        ///
+        /// Every entry is validated against the Hebrew surface when it loads;
+        /// one that cannot be read that way is reported and skipped.
+        #[arg(long)]
+        lexicon: Option<PathBuf>,
         #[arg(long, default_value_t = true, action = ArgAction::Set)]
         exit_with_parent: bool,
     },
@@ -45,10 +51,17 @@ pub async fn run() -> Result<()> {
             port,
             model_dir,
             renikud,
+            lexicon,
             exit_with_parent,
         } => {
             if exit_with_parent {
                 tokio::spawn(watch_parent());
+            }
+            if let Some(lexicon) = lexicon {
+                if !lexicon.is_file() {
+                    anyhow::bail!("--lexicon {} does not exist", lexicon.display());
+                }
+                crate::runtime::set_lexicon_path(lexicon);
             }
             let server = Server::new(VERSION.into(), COMMIT.into());
             if model_dir.is_some() || renikud.is_some() {

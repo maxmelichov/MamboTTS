@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
 
 use anyhow::{Context, Result, bail};
 use blue_rs::{
@@ -15,6 +15,21 @@ pub struct BlueRuntime {
     phonemizer: Phonemizer,
     styles: HashMap<String, VoiceStyle>,
     languages: Vec<RuntimeLanguage>,
+}
+
+/// The `--lexicon` TSV, if the server was started with one.
+static LEXICON_PATH: OnceLock<PathBuf> = OnceLock::new();
+
+/// Record the force lexicon every Hebrew G2P in this process should use.
+///
+/// Called once from the CLI before any model is loaded; a later call is
+/// ignored, which keeps the flag a start-up decision.
+pub fn set_lexicon_path(path: PathBuf) {
+    let _ = LEXICON_PATH.set(path);
+}
+
+fn lexicon_path() -> Option<&'static PathBuf> {
+    LEXICON_PATH.get()
 }
 
 impl BlueRuntime {
@@ -37,6 +52,13 @@ impl BlueRuntime {
         let mut phonemizer = Phonemizer::with_language(Some(&renikud_path), Language::English)
             .with_context(|| format!("load RenikudPlus ONNX from {}", renikud_path.display()))?;
         phonemizer.set_speakers(speaker, target_speaker);
+        // `--lexicon` is a property of the process rather than of one model, so
+        // it survives the /v1/load the desktop sends after startup.
+        if let Some(path) = lexicon_path() {
+            phonemizer
+                .set_hebrew_lexicon(path, "")
+                .with_context(|| format!("load force lexicon from {}", path.display()))?;
+        }
 
         let voices_dir = model_dir.join("voices");
         let mut styles = HashMap::new();
@@ -113,8 +135,8 @@ impl Runtime for BlueRuntime {
         self.phonemizer.g2p(text, language).map(strip_language_tags)
     }
 
-    fn diacritize(&mut self, text: &str) -> Result<String> {
-        self.phonemizer.diacritize(text)
+    fn diacritize(&mut self, text: &str, stress: bool) -> Result<String> {
+        self.phonemizer.diacritize(text, stress)
     }
 
     fn set_speakers(&mut self, speaker: u8, target_speaker: u8) {

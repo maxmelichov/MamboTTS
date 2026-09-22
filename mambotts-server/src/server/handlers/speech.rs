@@ -9,8 +9,8 @@ use futures_util::stream;
 
 use super::super::{
     dto::{
-        CancelBody, CancelResponse, PhonemeInventoryResponse, PhonemizeBody, PhonemizeResponse,
-        SpeechBody,
+        CancelBody, CancelResponse, DiacritizeBody, PhonemeInventoryResponse, PhonemizeBody,
+        PhonemizeResponse, SpeechBody,
     },
     errors::write_error,
     state::{Cancelled, EngineError, SharedServer},
@@ -82,7 +82,7 @@ pub async fn phoneme_inventory(State(server): State<SharedServer>) -> Response {
 
 pub async fn diacritize(
     State(server): State<SharedServer>,
-    Json(body): Json<PhonemizeBody>,
+    Json(body): Json<DiacritizeBody>,
 ) -> Response {
     if body.input.trim().is_empty() {
         return write_error(
@@ -91,8 +91,11 @@ pub async fn diacritize(
             "request body must contain input",
         );
     }
-    let input = body.input;
-    match server.with_engine(move |ctx| ctx.diacritize(&input)).await {
+    let DiacritizeBody { input, stress } = body;
+    match server
+        .with_engine(move |ctx| ctx.diacritize(&input, stress))
+        .await
+    {
         Ok(text) => Json(PhonemizeResponse { phonemes: text }).into_response(),
         Err(err) => engine_error(err),
     }

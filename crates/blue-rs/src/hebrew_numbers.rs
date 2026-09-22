@@ -1,31 +1,18 @@
-//! Hebrew number reading, delegated to `heb-tts-normalizer`.
+//! Hebrew number reading, from the RenikudPlus front end.
 //!
 //! Hebrew numbers agree in gender with the noun they count, take construct
-//! forms in the thousands, and read differently as a year, an ordinal or a
-//! range. That is a lexicon problem rather than an arithmetic one, so this
-//! module hands the work to a library that maintains the lexicon instead of
-//! keeping a second copy of it here.
+//! forms in the thousands, and read differently as a year, an ordinal, a clock
+//! time or an identifier. RenikudPlus ships that lexicon (a port of the
+//! `hebrew-num2words` package it uses upstream), and its G2P was tuned against
+//! exactly those readings, so this module hands the work to it rather than
+//! keeping a second, differently-opinionated copy.
 
-use heb_tts_normalizer::{Config, normalize};
 use regex::Regex;
+use renikud_plus_rs::numbers::normalize_numbers_keep_spacing;
 use std::sync::OnceLock;
 
-fn config() -> &'static Config {
-    static CONFIG: OnceLock<Config> = OnceLock::new();
-    CONFIG.get_or_init(|| {
-        let mut config = Config::default();
-        // `prepare_text_for_synthesis` already strips markup and settles
-        // whitespace, and the paragraph breaks it leaves are what the chunker
-        // splits on. Letting the normalizer collapse them would glue
-        // paragraphs together and change where chunks fall.
-        config.strip_markdown = false;
-        config.clean_whitespace = false;
-        config
-    })
-}
-
 /// Digits inside an angle bracket span are markup rather than something to read
-/// aloud, and the normalizer would otherwise turn `<break time="300ms"/>` into
+/// aloud, and the expander would otherwise turn `<break time="300ms"/>` into
 /// `<break time="שלוש מאותms"/>`.
 ///
 /// Nothing in the text path relies on this today: `normalize_common_text` runs
@@ -38,15 +25,20 @@ fn literal_spans() -> &'static Regex {
 }
 
 /// Read digits in Hebrew text as Hebrew words, leaving markup literals alone.
+///
+/// Whitespace is kept as written — the chunker splits on the paragraph breaks
+/// this pass leaves behind, so collapsing them would move where chunks fall.
 pub fn normalize_hebrew_numbers(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut cursor = 0;
     for literal in literal_spans().find_iter(text) {
-        out.push_str(&normalize(&text[cursor..literal.start()], config()));
+        out.push_str(&normalize_numbers_keep_spacing(
+            &text[cursor..literal.start()],
+        ));
         out.push_str(literal.as_str());
         cursor = literal.end();
     }
-    out.push_str(&normalize(&text[cursor..], config()));
+    out.push_str(&normalize_numbers_keep_spacing(&text[cursor..]));
     out
 }
 
@@ -60,41 +52,47 @@ mod tests {
             normalize_hebrew_numbers("גיליון 2011"),
             "גיליון אלפיים ואחת עשרה"
         );
+        assert_eq!(
+            normalize_hebrew_numbers("בשנת 1948 קמה המדינה"),
+            "בשנת אלף תשע מאות ארבעים ושמונה קמה המדינה"
+        );
     }
 
     #[test]
     fn reads_a_grouping_comma_as_a_thousands_separator() {
-        // This one was worse than the reported bug: the old pass treated the
-        // comma as a decimal point and said "thirty point zero shekels".
         assert_eq!(normalize_hebrew_numbers("30,000 שקלים"), "שלושים אלף שקלים");
     }
 
     #[test]
-    fn counts_above_the_old_u16_ceiling() {
-        assert_eq!(normalize_hebrew_numbers("500000 איש"), "חמש מאות אלף איש");
+    fn a_long_digit_run_reads_as_an_identifier() {
+        // Five digits or more with no separators is a code, a phone number or
+        // an account number far more often than a count, so RenikudPlus reads
+        // it digit by digit. A grouped number is still a number.
+        assert_eq!(
+            normalize_hebrew_numbers("500000 איש"),
+            "חמש אפס אפס אפס אפס אפס איש"
+        );
+        assert_eq!(normalize_hebrew_numbers("500,000 איש"), "חמש מאות אלף איש");
+        assert_eq!(normalize_hebrew_numbers("12,000 איש"), "שנים עשר אלף איש");
     }
 
     #[test]
     fn keeps_the_prefix_attached_across_the_maqaf() {
-        assert_eq!(
-            normalize_hebrew_numbers("כ-150 דונם"),
-            "כמאה וחמישים דונמים"
-        );
+        assert_eq!(normalize_hebrew_numbers("כ-150 דונם"), "כמאה וחמישים דונם");
     }
 
     #[test]
-    fn reads_a_span_of_years_as_a_range() {
-        assert_eq!(
-            normalize_hebrew_numbers("בשנים 2022 - 2025"),
-            "בשנים אלפיים עשרים ושתיים עד אלפיים עשרים וחמש"
-        );
+    fn counts_agree_with_the_noun_they_count() {
+        assert_eq!(normalize_hebrew_numbers("8 שעות"), "שמונה שעות");
+        assert_eq!(normalize_hebrew_numbers("8 שקלים"), "שמונה שקלים");
+        assert_eq!(normalize_hebrew_numbers("2 ספרים"), "שני ספרים");
     }
 
     #[test]
     fn leaves_markup_literals_alone() {
         assert_eq!(
             normalize_hebrew_numbers("<break time=\"300ms\"/> 5 דונם"),
-            "<break time=\"300ms\"/> חמישה דונמים"
+            "<break time=\"300ms\"/> חמש דונם"
         );
     }
 

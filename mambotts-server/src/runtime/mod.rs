@@ -6,7 +6,7 @@ use utoipa::ToSchema;
 
 mod blue;
 
-pub use blue::BlueRuntime;
+pub use blue::{BlueRuntime, set_lexicon_path};
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct Language {
@@ -19,7 +19,7 @@ pub trait Runtime: Send {
     fn voices(&self) -> Option<Vec<String>>;
     fn sample_rate(&self) -> u32;
     fn phonemize(&mut self, text: &str, language: &str) -> Result<String>;
-    fn diacritize(&mut self, text: &str) -> Result<String>;
+    fn diacritize(&mut self, text: &str, stress: bool) -> Result<String>;
     /// Change the RenikudPlus speaker hints without reloading anything.
     fn set_speakers(&mut self, speaker: u8, target_speaker: u8);
     fn supported_phonemes(&self) -> Vec<char>;

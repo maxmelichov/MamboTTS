@@ -6,7 +6,6 @@ edition = "2024"
 [dependencies]
 zip = { version = "2.2", default-features = false, features = ["deflate"] }
 anyhow = "1"
-heb-tts-normalizer = "=0.2.0"
 espeak-rs = { path = "../espeak-rs" }
 hound = "3.5.1"
 ndarray = "0.17"
