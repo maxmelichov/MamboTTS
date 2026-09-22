@@ -58,7 +58,7 @@ export function SettingsPage({ bundle }: SettingsPageProps) {
               <div className="flex flex-col gap-8 p-8 sm:flex-row sm:items-center sm:justify-between bg-background/10">
                 <div className="space-y-0.5">
                   <p className="text-[9px] font-bold uppercase tracking-widest text-secondary opacity-30">Engine Specification</p>
-                  <p className="text-xl font-semibold tracking-tight text-primary">{bundle?.version ?? "blue-onnx-v2"}</p>
+                  <p className="text-xl font-semibold tracking-tight text-primary">{bundle?.version ?? "bluetts-2.5"}</p>
                 </div>
                 <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white border border-border/40 text-[9px] font-black uppercase tracking-[0.2em] text-green-600 shadow-sm">
                   <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />

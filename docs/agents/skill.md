@@ -16,8 +16,8 @@ Or load the Blue bundle immediately:
 mambotts-server serve \
   --host 127.0.0.1 \
   --port 8080 \
-  --model-dir /path/to/blue-onnx-v2 \
-  --renikud /path/to/blue-onnx-v2/renikud-plus.onnx \
+  --model-dir /path/to/bluetts-2.5 \
+  --renikud /path/to/bluetts-2.5/renikud-plus.onnx \
   --exit-with-parent false
 ```
 
@@ -30,8 +30,8 @@ curl -sS http://127.0.0.1:8080/v1/models/load \
   -H 'content-type: application/json' \
   -d '{
     "runtime": "blue",
-    "model_path": "/path/to/blue-onnx-v2",
-    "renikud_path": "/path/to/blue-onnx-v2/renikud-plus.onnx",
+    "model_path": "/path/to/bluetts-2.5",
+    "renikud_path": "/path/to/bluetts-2.5/renikud-plus.onnx",
     "speaker": 0,
     "target_speaker": 0
   }'

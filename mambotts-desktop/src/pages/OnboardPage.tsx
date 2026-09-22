@@ -92,11 +92,11 @@ export function OnboardPage({ bundle, setBundle }: PageProps) {
     {
       id: "blue",
       name: "BlueTTS",
-      version: "blue-onnx-v2",
+      version: "bluetts-2.5",
       size: "~1.4 GB",
       description: "Local speech in Hebrew, English, Spanish, German, and Italian",
       files: [],
-      directory: "blue-onnx-v2",
+      directory: "bluetts-2.5",
       capabilities: { hebrew: true, streaming: true, voice_reference: false, fixed_voices: true },
     },
   ]) as ModelSource[];
@@ -198,7 +198,7 @@ export function OnboardPage({ bundle, setBundle }: PageProps) {
             <div className="flex flex-col gap-5 bg-background/10 p-6 sm:flex-row sm:items-center sm:justify-between">
               <div className="space-y-1">
                 <Eyebrow>Local Infrastructure</Eyebrow>
-                <h3 className="text-base font-semibold tracking-tight">{bundles[runtime]?.version ?? "blue-onnx-v2"}</h3>
+                <h3 className="text-base font-semibold tracking-tight">{bundles[runtime]?.version ?? "bluetts-2.5"}</h3>
                 <p className="text-xs text-secondary opacity-40">
                   {bundles[runtime]?.installed ? "Already installed locally" : "Initial setup: ~1.4 GB storage (BlueTTS + RenikudPlus)"}
                 </p>

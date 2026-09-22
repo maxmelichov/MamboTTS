@@ -30,7 +30,7 @@ curl {{base_url}}/v1/models/sources
 
 curl -X POST {{base_url}}/v1/models/load \
   -H 'Content-Type: application/json' \
-  -d '{"runtime":"blue","model_path":"/path/to/blue-onnx-v2","renikud_path":"/path/to/blue-onnx-v2/renikud-plus.onnx","speaker":0,"target_speaker":0}'
+  -d '{"runtime":"blue","model_path":"/path/to/bluetts-2.5","renikud_path":"/path/to/bluetts-2.5/renikud-plus.onnx","speaker":0,"target_speaker":0}'
 
 curl -X POST {{base_url}}/v1/phonemize \
   -H 'Content-Type: application/json' \
