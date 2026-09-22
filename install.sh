@@ -24,7 +24,7 @@ TAG_PREFIX="mambotts-desktop-"
 # Used when the GitHub API cannot be reached, which happens often enough from
 # shared or rate limited addresses that a hard failure would be the wrong
 # default. Keep this in step with the newest published desktop release.
-FALLBACK_VERSION="1.3.1"
+FALLBACK_VERSION="1.3.3"
 
 APP_NAME="MamboTTS"
 APPLICATIONS_DIR="${APPLICATIONS_DIR:-/Applications}"
@@ -77,7 +77,7 @@ detect_platform() {
             PLATFORM="linux"
             ;;
         *)
-            die "unsupported operating system \`${uname_s}\`. This installer covers macOS and Linux. Windows users should run install.ps1, which sets up the local MamboTTS server and its API."
+            die "unsupported operating system \`${uname_s}\`. This installer covers macOS and Linux. Windows users should run install.ps1, which installs the MamboTTS desktop app (or, with -Server, the headless API)."
             ;;
     esac
 }

@@ -132,6 +132,28 @@ jobs:
           tauriScript: pnpm exec tauri
           args: ${{ matrix.args }}
 
+      # install.ps1 -Server downloads MamboTTS-Server_<version>_x86_64-windows.zip
+      # from this release, and nothing else publishes it, so without this step
+      # every -Server install stops on a 404. The layout is what install.ps1
+      # checks for: the sidecar, both ONNX Runtime DLLs and espeak-ng-data at the
+      # zip root, where espeak-rs finds the data beside the executable.
+      - name: Package Windows server zip
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = (Get-Content mambotts-desktop/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $bin = 'mambotts-desktop/src-tauri/binaries'
+          $stage = 'dist/server'
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item "$bin/mambotts-server-${{ matrix.target }}.exe" "$stage/mambotts-server.exe"
+          Copy-Item "$bin/onnxruntime.dll", "$bin/onnxruntime_providers_shared.dll" $stage
+          Copy-Item "$bin/espeak-ng-data" $stage -Recurse
+          $zip = "dist/MamboTTS-Server_${version}_x86_64-windows.zip"
+          Compress-Archive -Path "$stage/*" -DestinationPath $zip -Force
+          gh release upload "mambotts-desktop-v$version" $zip --clobber
+
       # Bundled separately so a WiX failure still leaves the NSIS installer
       # published, the same split the GitLab windows:desktop job uses.
       - name: Build Windows MSI installer
