@@ -300,6 +300,40 @@ in the product depends on, because `blue-rs` takes espeak from a git dependency
 on piper-rs instead. Excluding `espeak-rs` from the test run keeps that unwired
 copy out of the way.
 
+The tests that need real model files are `#[ignore]`d. Run them with the
+downloaded bundle:
+
+```console
+MAMBOTTS_RENIKUD_PATH=/path/to/models/bluetts-2.5/renikud-plus.onnx \
+  cargo test -p blue-rs -p renikud-plus-rs -- --ignored
+```
+
+The `embedded` example in `blue-rs` bakes model files into the binary from
+paths that only exist when laid out by hand, so it is behind a feature and
+`cargo test` skips it: `cargo run -p blue-rs --example embedded --features
+embedded-example`.
+
+### Validate on Windows
+
+Cargo does not set the ONNX Runtime variables for you here, so set them the
+way `scripts/pre_build.py` does, from Git Bash:
+
+```console
+export ORT_DIR="$PWD/crates/blue-rs/.ort/onnxruntime-win-x64-1.23.2/lib"
+export ORT_STRATEGY=system ORT_PREFER_DYNAMIC_LINK=1 ORT_LIB_LOCATION="$ORT_DIR"
+export RUSTFLAGS="-L native=$ORT_DIR -C link-arg=advapi32.lib"
+export LIBCLANG_PATH="C:\\Program Files\\LLVM\\bin"
+mkdir -p target/debug/deps
+cp "$ORT_DIR"/onnxruntime*.dll target/debug/deps/
+cargo test --workspace --exclude mambotts-py --exclude espeak-rs
+```
+
+The copy into `target/debug/deps` is the same System32 problem the installer
+works around: the test executables live there, and adding the ONNX Runtime
+directory to `PATH` is not enough, because the old `onnxruntime.dll` in
+`System32` is found first and every test binary that links `ort` dies with
+`0xC000007B` before a single test runs.
+
 ## Models
 
 Model files are downloaded on first use into the application-local data

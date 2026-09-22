@@ -19,3 +19,14 @@ rodio = "0.20"
 rustfft = "6.2"
 serde_json = "1"
 unicode-normalization = "0.1"
+
+# The embedded example bakes model files into the binary with include_bytes!,
+# from paths that only exist on a machine that has laid them out by hand, so
+# building it unconditionally broke `cargo test --workspace` everywhere else.
+# Build it with `cargo run -p blue-rs --example embedded --features embedded-example`.
+[features]
+embedded-example = []
+
+[[example]]
+name = "embedded"
+required-features = ["embedded-example"]

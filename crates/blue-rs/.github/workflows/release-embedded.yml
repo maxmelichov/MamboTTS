@@ -82,7 +82,7 @@ jobs:
         shell: bash
         run: |
           export SDKROOT="$(xcrun --show-sdk-path 2>/dev/null || true)"
-          cargo build --release --example embedded --target "${{ matrix.target }}"
+          cargo build --release --example embedded --features embedded-example --target "${{ matrix.target }}"
 
       - name: Smoke test
         shell: bash

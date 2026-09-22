@@ -64,7 +64,7 @@ impl Args {
 
 fn print_usage() {
     eprintln!(
-        "Usage: cargo run --release --example embedded -- [--language he|en|es|de|it] <text> [output.wav]"
+        "Usage: cargo run --release --example embedded --features embedded-example -- [--language he|en|es|de|it] <text> [output.wav]"
     );
 }
 
