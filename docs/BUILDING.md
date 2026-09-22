@@ -62,6 +62,20 @@ target/release/bundle/macos/
 Open the generated `.dmg`, drag MamboTTS into Applications, and replace the
 existing copy. If macOS says the app is still running, quit it first.
 
+A build produced this way is ad-hoc signed, not Developer ID signed (see
+[docs/code-signing/macos.md](code-signing/macos.md) for the alternative), so
+a copy dragged out of the DMG keeps the quarantine attribute and macOS
+refuses to open it with no useful error. Clear it and, if that alone is not
+enough, re-seal the ad-hoc signature over the bundle:
+
+```console
+xattr -dr com.apple.quarantine "target/release/bundle/macos/MamboTTS.app"
+codesign --force --deep --sign - "target/release/bundle/macos/MamboTTS.app"
+```
+
+This is the same fix documented in the [README](../README.md#install) for
+anyone who installs the DMG manually instead of through `install.sh`.
+
 For a faster local reinstallable debug build:
 
 ```console

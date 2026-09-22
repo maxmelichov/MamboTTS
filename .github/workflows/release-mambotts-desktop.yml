@@ -150,6 +150,10 @@ jobs:
           Copy-Item "$bin/mambotts-server-${{ matrix.target }}.exe" "$stage/mambotts-server.exe"
           Copy-Item "$bin/onnxruntime.dll", "$bin/onnxruntime_providers_shared.dll" $stage
           Copy-Item "$bin/espeak-ng-data" $stage -Recurse
+          # The Start Menu entry install.ps1 writes points at a .cmd launcher,
+          # which otherwise shows the generic Windows script icon. install.ps1
+          # picks this file up as the shortcut icon when it is present.
+          Copy-Item 'mambotts-desktop/src-tauri/icons/icon.ico' "$stage/mambotts.ico"
           $zip = "dist/MamboTTS-Server_${version}_x86_64-windows.zip"
           Compress-Archive -Path "$stage/*" -DestinationPath $zip -Force
           gh release upload "mambotts-desktop-v$version" $zip --clobber

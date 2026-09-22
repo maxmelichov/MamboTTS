@@ -1,7 +1,7 @@
 import { Loader2, Play, Sparkles, X } from "lucide-react";
 import { useRef, useState, type KeyboardEvent } from "react";
 import { cn } from "../../lib/classNames";
-import type { EditorInputSource } from "../../lib/types";
+import type { EditorInputSource, EditorLayer } from "../../lib/types";
 import { Button, Card } from "../../components/ui";
 import { GenerationControls } from "./GenerationControls";
 
@@ -102,6 +102,10 @@ type EditorCardProps = {
   setText: (text: string) => void;
   language: string;
   isHebrew: boolean;
+  /** Whether each optional layer is switched on (Diacritics is only ever on for Hebrew). */
+  diacriticsEnabled: boolean;
+  phonemesEnabled: boolean;
+  setLayerEnabled: (layer: EditorLayer, enabled: boolean) => void;
   /** The layer Generate will send, and its content. */
   inputSource: EditorInputSource;
   synthesisInput: string;
@@ -123,6 +127,9 @@ export function EditorCard({
   setText,
   language,
   isHebrew,
+  diacriticsEnabled,
+  phonemesEnabled,
+  setLayerEnabled,
   inputSource,
   synthesisInput,
   diacritics,
@@ -141,9 +148,11 @@ export function EditorCard({
   setSpeed,
 }: EditorCardProps) {
   const [selectedTab, setTab] = useState<EditorTab>("text");
-  // The Diacritics layer only exists for Hebrew; fall back to the text when the
-  // language moves away from it.
-  const tab: EditorTab = selectedTab === "diacritics" && !isHebrew ? "text" : selectedTab;
+  // A layer's tab only exists while the layer is on (and Diacritics only for
+  // Hebrew); fall back to the text when the selected one goes away.
+  const tab: EditorTab = (selectedTab === "diacritics" && !diacriticsEnabled) || (selectedTab === "phonemes" && !phonemesEnabled)
+    ? "text"
+    : selectedTab;
   const phonemeInput = useRef<HTMLTextAreaElement>(null);
   const [converting, setConverting] = useState<"diacritics" | "phonemes" | null>(null);
   const [editorError, setEditorError] = useState("");
@@ -192,6 +201,12 @@ export function EditorCard({
     setEditorError("");
     setTab(next);
   }
+  function toggleLayer(layer: EditorLayer, enabled: boolean) {
+    setLayerEnabled(layer, !enabled);
+    // Opening a layer shows it; closing the one on screen returns to the text.
+    if (!enabled) selectTab(layer);
+    else if (tab === layer) selectTab("text");
+  }
   function changeDiacritic(mark: string, isVowel: boolean) {
     if (selectedLetter === null) return;
     const chars = Array.from(diacritics);
@@ -237,27 +252,52 @@ export function EditorCard({
 
   const tabs: Array<{ id: EditorTab; label: string }> = [
     { id: "text", label: "Text" },
-    ...(isHebrew ? [{ id: "diacritics" as const, label: "Diacritics" }] : []),
-    { id: "phonemes", label: "Phonemes" },
+    ...(diacriticsEnabled ? [{ id: "diacritics" as const, label: "Diacritics" }] : []),
+    ...(phonemesEnabled ? [{ id: "phonemes" as const, label: "Phonemes" }] : []),
+  ];
+  const layerToggles: Array<{ id: EditorLayer; label: string; enabled: boolean; hint: string }> = [
+    ...(isHebrew ? [{ id: "diacritics" as const, label: "Diacritics", enabled: diacriticsEnabled, hint: "niqqud" }] : []),
+    { id: "phonemes", label: "Phonemes", enabled: phonemesEnabled, hint: "IPA" },
   ];
 
   return (
     <Card className="relative overflow-hidden p-0 shadow-xl border-none">
-      <div role="tablist" aria-label="Editor layer" className="flex items-center gap-2 border-b border-border/10 bg-background/10 px-8 pt-5">
-        {tabs.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            role="tab"
-            aria-selected={tab === item.id}
-            onClick={() => selectTab(item.id)}
-            title={inputSource === item.id ? "Generate uses this layer" : undefined}
-            className={cn("flex items-center gap-1.5 border-b-2 px-3 pb-3 text-[10px] font-bold uppercase tracking-[0.16em] transition-colors", tab === item.id ? "border-primary text-primary" : "border-transparent text-secondary/40 hover:text-primary")}
-          >
-            {item.label}
-            {inputSource === item.id && item.id !== "text" && <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden />}
-          </button>
-        ))}
+      <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2 border-b border-border/10 bg-background/10 px-8 pt-5">
+        <div role="tablist" aria-label="Editor layer" className="flex items-center gap-2">
+          {tabs.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              role="tab"
+              aria-selected={tab === item.id}
+              onClick={() => selectTab(item.id)}
+              title={inputSource === item.id ? "Generate uses this layer" : undefined}
+              className={cn("flex items-center gap-1.5 border-b-2 px-3 pb-3 text-[10px] font-bold uppercase tracking-[0.16em] transition-colors", tab === item.id ? "border-primary text-primary" : "border-transparent text-secondary/40 hover:text-primary")}
+            >
+              {item.label}
+              {inputSource === item.id && item.id !== "text" && <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden />}
+            </button>
+          ))}
+        </div>
+        <div role="group" aria-label="Optional layers" className="flex items-center gap-2 pb-2.5">
+          {layerToggles.map((layer) => (
+            <button
+              key={layer.id}
+              type="button"
+              role="switch"
+              aria-checked={layer.enabled}
+              onClick={() => toggleLayer(layer.id, layer.enabled)}
+              disabled={busy}
+              title={layer.enabled ? `Turn off ${layer.label} (Generate stops using it)` : `Turn on ${layer.label} to edit ${layer.hint} before generating`}
+              className={cn("inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] transition-colors disabled:opacity-50", layer.enabled ? "border-primary/40 bg-white text-primary shadow-sm" : "border-border/40 text-secondary/50 hover:border-primary/40 hover:text-primary")}
+            >
+              <span aria-hidden className={cn("relative h-3 w-5 rounded-full transition-colors", layer.enabled ? "bg-primary" : "bg-secondary/20")}>
+                <span className={cn("absolute top-0.5 h-2 w-2 rounded-full bg-white transition-all", layer.enabled ? "left-2.5" : "left-0.5")} />
+              </span>
+              {layer.label}
+            </button>
+          ))}
+        </div>
       </div>
       {tab === "text" ? (
         <textarea
@@ -349,7 +389,7 @@ export function EditorCard({
             <div>
               <p className="text-sm font-semibold text-primary">Model IPA input</p>
               <p className="text-xs text-secondary/55">
-                {isHebrew && diacritics && !diacriticsStale
+                {diacriticsEnabled && diacritics && !diacriticsStale
                   ? "Generated from your vocalized Hebrew. When present, this IPA is sent to BlueTTS as-is."
                   : "IPA for the selected language. When present, it is sent to BlueTTS as-is instead of the text."}
               </p>
@@ -417,7 +457,7 @@ export function EditorCard({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4 text-[10px] font-bold uppercase tracking-[0.2em] text-secondary">
             <span className={cn("opacity-40 transition-colors", synthesisInput.length > 500 ? "text-amber-600 opacity-100" : "")}>{synthesisInput.length} Characters</span>
-            {inputSource !== "text" && (
+            {(diacriticsEnabled || phonemesEnabled) && (
               <button
                 type="button"
                 onClick={() => selectTab(inputSource)}

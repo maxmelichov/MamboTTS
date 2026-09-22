@@ -1,0 +1,28 @@
+<!-- Source for src-tauri/installer/header.bmp - the 150x57 banner NSIS shows in
+     the top-right of every wizard page. Exported as a 24-bit BMP at exactly
+     150x57; NSIS will not accept any other size or depth. -->
+<svg width="150" height="57" viewBox="0 0 150 57" xmlns="http://www.w3.org/2000/svg">
+  <rect x="0" y="0" width="150" height="57" fill="#33270F"/>
+  <rect x="0" y="54" width="150" height="3" fill="#FFD23F"/>
+  <g transform="translate(8,7.5) scale(0.875)">
+    <circle cx="24" cy="24" r="22.8" fill="#FFD23F"/>
+    <circle cx="24" cy="24" r="22" fill="none" stroke="#E0A81E" stroke-width="1.6"/>
+    <circle cx="24" cy="24" r="16.6" fill="#33270F"/>
+    <circle cx="24" cy="24" r="12.6" fill="none" stroke="#6B5622" stroke-width="1.6"/>
+    <path d="M13.6 18.6 A11.8 11.8 0 0 1 20.4 13.2" fill="none" stroke="#FFF4DC"
+          stroke-width="1.8" stroke-linecap="round" opacity="0.85"/>
+    <circle cx="24" cy="24" r="7.6" fill="#FFF4DC"/>
+    <g transform="translate(24,24) scale(0.58)" fill="none" stroke="#33270F"
+       stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M-10 6 V-6 L-5.5 0 L-1 -6 V6"/>
+      <path d="M2 -6 H10"/>
+      <path d="M6 -6 V6"/>
+    </g>
+  </g>
+  <text x="58" y="27" font-family="Segoe UI, Arial, sans-serif" font-size="17"
+        font-weight="700" fill="#FFD23F">MamboTTS</text>
+  <text x="58" y="41" font-family="Segoe UI, Arial, sans-serif" font-size="9"
+        fill="#F5F0E8" opacity="0.72">Hebrew text to speech</text>
+  <circle cx="141" cy="12" r="2.5" fill="#4ECDC4"/>
+  <circle cx="133" cy="12" r="2" fill="#FF6B35"/>
+</svg>

@@ -500,6 +500,12 @@ function Add-StartMenuShortcut {
         $link.TargetPath = $Launcher
         $link.WorkingDirectory = $InstallDir
         $link.Description = 'Start the MamboTTS local server and open its Swagger docs'
+        # A shortcut to a .cmd inherits the generic Windows script icon, which is
+        # how the Start Menu entry ended up looking like nothing in particular.
+        # The server archive ships mambotts.ico beside the binary; older archives
+        # do not, so the icon stays optional.
+        $icon = Join-Path $InstallDir 'mambotts.ico'
+        if (Test-Path $icon) { $link.IconLocation = "$icon,0" }
         $link.Save()
         return $shortcut
     } catch {

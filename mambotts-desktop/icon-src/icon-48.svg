@@ -1,0 +1,19 @@
+<!-- MamboTTS mark, 48 px tier (41-80 px): Explorer medium icons, Start menu.
+     Enough room for one groove, the cream highlight arc and a gold rim that
+     separates the badge from white backgrounds. Rays, tonearm and the accent
+     dots still stay out - they turn into noise below ~80 px. -->
+<svg width="48" height="48" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="24" cy="24" r="22.8" fill="#FFD23F"/>
+  <circle cx="24" cy="24" r="22" fill="none" stroke="#E0A81E" stroke-width="1.6"/>
+  <circle cx="24" cy="24" r="16.6" fill="#33270F"/>
+  <circle cx="24" cy="24" r="12.6" fill="none" stroke="#6B5622" stroke-width="1.6"/>
+  <path d="M13.6 18.6 A11.8 11.8 0 0 1 20.4 13.2" fill="none" stroke="#FFF4DC"
+        stroke-width="1.8" stroke-linecap="round" opacity="0.85"/>
+  <circle cx="24" cy="24" r="7.6" fill="#FFF4DC"/>
+  <g transform="translate(24,24) scale(0.58)" fill="none" stroke="#33270F"
+     stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M-10 6 V-6 L-5.5 0 L-1 -6 V6"/>
+    <path d="M2 -6 H10"/>
+    <path d="M6 -6 V6"/>
+  </g>
+</svg>

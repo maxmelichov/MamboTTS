@@ -9,7 +9,8 @@
     ],
     "macOS": {
       "entitlements": "entitlements.plist",
-      "hardenedRuntime": true
+      "hardenedRuntime": true,
+      "signingIdentity": "-"
     }
   }
 }

@@ -1,10 +1,10 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { AnimatePresence, motion } from "framer-motion";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { useNavigate } from "react-router-dom";
-import type { EditorInputSource, ModelBundle, RunnerInfo, StudioState } from "../../lib/types";
+import type { EditorInputSource, EditorLayer, ModelBundle, RunnerInfo, StudioState } from "../../lib/types";
 import { AppFrame } from "../../components/AppFrame";
 import { CreateStatus } from "../../components/CreateStatus";
 import { ErrorBlock } from "../../components/ui";
@@ -12,6 +12,29 @@ import { WaveformPlayer } from "../../components/WaveformPlayer";
 import { StudioHeader } from "../../components/WorkspaceHeader";
 import { EditorCard } from "./EditorCard";
 import { VoiceSettings } from "./VoiceSettings";
+
+const layerStorageKeys: Record<EditorLayer, string> = {
+  diacritics: "editor-layer-diacritics",
+  phonemes: "editor-layer-phonemes",
+};
+
+/** The optional editor layers stay off until someone turns them on, then stay as they were left. */
+function readLayerEnabled(layer: EditorLayer): boolean {
+  try {
+    return localStorage.getItem(layerStorageKeys[layer]) === "on";
+  } catch {
+    return false;
+  }
+}
+
+function storeLayerEnabled(layer: EditorLayer, enabled: boolean) {
+  try {
+    if (enabled) localStorage.setItem(layerStorageKeys[layer], "on");
+    else localStorage.removeItem(layerStorageKeys[layer]);
+  } catch {
+    // Storage can be unavailable; the toggle still applies for this session.
+  }
+}
 
 type PageProps = {
   bundle: ModelBundle | null;
@@ -27,6 +50,14 @@ export function HomePage({ bundle, setBundle, studio, setStudio }: HomePageProps
   const navigate = useNavigate();
   const { text, phonemes, diacritics, diacriticsSource, languages, language, blueVoice, blueVoiceIds, speaker, targetSpeaker, speed, audioPath, streamChunkPaths, audioAutoplayPending, step, status, busy, error } = studio;
   const loadingLanguagesRef = useRef(false);
+  const [layers, setLayers] = useState<Record<EditorLayer, boolean>>(() => ({
+    diacritics: readLayerEnabled("diacritics"),
+    phonemes: readLayerEnabled("phonemes"),
+  }));
+  function setLayerEnabled(layer: EditorLayer, enabled: boolean) {
+    storeLayerEnabled(layer, enabled);
+    setLayers((current) => ({ ...current, [layer]: enabled }));
+  }
 
   const audioSrc = useMemo(() => (audioPath ? convertFileSrc(audioPath) : ""), [audioPath]);
   const streamedAudioSrcs = useMemo(
@@ -41,13 +72,17 @@ export function HomePage({ bundle, setBundle, studio, setStudio }: HomePageProps
   );
   const updateStudio = (patch: Partial<StudioState>) => setStudio((current) => ({ ...current, ...patch }));
   const isHebrew = language === "he" || (language === "auto" && /[֐-׿]/.test(text));
+  // Diacritics and Phonemes are opt-in layers. A layer that is switched off
+  // keeps its content for when it comes back, but is never spoken.
+  const diacriticsEnabled = layers.diacritics && isHebrew;
+  const phonemesEnabled = layers.phonemes;
   // Vocalized text only counts while it still matches the plain text it came
   // from; after the text is edited it is kept for reference but not spoken.
   const diacriticsStale = Boolean(diacritics) && diacriticsSource !== text;
-  const vocalized = isHebrew && !diacriticsStale && diacritics.trim() ? diacritics : "";
-  // Generate sends the most refined layer present: edited IPA, then vocalized
-  // Hebrew (RenikudPlus honors typed niqqud), then the plain text.
-  const inputSource: EditorInputSource = phonemes.trim() ? "phonemes" : vocalized ? "diacritics" : "text";
+  const vocalized = diacriticsEnabled && !diacriticsStale && diacritics.trim() ? diacritics : "";
+  // Generate sends the most refined enabled layer present: edited IPA, then
+  // vocalized Hebrew (RenikudPlus honors typed niqqud), then the plain text.
+  const inputSource: EditorInputSource = phonemesEnabled && phonemes.trim() ? "phonemes" : vocalized ? "diacritics" : "text";
   const synthesisInput = inputSource === "phonemes" ? phonemes : inputSource === "diacritics" ? vocalized : text;
 
   useEffect(() => {
@@ -234,6 +269,9 @@ export function HomePage({ bundle, setBundle, studio, setStudio }: HomePageProps
               setText={(nextText) => updateStudio({ text: nextText, phonemes: "" })}
               language={language}
               isHebrew={isHebrew}
+              diacriticsEnabled={diacriticsEnabled}
+              phonemesEnabled={phonemesEnabled}
+              setLayerEnabled={setLayerEnabled}
               inputSource={inputSource}
               synthesisInput={synthesisInput}
               diacritics={diacritics}

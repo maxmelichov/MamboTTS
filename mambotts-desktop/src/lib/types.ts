@@ -100,3 +100,6 @@ export type DownloadedVoice = {
 
 /** Which editor layer the Generate button sends, most refined first. */
 export type EditorInputSource = "text" | "diacritics" | "phonemes";
+
+/** The optional editor layers a user can switch on beside the plain text. */
+export type EditorLayer = Exclude<EditorInputSource, "text">;

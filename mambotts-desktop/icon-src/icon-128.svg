@@ -1,0 +1,35 @@
+<!-- MamboTTS mark, 128 px tier (81-199 px): Explorer large/extra-large icons,
+     Windows Store logos, jump lists.
+     The rays come back, plus two grooves and the label ring. The tonearm and
+     the teal/orange accent dots are held back for the 256 px tier - at 128 px
+     they sit on the badge rim and read as dirt. -->
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="64" cy="64" r="60.8" fill="#FFD23F"/>
+  <circle cx="64" cy="64" r="59.6" fill="none" stroke="#E0A81E" stroke-width="2.4"/>
+  <g transform="translate(64,64)">
+    <g fill="#2B1F0E" opacity="0.85">
+      <path d="M0 -57 L4.5 -43.6 L-4.5 -43.6 Z"/>
+      <path d="M54.2 -17.9 L41.4 -12.3 L44.2 -21.2 Z"/>
+      <path d="M54.2 17.9 L44.2 21.2 L41.4 12.3 Z"/>
+      <path d="M0 57 L-4.5 43.6 L4.5 43.6 Z"/>
+      <path d="M-54.2 17.9 L-41.4 12.3 L-44.2 21.2 Z"/>
+      <path d="M-54.2 -17.9 L-44.2 -21.2 L-41.4 -12.3 Z"/>
+    </g>
+    <g transform="rotate(-5)">
+      <circle cx="2.2" cy="3.4" r="37" fill="#C79A10"/>
+      <circle cx="0" cy="0" r="37" fill="#33270F" stroke="#F5F0E8" stroke-width="2.4"/>
+      <circle cx="0" cy="0" r="29" fill="none" stroke="#6B5622" stroke-width="2"/>
+      <circle cx="0" cy="0" r="24.6" fill="none" stroke="#6B5622" stroke-width="2"/>
+      <path d="M-25.7 -18.4 A31.9 31.9 0 0 1 -5.6 -31.3" fill="none" stroke="#F5F0E8"
+            stroke-width="2.4" stroke-linecap="round" opacity="0.8"/>
+      <circle cx="0" cy="0" r="19" fill="#FFF4DC"/>
+      <circle cx="0" cy="0" r="19" fill="none" stroke="#D8CFC0" stroke-width="1.6"/>
+      <g transform="scale(1.45)" fill="none" stroke="#33270F" stroke-width="3.2"
+         stroke-linecap="round" stroke-linejoin="round">
+        <path d="M-10 6 V-6 L-5.5 0 L-1 -6 V6"/>
+        <path d="M2 -6 H10"/>
+        <path d="M6 -6 V6"/>
+      </g>
+    </g>
+  </g>
+</svg>

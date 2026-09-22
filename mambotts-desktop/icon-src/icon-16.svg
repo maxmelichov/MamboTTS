@@ -1,0 +1,8 @@
+<!-- MamboTTS mark, 16 px tier (also used for 17-20 px).
+     Nothing survives at this size but the silhouette: a yellow badge, the dark
+     record, and its label. No rays, grooves, tonearm, accent dots or letters. -->
+<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="8" cy="8" r="7.5" fill="#FFD23F"/>
+  <circle cx="8" cy="8" r="5.4" fill="#33270F"/>
+  <circle cx="8" cy="8" r="2.4" fill="#FFF4DC"/>
+</svg>
