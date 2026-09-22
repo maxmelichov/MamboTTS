@@ -111,7 +111,7 @@ Pass `-Silent` if you are installing unattended.
 
 The app installs for the current user, so nothing asks for an administrator.
 On first launch the onboarding screen downloads the BlueTTS model and the
-Renikud phonemizer, around 600 MB, into the app data folder. That is the only
+Renikud phonemizer, around 580 MB, into the app data folder. That is the only
 part that needs the network; generation after it is offline.
 
 If you want the HTTP API without the window, `-Server` installs the headless

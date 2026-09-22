@@ -12,9 +12,9 @@
 
     Models are not downloaded here. The desktop app fetches them itself the first
     time you open it, through its onboarding screen, into its own application
-    data directory. That is around 600 MB and it only happens once. Downloading
-    them from this script as well would put a second copy of the same gigabyte
-    and a half somewhere the app never looks.
+    data directory. That is around 580 MB and it only happens once. Downloading
+    them from this script as well would put a second copy of the same 580 MB
+    somewhere the app never looks.
 
     With -Server the script does something different and older: it installs the
     headless server instead, which is the HTTP API on its own with Swagger docs

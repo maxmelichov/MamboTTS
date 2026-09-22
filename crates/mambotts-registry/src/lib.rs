@@ -44,10 +44,19 @@ pub struct RuntimeManifest {
 
 const BLUE_MODEL_BASE_URL: &str = "https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main";
 // The int8 export, not the float model beside it. It is a quarter of the size
-// (312 MB against 1.23 GB), loads four times faster and runs twice as fast, and
-// on real Hebrew text it disagrees with the float model on 1% of words, where it
-// was right more often than the float model was. The float model was 80% of the
-// whole first-run download for no gain.
+// (312 MB against 1.23 GB), holds 368 MB resident against 1287 MB, and runs
+// inference twice as fast. Quantization leaves the metadata the port reads
+// intact: every key is present and semantically identical, so exact-MAP decode
+// still runs rather than falling back to greedy.
+//
+// On the 327-text parity corpus in plans/renikud-parity it disagrees with the
+// float model on 1 to 2% of words (1.56% of phonemize words, 1.20% of vocalize
+// words). Reading those disagreements by hand, int8 is right about twice as
+// often as it is wrong. The one place it is worse is that a handful of its
+// misses delete a segment rather than swap a vowel colour - שעות as ʃʔˈot,
+// הדוח as hadˈoχ - and a dropped segment is more audible than a patah for a
+// segol. That is the trade for the float model being 80% of the first-run
+// download.
 const RENIKUD_URL: &str = "https://huggingface.co/notmax123/RenikudPlus/resolve/main/model_int8.onnx";
 
 const BLUE_FILES: &[ModelFile] = &[

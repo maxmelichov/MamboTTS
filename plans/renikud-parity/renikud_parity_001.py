@@ -437,7 +437,7 @@ def run_upstream(cases: list[dict]) -> list[dict]:
                 ipa = None
                 if case["text"]:
                     # The upstream constructor takes the lexicon; injecting it
-                    # avoids loading the 1.2 GB model a second time.
+                    # avoids loading the model a second time.
                     g2p._lexicon = lex
                     ipa = g2p.phonemize(
                         case["text"],

@@ -106,7 +106,7 @@ impl Server {
         // The desktop sends a load before every Generate, Add diacritics and
         // Generate phonemes, to be sure a model is there. Rebuilding the
         // ONNX sessions each time cost 10 to 20 seconds per click, most of it
-        // re-reading the 1.2 GB RenikudPlus model. When the same files are
+        // re-reading the 312 MB RenikudPlus model. When the same files are
         // already loaded, only the speaker hints can differ, and those are
         // plain fields on the phonemizer.
         let RuntimeParams::Blue {
