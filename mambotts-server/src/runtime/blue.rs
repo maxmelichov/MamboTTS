@@ -141,6 +141,10 @@ impl Runtime for BlueRuntime {
         self.phonemizer.diacritize(text)
     }
 
+    fn set_speakers(&mut self, speaker: u8, target_speaker: u8) {
+        self.phonemizer.set_speakers(speaker, target_speaker);
+    }
+
     fn supported_phonemes(&self) -> Vec<char> {
         self.tts.supported_phonemes()
     }
