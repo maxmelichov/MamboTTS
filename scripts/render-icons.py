@@ -10,6 +10,11 @@ bigger one.
 
     uv run scripts/render-icons.py
 
+The drawings in icon-src are traced from the brand mark in
+mambotts-desktop/src/assets/mambotts-logo.png - see scripts/trace-mark.py, which
+regenerates them. The artwork is the owner's; the tiers only decide how much of
+it survives at a given size.
+
 Outputs (all under mambotts-desktop/src-tauri/icons unless noted):
   * the Windows/Linux PNG set and the Windows Store Square*/StoreLogo PNGs
   * icon.ico, with 16/24/32/48/64 BMP frames plus a 256 PNG frame, each frame
@@ -17,10 +22,8 @@ Outputs (all under mambotts-desktop/src-tauri/icons unless noted):
   * icon.icns, which keeps the macOS full-bleed rounded square
   * android/ mipmaps
   * ../installer/header.bmp and ../installer/sidebar.bmp for the NSIS wizard
-  * mambotts-desktop/public/icon.png and mambotts-website/public/favicon.ico
-
-The macOS rounded square (app-icon.svg) is deliberately left alone: it is the
-right shape for the Dock, for the in-app header and for the website.
+  * mambotts-desktop/app-icon.png, mambotts-desktop/public/icon.png and
+    mambotts-website/public/favicon.ico
 """
 
 # /// script
@@ -85,8 +88,13 @@ def write_png(img: Image.Image, path: Path) -> None:
 def ico_frame(img: Image.Image) -> tuple[bytes, int]:
     """One ICO frame: a PNG blob at 256, a 32-bit DIB below that.
 
-    Windows reads PNG frames at any size, but NSIS and some older shell paths
-    only trust PNG for the 256 px frame, so the small frames stay as DIBs.
+    `pnpm tauri icon` writes *every* frame as a PNG blob, which Explorer and
+    modern shell paths do read - but GDI+ does not. `System.Drawing.Icon` on
+    such a file does not fail; it reads the deflate stream as if it were a DIB
+    and hands back noise, so anything going through GDI+ (WinForms, older
+    installers, several screenshot and shortcut tools) shows a field of
+    coloured static instead of the app icon. Below 256 the frames therefore
+    stay as 32-bit DIBs, which every reader agrees on.
     """
     w, h = img.size
     if w >= 256:
@@ -149,7 +157,7 @@ def write_bmp(svg_name: str, path: Path, width: int, height: int) -> None:
     svg = (SRC / svg_name).read_text(encoding="utf-8")
     png = bytes(resvg_py.svg_to_bytes(svg_string=svg, width=width, height=height))
     img = Image.open(io.BytesIO(png)).convert("RGBA")
-    flat = Image.new("RGB", img.size, (51, 39, 15))
+    flat = Image.new("RGB", img.size, (53, 34, 15))  # the mark's dark brown
     flat.paste(img, (0, 0), img)
     path.parent.mkdir(parents=True, exist_ok=True)
     flat.save(path, "BMP")
@@ -192,6 +200,7 @@ def main() -> None:
     write_bmp("nsis-sidebar.svg", INSTALLER / "sidebar.bmp", 164, 314)
 
     print("Web favicons")
+    write_png(mac(1024), DESKTOP / "app-icon.png")
     write_png(win(64), DESKTOP / "public" / "icon.png")
     write_ico(WEBSITE / "public" / "favicon.ico", [16, 24, 32, 48])
 
