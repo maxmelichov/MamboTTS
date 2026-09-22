@@ -308,6 +308,27 @@ mod tests {
     use super::split_phonemes;
 
     #[test]
+    fn nasty_document_survives_chunking() {
+        let mut document = String::new();
+        for index in 0..60 {
+            document.push_str(&format!(
+                "עמוד {index} - היא שליחות חיי\n\n[תיאור תמונה: אישה עומדת ליד חלון]\n\n\
+                 \"אמר מזכ\"ל התנועה, ח\"כ פלוני, כי \"זה הזמן\" לפעול\", והוסיף כי צה\"ל ער לכך.\n\n\
+                 The lecture was titled Nature, STEM and Education, and AI was mentioned too.\n\n\
+                 לפרטים: talula.hba@gmail.com או בטלפון 03-5551234 בתאריך 3.9.2026\n\n\
+                 שִׁיר הַשִּׁירִים אֲשֶׁר לִשְׁלֹמֹה\n\n"
+            ));
+        }
+        let prepared = crate::handling::prepare_text_for_synthesis(&document, "he");
+        let chunks = super::split_text(&prepared, 200);
+        let letters = |text: &str| -> String {
+            text.chars().filter(|c| c.is_alphanumeric()).collect()
+        };
+        assert_eq!(letters(&chunks.join(" ")), letters(&prepared));
+        assert!(chunks.iter().all(|chunk| chunk.chars().count() <= 200));
+    }
+
+    #[test]
     fn returns_empty_for_empty_input() {
         assert!(split_phonemes("   ", Some(200)).is_empty());
     }

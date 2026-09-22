@@ -30,6 +30,19 @@ const DEFAULT_PACE_BLEND: f32 = 0.30;
 const MIXED_PACE_BLEND: f32 = 0.25;
 const REFERENCE_CODE_SPEED_SCALE: f32 = 0.90;
 const REFERENCE_CODE_SILENCE: f32 = 0.12;
+/// The pace the blend pulls toward, in seconds of audio per text token.
+const REFERENCE_SECONDS_PER_TOKEN: f32 = 0.0625;
+/// The band a voice's predicted pace is allowed to land in.
+///
+/// The duration predictor is conditioned on the voice, so a voice whose
+/// prediction collapses asks the model to fit a whole chunk of text into a
+/// fraction of the time it needs, and the model answers by leaving most of the
+/// words out. That is silent, per chunk, and it varies with the voice, which is
+/// exactly the shape of issue #9. Measured across the shipped voices the
+/// predictor stays inside 0.043 - 0.053 s per token in both Hebrew and English,
+/// so this band never touches a healthy prediction.
+const MIN_SECONDS_PER_TOKEN: f32 = REFERENCE_SECONDS_PER_TOKEN * 0.5;
+const MAX_SECONDS_PER_TOKEN: f32 = REFERENCE_SECONDS_PER_TOKEN * 2.0;
 
 #[derive(Clone, Debug)]
 pub struct SynthesisOptions {
@@ -221,23 +234,24 @@ impl BlueTts {
         if let Some(chunking) = &opts.chunking {
             if chunking.enabled {
                 let chunks = chunking::split_phonemes(phonemes, chunking.max_chars);
+                let mut ledger = ChunkLedger::default();
+                ledger.expect(chunks.len());
                 let mut audio = Vec::new();
                 let last_idx = chunks.len().saturating_sub(1);
                 for (idx, chunk) in chunks.iter().enumerate() {
-                    audio.extend(self.synthesize_chunk(
-                        chunk,
-                        style,
-                        &opts,
-                        seed.wrapping_add(idx as u64),
-                    )?);
+                    let spoken =
+                        self.synthesize_chunk(chunk, style, &opts, seed.wrapping_add(idx as u64))?;
+                    ledger.spoken_chunk(spoken.requested_samples, spoken.samples.len());
+                    audio.extend(spoken.samples);
                     if idx != last_idx {
                         append_silence(&mut audio, self.sample_rate(), chunking.silence_seconds);
                     }
                 }
+                ledger.verify(self.sample_rate())?;
                 return Ok(audio);
             }
         }
-        self.synthesize_chunk(phonemes, style, &opts, seed)
+        Ok(self.synthesize_chunk(phonemes, style, &opts, seed)?.samples)
     }
 
     /// Prepare, phonemize, and synthesize raw multilingual text.
@@ -257,6 +271,7 @@ impl BlueTts {
         let segments = split_prepared_by_reference_codes(&prepared);
         let mut output = Vec::new();
         let mut previous_was_reference = false;
+        let mut ledger = ChunkLedger::default();
         let base_seed = rand::random::<u64>();
         let chunking = opts.chunking.clone().unwrap_or(ChunkingOptions {
             enabled: true,
@@ -279,6 +294,7 @@ impl BlueTts {
             } else {
                 vec![segment.text.clone()]
             };
+            ledger.expect(raw_chunks.len());
 
             for (chunk_index, raw_chunk) in raw_chunks.iter().enumerate() {
                 let chunk = phonemizer.g2p(raw_chunk, language)?;
@@ -294,9 +310,10 @@ impl BlueTts {
                             raw_chunk.trim()
                         );
                     }
+                    ledger.silent_chunk();
                     continue;
                 }
-                let audio = self.synthesize_chunk(
+                let spoken = self.synthesize_chunk(
                     &chunk,
                     style,
                     &segment_opts,
@@ -312,10 +329,12 @@ impl BlueTts {
                     };
                     append_silence(&mut output, self.sample_rate(), gap);
                 }
-                output.extend(audio);
+                ledger.spoken_chunk(spoken.requested_samples, spoken.samples.len());
+                output.extend(spoken.samples);
                 previous_was_reference = segment.is_reference_code;
             }
         }
+        ledger.verify(self.sample_rate())?;
         Ok(normalize_generated_audio(output))
     }
 
@@ -340,6 +359,7 @@ impl BlueTts {
         let segments = split_prepared_by_reference_codes(&prepared);
         let mut output = Vec::new();
         let mut previous_was_reference = false;
+        let mut ledger = ChunkLedger::default();
         let base_seed = rand::random::<u64>();
         let chunking = opts.chunking.clone().unwrap_or(ChunkingOptions {
             enabled: true,
@@ -365,6 +385,7 @@ impl BlueTts {
             } else {
                 vec![segment.text.clone()]
             };
+            ledger.expect(raw_chunks.len());
 
             for (chunk_index, raw_chunk) in raw_chunks.iter().enumerate() {
                 let chunk = phonemizer.g2p(raw_chunk, language)?;
@@ -380,9 +401,10 @@ impl BlueTts {
                             raw_chunk.trim()
                         );
                     }
+                    ledger.silent_chunk();
                     continue;
                 }
-                let mut audio = self.synthesize_chunk(
+                let spoken = self.synthesize_chunk(
                     &chunk,
                     style,
                     &segment_opts,
@@ -390,6 +412,8 @@ impl BlueTts {
                         .wrapping_add((segment_index as u64) << 32)
                         .wrapping_add(chunk_index as u64),
                 )?;
+                ledger.spoken_chunk(spoken.requested_samples, spoken.samples.len());
+                let mut audio = spoken.samples;
                 if !output.is_empty() {
                     let gap = if segment.is_reference_code || previous_was_reference {
                         REFERENCE_CODE_SILENCE
@@ -406,6 +430,7 @@ impl BlueTts {
                 previous_was_reference = segment.is_reference_code;
             }
         }
+        ledger.verify(self.sample_rate())?;
         Ok(normalize_generated_audio(output))
     }
 
@@ -415,7 +440,7 @@ impl BlueTts {
         style: &VoiceStyle,
         opts: &SynthesisOptions,
         seed: u64,
-    ) -> Result<Vec<f32>> {
+    ) -> Result<ChunkAudio> {
         let (text_ids, text_mask) = self.tokenizer.encode_batch(&[phonemes], &[&opts.lang])?;
 
         // Scoped so the session outputs, which borrow self, are released
@@ -450,6 +475,7 @@ impl BlueTts {
             output_array3(&out[0])?
         };
 
+        let requested_samples = requested_sample_count(duration, self.geometry.sample_rate);
         let (mut xt, latent_mask) = sample_noisy_latent(duration, self.geometry, seed);
         let total_step = Array1::from_vec(vec![opts.total_step as f32]);
         let cfg_scale = Array1::from_vec(vec![opts.cfg_scale]);
@@ -514,16 +540,19 @@ impl BlueTts {
             vocoder_input.as_str() => Tensor::from_array(latent)?,
         })?;
         let wav = output_array3(&wav[0])?;
-        let mut audio: Vec<f32> = wav.iter().copied().collect();
-        // Match the reference pipeline exactly: drop one full latent frame from
-        // each end. The trailing frame is the vocoder's noisy edge; removing it
-        // is what keeps the end of every chunk (and the final chunk) clean.
+        let audio: Vec<f32> = wav.iter().copied().collect();
         let frame_len = self.geometry.base_chunk_size * self.geometry.chunk_compress_factor;
-        if audio.len() > 2 * frame_len {
-            audio = audio[frame_len..audio.len() - frame_len].to_vec();
-        }
-        Ok(audio)
+        Ok(ChunkAudio {
+            samples: drop_trailing_frame(audio, frame_len),
+            requested_samples,
+        })
     }
+}
+
+/// One chunk's audio and the number of samples the model was asked to fill.
+struct ChunkAudio {
+    samples: Vec<f32>,
+    requested_samples: usize,
 }
 
 pub struct BlueTtsModelBytes<'a> {
@@ -577,12 +606,17 @@ fn load_session_from_memory(bytes: &[u8]) -> Result<Session> {
         .map_err(|e| anyhow!("{e}"))
 }
 
+/// Samples of speech the model is being asked for at this duration.
+fn requested_sample_count(duration: f32, sample_rate: usize) -> usize {
+    (duration * sample_rate as f32).max(1.0).ceil() as usize
+}
+
 fn sample_noisy_latent(
     duration: f32,
     geometry: ModelGeometry,
     seed: u64,
 ) -> (Array3<f32>, Array3<f32>) {
-    let wav_len = (duration * geometry.sample_rate as f32).max(1.0).ceil() as usize;
+    let wav_len = requested_sample_count(duration, geometry.sample_rate);
     let chunk = geometry.base_chunk_size * geometry.chunk_compress_factor;
     let latent_len = wav_len.div_ceil(chunk).max(1);
     let valid_latent_len = wav_len.div_ceil(chunk).max(1);
@@ -609,11 +643,96 @@ fn sample_noisy_latent(
     (xt, mask)
 }
 
+/// Drop the vocoder's last latent frame, and only that one.
+///
+/// The latent is `ceil(duration / frame)` frames long, so the final frame is
+/// the remainder the model was never asked to fill. It decodes to a burst of
+/// noise rather than to speech: measured over 180 chunks of Hebrew and English
+/// across all four shipped voices, that frame peaks above the body of the chunk
+/// in 84% of them, while the frame before it is silence in every single one.
+///
+/// The head is the opposite case. The first frame holds the onset of the first
+/// phoneme in about a fifth of chunks and leading near-silence in the rest, and
+/// it never carries an artefact. Dropping it, as this did to mirror the
+/// reference pipeline, clipped the start of every chunk and threw away 70 ms of
+/// audio per chunk, which is seconds of speech over a long document (#14).
+fn drop_trailing_frame(audio: Vec<f32>, frame_len: usize) -> Vec<f32> {
+    if frame_len == 0 || audio.len() <= frame_len {
+        return audio;
+    }
+    let keep = audio.len() - frame_len;
+    let mut audio = audio;
+    audio.truncate(keep);
+    audio
+}
+
+/// Chunks the text asked for against the audio the model gave back.
+///
+/// Issue #9 was a document that came back as seven percent of itself with a
+/// success at the end. Nothing in the pipeline compared what the splitter
+/// produced with what was spoken, so any chunk that went missing went missing
+/// quietly. This counts both sides and refuses to return a recording that does
+/// not cover the text.
+#[derive(Default, Debug)]
+struct ChunkLedger {
+    expected: usize,
+    spoken: usize,
+    /// Chunks with nothing to say in them (punctuation or whitespace only).
+    silent: usize,
+    requested_samples: usize,
+    produced_samples: usize,
+}
+
+impl ChunkLedger {
+    fn expect(&mut self, chunks: usize) {
+        self.expected += chunks;
+    }
+
+    fn silent_chunk(&mut self) {
+        self.silent += 1;
+    }
+
+    fn spoken_chunk(&mut self, requested_samples: usize, produced_samples: usize) {
+        self.spoken += 1;
+        self.requested_samples += requested_samples;
+        self.produced_samples += produced_samples;
+    }
+
+    /// Fail loudly when the recording cannot account for the text.
+    fn verify(&self, sample_rate: u32) -> Result<()> {
+        if self.spoken + self.silent != self.expected {
+            bail!(
+                "synthesis lost text: {} of {} chunks were spoken and {} had nothing to say",
+                self.spoken,
+                self.expected,
+                self.silent
+            );
+        }
+        // Every chunk gives up its trailing latent frame, so the recording is
+        // always a little shorter than the sum of the requested durations. It
+        // is never shorter by half.
+        if self.produced_samples * 2 < self.requested_samples {
+            let seconds = |samples: usize| samples as f32 / sample_rate.max(1) as f32;
+            bail!(
+                "synthesis produced {:.1} s of audio for text that needs about {:.1} s across {} chunks",
+                seconds(self.produced_samples),
+                seconds(self.requested_samples),
+                self.spoken
+            );
+        }
+        Ok(())
+    }
+}
+
 fn blend_duration_pace(duration: f32, text_token_count: f32, pace_blend: f32) -> f32 {
     let blend = pace_blend.clamp(0.0, 1.0);
     let token_count = text_token_count.max(1.0);
-    let predicted_dpt = duration / token_count;
-    let blended_dpt = (1.0 - blend) * predicted_dpt + blend * 0.0625;
+    // Hold the voice's prediction inside a speakable band before blending, so
+    // no voice can ask the model to squeeze a chunk of text into a fraction of
+    // the time the words need and drop whatever does not fit.
+    let predicted_dpt =
+        (duration / token_count).clamp(MIN_SECONDS_PER_TOKEN, MAX_SECONDS_PER_TOKEN);
+    let blended_dpt = (1.0 - blend) * predicted_dpt + blend * REFERENCE_SECONDS_PER_TOKEN;
     blended_dpt * token_count
 }
 
@@ -817,6 +936,84 @@ mod tests {
         let (second, second_mask) = sample_noisy_latent(1.0, geometry, 42);
         assert_eq!(first, second);
         assert_eq!(first_mask, second_mask);
+    }
+
+    #[test]
+    fn a_collapsed_voice_prediction_cannot_squeeze_the_words_out() {
+        // A duration predictor that comes back near zero for this voice used to
+        // ask the model to fit 100 tokens into a fraction of a second, and the
+        // model answered by dropping the text. The floor keeps the request
+        // speakable no matter what the voice predicts.
+        let squeezed = blend_duration_pace(0.05, 100.0, DEFAULT_PACE_BLEND);
+        assert!(squeezed >= 100.0 * MIN_SECONDS_PER_TOKEN, "{squeezed}");
+        // A runaway prediction is bounded the same way.
+        let stretched = blend_duration_pace(1000.0, 100.0, DEFAULT_PACE_BLEND);
+        assert!(stretched <= 100.0 * MAX_SECONDS_PER_TOKEN, "{stretched}");
+    }
+
+    #[test]
+    fn healthy_predictions_are_untouched_by_the_clamp() {
+        // The shipped voices predict 0.043 - 0.053 s per token; the clamp must
+        // not move any of that.
+        for pace in [0.0428_f32, 0.0466, 0.0529] {
+            let tokens = 160.0;
+            let blended = blend_duration_pace(pace * tokens, tokens, DEFAULT_PACE_BLEND);
+            let expected = (0.70 * pace + 0.30 * REFERENCE_SECONDS_PER_TOKEN) * tokens;
+            assert!((blended - expected).abs() < 1e-3, "{pace}: {blended}");
+        }
+    }
+
+    #[test]
+    fn only_the_trailing_frame_is_dropped() {
+        // The head carries the onset of the first phoneme and must survive;
+        // the last frame is the model's noisy remainder and must not.
+        let frame_len = 4;
+        let audio: Vec<f32> = (0..20).map(|value| value as f32).collect();
+        let kept = drop_trailing_frame(audio, frame_len);
+        assert_eq!(kept.len(), 16);
+        assert_eq!(kept.first(), Some(&0.0));
+        assert_eq!(kept.last(), Some(&15.0));
+    }
+
+    #[test]
+    fn short_chunks_also_lose_their_noisy_frame() {
+        // The old trim needed more than two frames before it did anything, so
+        // a short fragment kept the burst at its end.
+        let frame_len = 4;
+        let kept = drop_trailing_frame(vec![1.0; 7], frame_len);
+        assert_eq!(kept.len(), 3);
+        // Nothing to keep is left alone rather than emptied.
+        assert_eq!(drop_trailing_frame(vec![1.0; 4], frame_len).len(), 4);
+        assert!(drop_trailing_frame(Vec::new(), frame_len).is_empty());
+    }
+
+    #[test]
+    fn the_ledger_accepts_a_fully_spoken_document() {
+        let mut ledger = ChunkLedger::default();
+        ledger.expect(3);
+        ledger.spoken_chunk(44_100, 44_100 - 3072);
+        ledger.spoken_chunk(44_100, 44_100 - 3072);
+        ledger.silent_chunk();
+        assert!(ledger.verify(44_100).is_ok());
+    }
+
+    #[test]
+    fn the_ledger_refuses_a_document_that_lost_chunks() {
+        let mut ledger = ChunkLedger::default();
+        ledger.expect(50);
+        ledger.spoken_chunk(44_100, 44_100 - 3072);
+        let error = ledger.verify(44_100).unwrap_err().to_string();
+        assert!(error.contains("1 of 50 chunks"), "{error}");
+    }
+
+    #[test]
+    fn the_ledger_refuses_a_recording_far_shorter_than_the_text() {
+        let mut ledger = ChunkLedger::default();
+        ledger.expect(1);
+        ledger.spoken_chunk(44_100 * 10, 44_100);
+        let error = ledger.verify(44_100).unwrap_err().to_string();
+        assert!(error.contains("1.0 s of audio"), "{error}");
+        assert!(error.contains("10.0 s"), "{error}");
     }
 
     #[test]
