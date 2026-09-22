@@ -241,6 +241,17 @@ async fn download_runtime_bundle(
     let mut downloaded = 0_u64;
     for file in source.files {
         let destination = dir.join(&file.name);
+        // A file only gets its real name once it has downloaded completely
+        // (it is written as `.part` first), so one that exists is done. Keeping
+        // it means a retry after a dropped connection picks up where it left
+        // off instead of fetching the whole 1.4 GB bundle again. This matches
+        // the installed check above, which also goes by file presence.
+        if let Ok(metadata) = tokio::fs::metadata(&destination).await {
+            if metadata.is_file() && metadata.len() > 0 {
+                downloaded += metadata.len();
+                continue;
+            }
+        }
         if let Some(parent) = destination.parent() {
             tokio::fs::create_dir_all(parent)
                 .await
