@@ -1,7 +1,7 @@
 mod chunking;
-mod npz;
 pub mod handling;
 pub mod hebrew_numbers;
+mod npz;
 pub mod phonemize;
 pub mod style;
 mod text;
@@ -105,7 +105,10 @@ enum Guidance {
     /// The estimator takes `cfg_scale` directly (v2).
     Baked,
     /// Blend a conditional and an unconditional run (v2.5).
-    Uncond { u_text: Array3<f32>, u_ref: Array3<f32> },
+    Uncond {
+        u_text: Array3<f32>,
+        u_ref: Array3<f32>,
+    },
     /// Neither available; sampling runs unguided.
     None,
 }
@@ -697,7 +700,11 @@ impl BlueTts {
 
 /// Picks the guidance strategy the loaded estimator supports.
 fn load_guidance(estimator: &Session, uncond_path: impl AsRef<Path>) -> Result<Guidance> {
-    if estimator.inputs().iter().any(|input| input.name() == "cfg_scale") {
+    if estimator
+        .inputs()
+        .iter()
+        .any(|input| input.name() == "cfg_scale")
+    {
         return Ok(Guidance::Baked);
     }
     let uncond_path = uncond_path.as_ref();

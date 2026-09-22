@@ -58,7 +58,10 @@ export type CreateStep = "idle" | "starting" | "loading" | "creating" | "done";
 export type StudioState = {
   text: string;
   phonemes: string;
+  /** Hebrew text with niqqud. When present (and the text is Hebrew) it is what gets synthesized. */
   diacritics: string;
+  /** The plain text `diacritics` was generated from, used to flag it as stale after edits. */
+  diacriticsSource: string;
   referencePath: string;
   languages: string[];
   language: string;
@@ -94,3 +97,6 @@ export type VoiceCatalog = {
 export type DownloadedVoice = {
   path: string;
 };
+
+/** Which editor layer the Generate button sends, most refined first. */
+export type EditorInputSource = "text" | "diacritics" | "phonemes";

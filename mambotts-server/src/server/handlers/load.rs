@@ -63,10 +63,6 @@ fn blue_load_params(body: LoadBody) -> Result<LoadParams, &'static str> {
         body.renikud_path,
         std::env::var("MAMBOTTS_RENIKUD_PATH").unwrap_or_default(),
     ]);
-    let hebrew_g2p_engine = if body.hebrew_g2p_engine.is_empty() { "renikud".into() } else { body.hebrew_g2p_engine };
-    if !matches!(hebrew_g2p_engine.as_str(), "renikud" | "phonikud") {
-        return Err("hebrew_g2p_engine must be renikud or phonikud");
-    }
     if model_path.is_empty() || renikud_path.is_empty() {
         return Err("Blue runtime requires model_path and renikud_path");
     }
@@ -75,8 +71,6 @@ fn blue_load_params(body: LoadBody) -> Result<LoadParams, &'static str> {
         params: RuntimeParams::Blue {
             model_dir: model_path.into(),
             renikud_path: renikud_path.into(),
-            hebrew_g2p_engine,
-            phonikud_path: (!body.phonikud_path.is_empty()).then(|| body.phonikud_path.into()),
             speaker: body.speaker,
             target_speaker: body.target_speaker,
         },
@@ -93,7 +87,6 @@ mod tests {
             runtime: "blue".into(),
             model_path: model_path.into(),
             renikud_path: renikud_path.into(),
-            hebrew_g2p_engine: "renikud".into(),
             ..LoadBody::default()
         }
     }
@@ -103,6 +96,16 @@ mod tests {
         assert!(load_params(LoadBody::default()).is_err());
         assert!(load_params(blue("/models/blue", "/models/renikud-plus.onnx")).is_ok());
         assert!(load_params(blue("", "/models/renikud-plus.onnx")).is_err());
+    }
+
+    #[test]
+    fn retired_phonikud_fields_from_older_clients_are_ignored() {
+        let body: LoadBody = serde_json::from_str(
+            r#"{"runtime":"blue","model_path":"/models/blue","renikud_path":"/models/renikud-plus.onnx","hebrew_g2p_engine":"phonikud","phonikud_path":"/models/phonikud.onnx","speaker":1}"#,
+        )
+        .expect("old load body still parses");
+        assert_eq!(body.speaker, 1);
+        assert!(load_params(body).is_ok());
     }
 
     #[test]

@@ -24,8 +24,6 @@ pub async fn load_model_request(
         "runtime": runtime.clone(),
         "model_path": request.model_path,
         "renikud_path": request.renikud_path,
-        "hebrew_g2p_engine": request.hebrew_g2p_engine.unwrap_or_else(|| "renikud".into()),
-        "phonikud_path": request.phonikud_path.unwrap_or_default(),
         "speaker": request.speaker.unwrap_or(0),
         "target_speaker": request.target_speaker.unwrap_or(0),
     });

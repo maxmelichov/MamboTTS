@@ -66,18 +66,12 @@ mod tests {
     fn reads_a_grouping_comma_as_a_thousands_separator() {
         // This one was worse than the reported bug: the old pass treated the
         // comma as a decimal point and said "thirty point zero shekels".
-        assert_eq!(
-            normalize_hebrew_numbers("30,000 שקלים"),
-            "שלושים אלף שקלים"
-        );
+        assert_eq!(normalize_hebrew_numbers("30,000 שקלים"), "שלושים אלף שקלים");
     }
 
     #[test]
     fn counts_above_the_old_u16_ceiling() {
-        assert_eq!(
-            normalize_hebrew_numbers("500000 איש"),
-            "חמש מאות אלף איש"
-        );
+        assert_eq!(normalize_hebrew_numbers("500000 איש"), "חמש מאות אלף איש");
     }
 
     #[test]

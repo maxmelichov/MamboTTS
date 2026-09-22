@@ -27,18 +27,30 @@ pub async fn phonemize(
     }
     let mut inner = server.inner.lock().await;
     let Some(ctx) = inner.ctx.as_mut() else {
-        return write_error(StatusCode::SERVICE_UNAVAILABLE, "no_model", "no model loaded");
+        return write_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "no_model",
+            "no model loaded",
+        );
     };
     match ctx.phonemize(&body.input, &body.language) {
         Ok(phonemes) => Json(PhonemizeResponse { phonemes }).into_response(),
-        Err(err) => write_error(StatusCode::INTERNAL_SERVER_ERROR, "internal_error", err.to_string()),
+        Err(err) => write_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            err.to_string(),
+        ),
     }
 }
 
 pub async fn phoneme_inventory(State(server): State<SharedServer>) -> Response {
     let inner = server.inner.lock().await;
     let Some(ctx) = inner.ctx.as_ref() else {
-        return write_error(StatusCode::SERVICE_UNAVAILABLE, "no_model", "no model loaded");
+        return write_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "no_model",
+            "no model loaded",
+        );
     };
     Json(PhonemeInventoryResponse {
         phonemes: ctx
@@ -56,15 +68,27 @@ pub async fn diacritize(
     Json(body): Json<PhonemizeBody>,
 ) -> Response {
     if body.input.trim().is_empty() {
-        return write_error(StatusCode::BAD_REQUEST, "invalid_request", "request body must contain input");
+        return write_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "request body must contain input",
+        );
     }
     let mut inner = server.inner.lock().await;
     let Some(ctx) = inner.ctx.as_mut() else {
-        return write_error(StatusCode::SERVICE_UNAVAILABLE, "no_model", "no model loaded");
+        return write_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "no_model",
+            "no model loaded",
+        );
     };
     match ctx.diacritize(&body.input) {
         Ok(text) => Json(PhonemizeResponse { phonemes: text }).into_response(),
-        Err(err) => write_error(StatusCode::INTERNAL_SERVER_ERROR, "internal_error", err.to_string()),
+        Err(err) => write_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            err.to_string(),
+        ),
     }
 }
 

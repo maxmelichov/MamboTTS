@@ -44,6 +44,8 @@ pub struct LoadResponse {
     pub model: String,
 }
 
+/// Unknown fields are ignored, so older clients that still send the retired
+/// `hebrew_g2p_engine` / `phonikud_path` fields keep loading RenikudPlus.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct LoadBody {
     #[serde(default = "default_runtime")]
@@ -52,10 +54,6 @@ pub struct LoadBody {
     pub model_path: String,
     #[serde(default)]
     pub renikud_path: String,
-    #[serde(default)]
-    pub hebrew_g2p_engine: String,
-    #[serde(default)]
-    pub phonikud_path: String,
     #[serde(default)]
     pub speaker: u8,
     #[serde(default)]
@@ -68,8 +66,6 @@ impl Default for LoadBody {
             runtime: mambotts_registry::DEFAULT_RUNTIME_ID.into(),
             model_path: String::new(),
             renikud_path: String::new(),
-            hebrew_g2p_engine: "renikud".into(),
-            phonikud_path: String::new(),
             speaker: 0,
             target_speaker: 0,
         }

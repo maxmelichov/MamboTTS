@@ -1,6 +1,6 @@
 # MamboTTS Agent Skill
 
-MamboTTS is a local, offline TTS server. The current shipped engine is [BlueTTS](https://github.com/maxmelichov/BlueTTS), with Hebrew, English, Spanish, Italian, and German support, streamed WAV output, and fixed voice styles. Hebrew IPA uses [RenikudPlus](https://github.com/maxmelichov/RenikudPlus), with optional [Phonikud](https://github.com/phonikud/phonikud) diacritics controls. It does not support voice cloning.
+MamboTTS is a local, offline TTS server. The current shipped engine is [BlueTTS](https://github.com/maxmelichov/BlueTTS), with Hebrew, English, Spanish, Italian, and German support, streamed WAV output, and fixed voice styles. Hebrew IPA and Hebrew diacritics (niqqud) both come from [RenikudPlus](https://github.com/maxmelichov/RenikudPlus). It does not support voice cloning.
 
 ## Start the server
 
@@ -32,13 +32,12 @@ curl -sS http://127.0.0.1:8080/v1/models/load \
     "runtime": "blue",
     "model_path": "/path/to/blue-onnx-v2",
     "renikud_path": "/path/to/blue-onnx-v2/renikud-plus.onnx",
-    "hebrew_g2p_engine": "renikud",
     "speaker": 0,
     "target_speaker": 0
   }'
 ```
 
-`hebrew_g2p_engine` is `renikud` (RenikudPlus ONNX, default) or `phonikud`. Speaker IDs are `0` unknown, `1` male, `2` female.
+Hebrew always uses RenikudPlus. Speaker IDs are `0` unknown, `1` male, `2` female. The retired `hebrew_g2p_engine` and `phonikud_path` fields are accepted and ignored.
 
 Discover installed runtime metadata before presenting controls:
 
@@ -100,4 +99,4 @@ POST   /v1/audio/speech
 - If a language or voice is rejected, query the loaded runtime metadata first.
 - Do not send `voice_reference` to BlueTTS; it is unsupported.
 - The sidecar requires ONNX Runtime shared libraries distributed with the desktop build.
-- Diacritics (`/v1/diacritize`) require Phonikud selected and downloaded.
+- `POST /v1/diacritize` with `{"input":"..."}` returns `{"phonemes":"<Hebrew with niqqud>"}` from RenikudPlus. Niqqud already in the input is kept, and each stressed syllable gets the hatama (U+05AB); `/v1/phonemize` and speech read the diacritized text the same way as the original.

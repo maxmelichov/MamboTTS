@@ -26,13 +26,11 @@ function App() {
   const navigate = useNavigate();
   const [bundle, setBundle] = useState<ModelBundle | null>(null);
   const [checking, setChecking] = useState(true);
-  const [advancedMode, setAdvancedMode] = useState(() => localStorage.getItem("advanced-mode") === "true");
-  const [hebrewG2pEngine, setHebrewG2pEngine] = useState(() => localStorage.getItem("hebrew-g2p-engine") ?? "renikud");
-  const [phonikudPath, setPhonikudPath] = useState("");
   const [studio, setStudio] = useState<StudioState>({
     text: sampleText,
     phonemes: "",
     diacritics: "",
+    diacriticsSource: "",
     referencePath: "",
     languages: ["auto"],
     language: "auto",
@@ -80,9 +78,15 @@ function App() {
   }, [location.pathname, navigate]);
 
   useEffect(() => {
-    invoke<{ installed: boolean; path: string }>("get_phonikud_bundle")
-      .then((bundle) => setPhonikudPath(bundle.installed ? bundle.path : ""))
-      .catch(() => setPhonikudPath(""));
+    // Retired preferences: the Hebrew G2P engine chooser (Hebrew now always uses
+    // RenikudPlus) and the Settings-only phoneme toggle (the editor tabs now live
+    // in the studio). Dropping the keys keeps old values from lingering.
+    try {
+      localStorage.removeItem("hebrew-g2p-engine");
+      localStorage.removeItem("advanced-mode");
+    } catch {
+      // Storage can be unavailable; nothing depends on the cleanup.
+    }
   }, []);
 
   if (checking) {
@@ -106,27 +110,9 @@ function App() {
   return (
     <Routes>
       <Route path="/onboard" element={<OnboardPage bundle={bundle} setBundle={setBundle} />} />
-      <Route path="/home" element={<HomePage bundle={bundle} setBundle={setBundle} studio={studio} setStudio={setStudio} advancedMode={advancedMode} hebrewG2pEngine={hebrewG2pEngine} phonikudPath={phonikudPath} />} />
+      <Route path="/home" element={<HomePage bundle={bundle} setBundle={setBundle} studio={studio} setStudio={setStudio} />} />
       <Route path="/agents" element={<AgentsPage bundle={bundle} />} />
-      <Route
-        path="/settings"
-        element={
-          <SettingsPage
-            bundle={bundle}
-            advancedMode={advancedMode}
-            setAdvancedMode={(enabled) => {
-              localStorage.setItem("advanced-mode", String(enabled));
-              setAdvancedMode(enabled);
-            }}
-            hebrewG2pEngine={hebrewG2pEngine}
-            setHebrewG2pEngine={(engine) => {
-              localStorage.setItem("hebrew-g2p-engine", engine);
-              setHebrewG2pEngine(engine);
-            }}
-            setPhonikudPath={setPhonikudPath}
-          />
-        }
-      />
+      <Route path="/settings" element={<SettingsPage bundle={bundle} />} />
       <Route path="*" element={<Navigate to={bundle?.installed ? "/home" : "/onboard"} replace />} />
     </Routes>
   );

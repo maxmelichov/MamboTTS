@@ -48,7 +48,8 @@ pub fn read_npz(path: impl AsRef<Path>) -> Result<HashMap<String, NpyArray>> {
             .to_owned();
         let mut bytes = Vec::new();
         entry.read_to_end(&mut bytes)?;
-        let array = parse_npy(&bytes).with_context(|| format!("parse {name} in {}", path.display()))?;
+        let array =
+            parse_npy(&bytes).with_context(|| format!("parse {name} in {}", path.display()))?;
         out.insert(name, array);
     }
     Ok(out)
@@ -125,9 +126,7 @@ mod tests {
     use super::*;
 
     fn npy(descr: &str, shape: &str, body: &[u8]) -> Vec<u8> {
-        let header = format!(
-            "{{'descr': '{descr}', 'fortran_order': False, 'shape': {shape}, }}"
-        );
+        let header = format!("{{'descr': '{descr}', 'fortran_order': False, 'shape': {shape}, }}");
         let mut out = b"\x93NUMPY\x01\x00".to_vec();
         out.extend((header.len() as u16).to_le_bytes());
         out.extend(header.as_bytes());

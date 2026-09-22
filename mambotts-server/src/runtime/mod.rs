@@ -51,8 +51,6 @@ pub enum RuntimeParams {
     Blue {
         model_dir: PathBuf,
         renikud_path: PathBuf,
-        hebrew_g2p_engine: String,
-        phonikud_path: Option<PathBuf>,
         speaker: u8,
         target_speaker: u8,
     },

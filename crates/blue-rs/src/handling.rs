@@ -1,16 +1,12 @@
 //! Model-independent handling for difficult Hebrew TTS input.
 //!
-//! Niqqud-bearing words are kept intact for [Phonikud](https://github.com/phonikud/phonikud)
-//! grapheme-to-IPA. Separately, niqqud is stripped so Renikud can run on plain
-//! Hebrew, then Renikud's stress mark (`ˈ`) is copied onto the vocalized IPA.
+//! Niqqud the writer typed is kept through normalization; RenikudPlus reads it
+//! directly during G2P.
 
-use anyhow::{Result, bail};
 use regex::{Captures, Regex};
 
 use crate::hebrew_numbers::normalize_hebrew_numbers;
 
-/// Primary stress mark used by Phonikud (`U+02C8`).
-pub const STRESS_MARK: char = '\u{02c8}';
 /// Internal boundaries for segments that need slower, clearer synthesis.
 pub const REF_CODE_MARK_OPEN: char = '【';
 pub const REF_CODE_MARK_CLOSE: char = '】';
@@ -20,79 +16,6 @@ pub const REF_CODE_MARK_CLOSE: char = '】';
 pub struct PreparedSegment {
     pub text: String,
     pub is_reference_code: bool,
-}
-
-/// Destination representation expected by the selected synthesis model.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum InputMode {
-    Text,
-    Phonemes,
-}
-
-/// A vocalized Hebrew source word and its IPA stages.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PhoneticSpan {
-    /// Original word, including niqqud.
-    pub source: String,
-    /// Phonikud IPA (stress included when present).
-    pub phonikud_ipa: String,
-    /// Renikud IPA from the stripped (plain) form, when available.
-    pub renikud_ipa: Option<String>,
-    /// Final IPA: Phonikud base with Renikud stress when both exist,
-    /// otherwise Phonikud alone.
-    pub ipa: String,
-}
-
-/// Safe text and phoneme-ready renderings of one original input.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PreparedText {
-    pub original: String,
-    /// Normalized text with niqqud preserved (for text-native models).
-    pub text: String,
-    /// Same as `text`, but niqqud words replaced by final IPA.
-    pub phonetic_text: String,
-    pub phonetic_spans: Vec<PhoneticSpan>,
-}
-
-impl PreparedText {
-    pub fn for_input(&self, mode: InputMode) -> &str {
-        match mode {
-            InputMode::Text => &self.text,
-            InputMode::Phonemes => &self.phonetic_text,
-        }
-    }
-}
-
-/// Adapter for Phonikud (or any niqqud → IPA engine).
-///
-/// Callers must pass the vocalized word **with niqqud kept**.
-pub trait NikudPhonemizer {
-    fn phonemize_nikud(&mut self, vocalized: &str) -> Result<String>;
-}
-
-impl<F> NikudPhonemizer for F
-where
-    F: FnMut(&str) -> Result<String>,
-{
-    fn phonemize_nikud(&mut self, vocalized: &str) -> Result<String> {
-        self(vocalized)
-    }
-}
-
-/// Adapter for Renikud (or any plain-Hebrew → IPA engine).
-///
-/// Callers must pass Hebrew **without niqqud**.
-pub trait PlainHebrewPhonemizer {
-    fn phonemize_plain(&mut self, unvocalized: &str) -> Result<String>;
-}
-
-impl<F> PlainHebrewPhonemizer for F
-where
-    F: FnMut(&str) -> Result<String>,
-{
-    fn phonemize_plain(&mut self, unvocalized: &str) -> Result<String> {
-        self(unvocalized)
-    }
 }
 
 /// Strip Hebrew niqqud / cantillation while keeping letters and geresh.
@@ -178,105 +101,6 @@ pub fn split_prepared_by_reference_codes(text: &str) -> Vec<PreparedSegment> {
         });
     }
     merged
-}
-
-/// Index of the stressed vowel in IPA (`0` = first vowel), if any.
-pub fn vowel_stress_index(ipa: &str) -> Option<usize> {
-    let mut vowel_index = 0usize;
-    let mut pending_stress = false;
-    for character in ipa.chars() {
-        if character == STRESS_MARK {
-            pending_stress = true;
-            continue;
-        }
-        if is_ipa_vowel(character) {
-            if pending_stress {
-                return Some(vowel_index);
-            }
-            vowel_index += 1;
-        } else {
-            // Stress must sit immediately before its vowel.
-            pending_stress = false;
-        }
-    }
-    None
-}
-
-/// Insert `ˈ` immediately before the vowel at `vowel_index`, replacing any
-/// existing stress marks.
-pub fn apply_vowel_stress(ipa: &str, vowel_index: usize) -> String {
-    let plain: String = ipa.chars().filter(|&c| c != STRESS_MARK).collect();
-    let mut output = String::with_capacity(plain.len() + STRESS_MARK.len_utf8());
-    let mut seen = 0usize;
-    let mut placed = false;
-    for character in plain.chars() {
-        if !placed && is_ipa_vowel(character) {
-            if seen == vowel_index {
-                output.push(STRESS_MARK);
-                placed = true;
-            }
-            seen += 1;
-        }
-        output.push(character);
-    }
-    if !placed {
-        // Clamp: stress the last vowel when indices diverge.
-        return apply_vowel_stress_last(&plain);
-    }
-    output
-}
-
-/// Copy stress from the source IPA while preserving the target pronunciation.
-/// A source without stress leaves the target unchanged apart from whitespace.
-pub fn transfer_stress(source_ipa: &str, target_ipa: &str) -> String {
-    let target = normalize_spaces(target_ipa);
-    match vowel_stress_index(source_ipa) {
-        Some(index) => apply_vowel_stress(&target, index),
-        None => target,
-    }
-}
-
-/// Phonemize one vocalized Hebrew word:
-/// 1. Phonikud on the word **with niqqud**
-/// 2. optionally Renikud on the **stripped** form
-/// 3. merge Renikud stress onto Phonikud IPA
-pub fn phonemize_nikud_word(
-    word: &str,
-    phonikud: &mut dyn NikudPhonemizer,
-    renikud: Option<&mut dyn PlainHebrewPhonemizer>,
-) -> Result<PhoneticSpan> {
-    if !contains_nikud(word) {
-        bail!("phonemize_nikud_word expects a niqqud-bearing word, got `{word}`");
-    }
-
-    let phonikud_ipa = phonikud.phonemize_nikud(word)?.trim().to_owned();
-    if phonikud_ipa.is_empty() {
-        bail!("Phonikud returned empty IPA for `{word}`");
-    }
-
-    let plain = strip_nikud(word);
-    if plain.chars().any(is_hebrew_letter) {
-        if let Some(renikud) = renikud {
-            let renikud_ipa = renikud.phonemize_plain(&plain)?.trim().to_owned();
-            if renikud_ipa.is_empty() {
-                bail!("Renikud returned empty IPA for stripped `{plain}`");
-            }
-            let ipa = transfer_stress(&renikud_ipa, &phonikud_ipa);
-            return Ok(PhoneticSpan {
-                source: word.to_owned(),
-                phonikud_ipa,
-                renikud_ipa: Some(renikud_ipa),
-                ipa,
-            });
-        }
-    }
-
-    Ok(PhoneticSpan {
-        source: word.to_owned(),
-        ipa: phonikud_ipa.clone(),
-        phonikud_ipa,
-        renikud_ipa: None,
-    })
 }
 
 /// Normalize structured text while preserving ordinary Hebrew words **and**
@@ -404,8 +228,17 @@ fn mark_slow_segment(text: impl AsRef<str>) -> String {
 
 fn expand_letter_labels(text: &str) -> String {
     // Restrict expansion to answer/section labels so loanword geresh stays intact.
-    let labels = Regex::new(r"((?:תשובה|אפשרות|סעיף)\s+)([אבגדהו])[׳'’](\s|[.,:;!?]|$)")
-        .expect("valid letter label regex");
+    // Niqqud may sit on any letter, so it is allowed after each one.
+    let pointed = |word: &str| -> String {
+        word.chars()
+            .map(|letter| format!(r"{letter}[\u{{0591}}-\u{{05C7}}]*"))
+            .collect()
+    };
+    let words = ["תשובה", "אפשרות", "סעיף"].map(pointed).join("|");
+    let labels = Regex::new(&format!(
+        r"((?:{words})\s+)([אבגדהו])[\u{{0591}}-\u{{05C7}}]*[׳'’](\s|[.,:;!?]|$)"
+    ))
+    .expect("valid letter label regex");
     labels
         .replace_all(text, |caps: &Captures| {
             let name = match &caps[2] {
@@ -439,7 +272,7 @@ fn expand_dialogue_quotes(text: &str) -> String {
 }
 
 fn expand_lamed_before_latin(text: &str) -> String {
-    Regex::new(r"(?u)(^|[^\u{0590}-\u{05ff}])ל\s*[-–—‑]?\s*([A-Za-z0-9])")
+    Regex::new(r"(?u)(^|[^\u{0590}-\u{05ff}])ל[\u{0591}-\u{05C7}]*\s*[-–—‑]?\s*([A-Za-z0-9])")
         .expect("valid regex")
         .replace_all(text, "$1אל $2")
         .into_owned()
@@ -658,127 +491,8 @@ fn strip_silent_separator_tokens(text: &str) -> String {
         .to_owned()
 }
 
-/// Prepare one sentence.
-///
-/// - `text` keeps niqqud (never stripped for text-native models).
-/// - `phonetic_text` replaces only niqqud-bearing words with final IPA via
-///   Phonikud (+ optional Renikud stress merge).
-pub fn prepare_text(
-    text: &str,
-    mut phonikud: Option<&mut dyn NikudPhonemizer>,
-    renikud: Option<&mut dyn PlainHebrewPhonemizer>,
-    phonetic_mode: bool,
-) -> Result<PreparedText> {
-    let normalized = normalize_for_speech(text);
-    if !phonetic_mode || !contains_nikud(&normalized) {
-        return Ok(PreparedText {
-            original: text.to_owned(),
-            text: normalized.clone(),
-            phonetic_text: normalized,
-            phonetic_spans: Vec::new(),
-        });
-    }
-
-    let phonikud = phonikud
-        .as_deref_mut()
-        .ok_or_else(|| anyhow::anyhow!("niqqud input requires a Phonikud-compatible phonemizer"))?;
-    let (phonetic_text, phonetic_spans) = replace_nikud_words(&normalized, phonikud, renikud)?;
-    Ok(PreparedText {
-        original: text.to_owned(),
-        text: normalized,
-        phonetic_text,
-        phonetic_spans,
-    })
-}
-
-fn replace_nikud_words(
-    text: &str,
-    phonikud: &mut dyn NikudPhonemizer,
-    renikud: Option<&mut dyn PlainHebrewPhonemizer>,
-) -> Result<(String, Vec<PhoneticSpan>)> {
-    match renikud {
-        Some(engine) => replace_nikud_words_inner(text, phonikud, Some(engine)),
-        None => replace_nikud_words_inner(text, phonikud, None),
-    }
-}
-
-fn replace_nikud_words_inner(
-    text: &str,
-    phonikud: &mut dyn NikudPhonemizer,
-    mut renikud: Option<&mut dyn PlainHebrewPhonemizer>,
-) -> Result<(String, Vec<PhoneticSpan>)> {
-    let mut output = String::with_capacity(text.len());
-    let mut spans = Vec::new();
-    let mut word = String::new();
-
-    for character in text.chars() {
-        if is_hebrew_word_character(character) {
-            word.push(character);
-            continue;
-        }
-        if !word.is_empty() {
-            if contains_nikud(&word) {
-                let span = match renikud.as_mut() {
-                    Some(engine) => phonemize_nikud_word(&word, phonikud, Some(&mut **engine))?,
-                    None => phonemize_nikud_word(&word, phonikud, None)?,
-                };
-                output.push_str(&span.ipa);
-                spans.push(span);
-            } else {
-                output.push_str(&word);
-            }
-            word.clear();
-        }
-        output.push(character);
-    }
-
-    if !word.is_empty() {
-        if contains_nikud(&word) {
-            let span = match renikud.as_mut() {
-                Some(engine) => phonemize_nikud_word(&word, phonikud, Some(&mut **engine))?,
-                None => phonemize_nikud_word(&word, phonikud, None)?,
-            };
-            output.push_str(&span.ipa);
-            spans.push(span);
-        } else {
-            output.push_str(&word);
-        }
-    }
-    Ok((output, spans))
-}
-
-fn apply_vowel_stress_last(plain: &str) -> String {
-    let vowel_count = plain.chars().filter(|&c| is_ipa_vowel(c)).count();
-    if vowel_count == 0 {
-        return plain.to_owned();
-    }
-    apply_vowel_stress(plain, vowel_count - 1)
-}
-
-fn is_ipa_vowel(character: char) -> bool {
-    matches!(
-        character,
-        'a' | 'e'
-            | 'i'
-            | 'o'
-            | 'u'
-            | 'ə'
-            | 'ɑ'
-            | 'ɛ'
-            | 'ɔ'
-            | 'ɪ'
-            | 'ʊ'
-            | 'ɐ'
-            | 'æ'
-            | 'ø'
-            | 'œ'
-            | 'ɨ'
-            | 'ʉ'
-    )
-}
-
 fn is_nikud(character: char) -> bool {
-    // Hebrew points + cantillation, including Phonikud's Ole (hatama) / Meteg.
+    // Hebrew points + cantillation, including the hatama (ole) and meteg.
     ('\u{0591}'..='\u{05c7}').contains(&character)
 }
 
@@ -786,7 +500,8 @@ fn normalize_hebrew_punctuation(text: &str) -> String {
     let chars: Vec<char> = text.chars().collect();
     let mut output = String::with_capacity(text.len());
     for (index, character) in chars.iter().copied().enumerate() {
-        let previous = index.checked_sub(1).and_then(|i| chars.get(i)).copied();
+        // Niqqud sits between a letter and its geresh or gershayim.
+        let previous = chars[..index].iter().rev().copied().find(|&c| !is_nikud(c));
         let next = chars.get(index + 1).copied();
         if matches!(character, '"' | '״')
             && previous.is_some_and(is_hebrew_letter)
@@ -1072,14 +787,6 @@ fn is_hebrew_letter(character: char) -> bool {
     ('\u{05d0}'..='\u{05ea}').contains(&character)
 }
 
-fn is_hebrew_word_character(character: char) -> bool {
-    is_hebrew_letter(character) || is_nikud(character) || matches!(character, '׳' | '״' | '|')
-}
-
-fn normalize_spaces(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1101,35 +808,27 @@ mod tests {
     }
 
     #[test]
-    fn keeps_nikud_in_text_path() {
-        let mut phonikud = |word: &str| Ok(format!("ipa:{word}"));
-        let prepared = prepare_text("הַמְּנוֹרָה מאירה.", Some(&mut phonikud), None, true).unwrap();
-        assert!(contains_nikud(&prepared.text));
-        assert_eq!(prepared.for_input(InputMode::Text), "הַמְּנוֹרָה מאירה.");
-        assert_eq!(prepared.phonetic_text, "ipa:הַמְּנוֹרָה מאירה.");
+    fn normalization_keeps_typed_nikud() {
+        let text = normalize_for_speech("הַמְּנוֹרָה מאירה.");
+        assert!(contains_nikud(&text));
+        assert_eq!(text, "הַמְּנוֹרָה מאירה.");
+        assert_eq!(
+            prepare_text_for_synthesis("שָׁל֫וֹם", "he"),
+            "שָׁל֫וֹם",
+            "the hatama survives for RenikudPlus to read"
+        );
     }
 
     #[test]
-    fn transfers_phonikud_stress_onto_renikud_ipa() {
-        // Phonikud: stress on 2nd vowel (o). Renikud: different quality, no stress.
-        let merged = transfer_stress("ʃalˈom", "ʃalom");
-        assert_eq!(merged, "ʃalˈom");
-
-        let merged = transfer_stress("haˈir", "heir");
-        assert_eq!(merged, "heˈir");
-    }
-
-    #[test]
-    fn hybrid_word_keeps_user_vowels_and_adds_renikud_stress() {
-        let mut phonikud = |_word: &str| Ok("menˈora".to_owned());
-        let mut renikud = |plain: &str| {
-            assert!(!contains_nikud(plain));
-            Ok("manˈora".to_owned())
-        };
-        let span = phonemize_nikud_word("מְנוֹרָה", &mut phonikud, Some(&mut renikud)).unwrap();
-        assert_eq!(span.phonikud_ipa, "menˈora");
-        assert_eq!(span.renikud_ipa.as_deref(), Some("manˈora"));
-        assert_eq!(span.ipa, "menˈora");
+    fn diacritized_text_prepares_like_plain_text() {
+        // Niqqud between a letter and its gershayim, geresh or hyphen must not
+        // change how the text is prepared.
+        assert_eq!(prepare_text_for_synthesis("צַהַ\"ל", "he"), "צַהַל");
+        assert_eq!(prepare_text_for_synthesis("תשובה בַּ׳", "he"), "תשובה בֵּת");
+        assert_eq!(
+            prepare_text_for_synthesis("לַ-GPU", "he"),
+            prepare_text_for_synthesis("ל-GPU", "he")
+        );
     }
 
     #[test]

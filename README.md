@@ -101,8 +101,7 @@ which is everything the desktop app uses to make audio.
 MamboTTS builds on these open-source projects:
 
 - [BlueTTS](https://github.com/maxmelichov/BlueTTS) is the local ONNX text-to-speech runtime, shipped by default
-- [RenikudPlus](https://github.com/maxmelichov/RenikudPlus) handles Hebrew grapheme-to-IPA conversion with speaker conditioning
-- [Phonikud](https://github.com/phonikud/phonikud) supplies Hebrew vocalization and diacritics-aware IPA tools
+- [RenikudPlus](https://github.com/maxmelichov/RenikudPlus) handles Hebrew grapheme-to-IPA conversion with speaker conditioning, and its predictions also add niqqud (diacritics, with the hatama stress mark) to Hebrew text
 
 ## Python
 

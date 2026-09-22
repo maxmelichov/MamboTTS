@@ -79,10 +79,7 @@ mod tests {
     #[test]
     fn exposes_every_registered_runtime() {
         let sources = model_sources();
-        assert_eq!(
-            sources.runtimes.len(),
-            mambotts_registry::runtimes().len()
-        );
+        assert_eq!(sources.runtimes.len(), mambotts_registry::runtimes().len());
         assert_eq!(sources.runtimes[0].id, "blue");
         assert!(sources.runtimes[0].capabilities.hebrew);
     }

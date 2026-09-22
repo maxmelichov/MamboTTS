@@ -1,8 +1,13 @@
-//! RenikudPlus Hebrew grapheme-to-phoneme via ONNX.
+//! RenikudPlus Hebrew grapheme-to-phoneme and diacritization via ONNX.
 //!
 //! Supports legacy models (`input_ids` + `attention_mask` only) and gender-conditioned
 //! RenikudPlus models that also require `speaker` / `target_speaker`
 //! (0 = unknown, 1 = male, 2 = female).
+//!
+//! One inference pass predicts a consonant, a vowel and a stress score for every
+//! Hebrew letter. [`G2P::phonemize`] renders that reading as IPA and
+//! [`G2P::diacritize`] renders the same reading as niqqud on the original letters,
+//! so `phonemize(diacritize(text))` reads the same as `phonemize(text)`.
 
 use std::collections::{HashMap, HashSet};
 
@@ -13,40 +18,79 @@ use unicode_normalization::UnicodeNormalization;
 const ALEF: u32 = 0x05D0;
 const TAF: u32 = 0x05EA;
 const STRESS: &str = "ˈ";
+const NONE: &str = "∅";
+
+const SHVA: char = '\u{05B0}';
+const TSERE: char = '\u{05B5}';
+const SEGOL: char = '\u{05B6}';
+const PATAH: char = '\u{05B7}';
+const QAMATS: char = '\u{05B8}';
+const HIRIQ: char = '\u{05B4}';
+const HOLAM: char = '\u{05B9}';
+const HOLAM_HASER_FOR_VAV: char = '\u{05BA}';
+const QUBUTS: char = '\u{05BB}';
+const DAGESH: char = '\u{05BC}';
+const RAFE: char = '\u{05BF}';
+const SHIN_DOT: char = '\u{05C1}';
+const SIN_DOT: char = '\u{05C2}';
+const QAMATS_QATAN: char = '\u{05C7}';
+/// Hebrew accent "ole", the stress mark Phonikud-style vocalized text uses.
+const HATAMA: char = '\u{05AB}';
 
 fn is_hebrew(c: char) -> bool {
     let cp = c as u32;
     (ALEF..=TAF).contains(&cp)
 }
 
-fn normalize_graphemes(text: &str) -> String {
-    text.chars()
-        .map(|c| match c {
-            '\u{05F3}' | '\'' | '`' | '\u{00B4}' => '\'',
-            '\u{05F4}' | '\u{201C}' | '\u{201D}' => '"',
-            _ => c,
-        })
-        .collect()
+fn normalize_grapheme(c: char) -> char {
+    match c {
+        '\u{05F3}' | '\'' | '`' | '\u{00B4}' => '\'',
+        '\u{05F4}' | '\u{201C}' | '\u{201D}' => '"',
+        _ => c,
+    }
+}
+
+fn is_mark(c: char) -> bool {
+    matches!(c, '\u{0591}'..='\u{05bd}' | '\u{05bf}' | '\u{05c1}'..='\u{05c2}' | '\u{05c4}'..='\u{05c5}' | '\u{05c7}')
+}
+
+/// Plain text as the model reads it, split from the writer's marks.
+struct Separated {
+    /// NFD text without Hebrew marks, geresh and quotes folded to ASCII.
+    plain: String,
+    /// Marks keyed by the byte offset of the Hebrew letter they sit on.
+    marks: HashMap<usize, String>,
+    /// Characters that grapheme folding changed, keyed by plain byte offset,
+    /// so diacritized output can give the writer's own characters back.
+    restore: HashMap<usize, char>,
 }
 
 // Keep marks aligned to plain-text byte offsets: the model sees its usual input,
 // while decoding can honor the user's vowels and consonant marks.
-fn separate_nikud(text: &str) -> (String, HashMap<usize, String>) {
+fn separate_nikud(text: &str) -> Separated {
     let mut plain = String::new();
     let mut marks = HashMap::<usize, String>::new();
+    let mut restore = HashMap::new();
     let mut letter = None;
-    for c in text.nfd() {
-        if matches!(c, '\u{0591}'..='\u{05bd}' | '\u{05bf}' | '\u{05c1}'..='\u{05c2}' | '\u{05c4}'..='\u{05c5}' | '\u{05c7}')
-        {
+    for original in text.nfd() {
+        if is_mark(original) {
             if let Some(offset) = letter {
-                marks.entry(offset).or_default().push(c);
+                marks.entry(offset).or_default().push(original);
             }
-        } else {
-            letter = is_hebrew(c).then_some(plain.len());
-            plain.push(c);
+            continue;
         }
+        let c = normalize_grapheme(original);
+        if c != original {
+            restore.insert(plain.len(), original);
+        }
+        letter = is_hebrew(c).then_some(plain.len());
+        plain.push(c);
     }
-    (plain, marks)
+    Separated {
+        plain,
+        marks,
+        restore,
+    }
 }
 
 fn marked_vowel(marks: &str) -> Option<&'static str> {
@@ -82,27 +126,42 @@ fn marked_consonant(c: char, marks: &str) -> Option<&'static str> {
 /// carrying holam or shuruk is the vowel of the consonant before it rather than
 /// a syllable of its own, and the model, which reads the plain letters, has
 /// already put that vowel on the consonant. Counting both spells it twice.
-fn before_mater_vav(normalized: &str, nikud: &HashMap<usize, String>, c: char, marks: &str, end: usize) -> bool {
-    c != 'ו'
-        && marked_vowel(marks).is_none()
-        && normalized[end..].starts_with('ו')
-        && {
-            let vav = nikud.get(&end).map(String::as_str).unwrap_or("");
-            vav.contains('\u{05b9}') || vav.contains('\u{05bc}')
-        }
+fn before_mater_vav(
+    normalized: &str,
+    nikud: &HashMap<usize, String>,
+    c: char,
+    marks: &str,
+    end: usize,
+) -> bool {
+    c != 'ו' && marked_vowel(marks).is_none() && normalized[end..].starts_with('ו') && {
+        let vav = nikud.get(&end).map(String::as_str).unwrap_or("");
+        vav.contains('\u{05b9}') || vav.contains('\u{05bc}')
+    }
 }
 
 /// True for an unpointed yod that follows an explicit hiriq, tsere or segol: a
 /// vowel letter, not an extra /j/ inferred from the stripped word.
-fn mater_yod(normalized: &str, nikud: &HashMap<usize, String>, c: char, marks: &str, start: usize) -> bool {
+fn mater_yod(
+    normalized: &str,
+    nikud: &HashMap<usize, String>,
+    c: char,
+    marks: &str,
+    start: usize,
+) -> bool {
     c == 'י'
         && marks.is_empty()
-        && normalized[..start].char_indices().next_back().is_some_and(|(offset, previous)| {
-            matches!(
-                explicit_vowel(previous, nikud.get(&offset).map(String::as_str).unwrap_or("")),
-                Some("i" | "e")
-            )
-        })
+        && normalized[..start]
+            .char_indices()
+            .next_back()
+            .is_some_and(|(offset, previous)| {
+                matches!(
+                    explicit_vowel(
+                        previous,
+                        nikud.get(&offset).map(String::as_str).unwrap_or("")
+                    ),
+                    Some("i" | "e")
+                )
+            })
 }
 
 /// The vowel a letter actually contributes: the writer's mark wins over the
@@ -120,7 +179,9 @@ fn effective_vowel<'a>(
         return model;
     };
     let marks = nikud.get(&start).map(String::as_str).unwrap_or("");
-    if mater_yod(normalized, nikud, c, marks, start) || before_mater_vav(normalized, nikud, c, marks, end) {
+    if mater_yod(normalized, nikud, c, marks, start)
+        || before_mater_vav(normalized, nikud, c, marks, end)
+    {
         return "\u{2205}";
     }
     explicit_vowel(c, marks).unwrap_or(model)
@@ -128,6 +189,239 @@ fn effective_vowel<'a>(
 
 fn explicit_vowel(c: char, marks: &str) -> Option<&'static str> {
     marked_vowel(marks).or_else(|| (c == 'ו' && marks.contains('ּ')).then_some("u"))
+}
+
+/// The reading of one Hebrew letter after the writer's marks are applied.
+#[derive(Clone, Debug)]
+struct Letter {
+    /// Byte span of the letter in the plain text.
+    start: usize,
+    end: usize,
+    letter: char,
+    /// Index of the whitespace-separated word the letter belongs to.
+    word: usize,
+    /// IPA consonant, or `∅` for a silent letter.
+    consonant: String,
+    /// One of `∅ a e i o u`.
+    vowel: String,
+    stressed: bool,
+}
+
+/// One inference pass over a text: the plain letters, the writer's marks and
+/// the per-letter reading both renderers share.
+struct Reading {
+    plain: String,
+    marks: HashMap<usize, String>,
+    restore: HashMap<usize, char>,
+    letters: Vec<Letter>,
+}
+
+impl Reading {
+    fn marks_of(&self, letter: &Letter) -> &str {
+        self.marks
+            .get(&letter.start)
+            .map(String::as_str)
+            .unwrap_or("")
+    }
+
+    /// No Hebrew letter follows, looking past a geresh or gershayim inside a
+    /// word (ג׳ירפה, צה״ל).
+    fn word_final(&self, letter: &Letter) -> bool {
+        let rest = &self.plain[letter.end..];
+        let rest = rest.strip_prefix(['\'', '"']).unwrap_or(rest);
+        !rest.starts_with(is_hebrew)
+    }
+
+    fn to_ipa(&self) -> String {
+        let plain = &self.plain;
+        let mut result = String::new();
+        let mut letters = self.letters.iter().peekable();
+        for (offset, c) in plain.char_indices() {
+            let Some(letter) = letters.next_if(|letter| letter.start == offset) else {
+                if c != '\'' && c != '"' {
+                    result.push(c);
+                }
+                continue;
+            };
+            let consonant = letter.consonant.as_str();
+            let vowel = letter.vowel.as_str();
+            let end = letter.end;
+            let word_final = end >= plain.len()
+                || plain[end..].starts_with(|c: char| c.is_whitespace() || !c.is_alphabetic());
+            if c == 'ח' && word_final && vowel == "a" {
+                if letter.stressed {
+                    result.push_str(STRESS);
+                }
+                result.push_str("aχ");
+                continue;
+            }
+            if consonant != NONE {
+                result.push_str(consonant);
+            }
+            if vowel != NONE {
+                if letter.stressed {
+                    result.push_str(STRESS);
+                }
+                result.push_str(vowel);
+            }
+        }
+        result
+    }
+
+    /// Render the reading as niqqud on the writer's letters.
+    ///
+    /// Every mark category the writer typed on a letter (vowel, dagesh/rafe,
+    /// shin/sin dot, accent) is kept as typed; only missing categories are
+    /// filled in from the prediction.
+    fn to_nikud(&self, with_stress: bool) -> String {
+        let mut letters = self.letters.clone();
+        let count = letters.len();
+        // Furtive patah: the model may hang the /a/ of רוּחַ on the silent vav.
+        // A pointed vav reads as /v/, so write the /a/ under the final het,
+        // which reads it before the consonant.
+        for i in 0..count.saturating_sub(1) {
+            let (vav, het) = (&letters[i], &letters[i + 1]);
+            if vav.letter == 'ו'
+                && vav.consonant == NONE
+                && vav.vowel == "a"
+                && self.marks_of(vav).is_empty()
+                && vav.end == het.start
+                && het.letter == 'ח'
+                && het.vowel == NONE
+                && self.word_final(het)
+                && !has_vowel_mark(het.letter, self.marks_of(het))
+            {
+                let stressed = vav.stressed;
+                letters[i + 1].vowel = "a".to_owned();
+                letters[i + 1].stressed |= stressed;
+                letters[i].vowel = NONE.to_owned();
+                letters[i].stressed = false;
+            }
+        }
+        let letters = &letters;
+        let adjacent_next =
+            |i: usize| (i + 1 < count && letters[i + 1].start == letters[i].end).then(|| i + 1);
+        let adjacent_previous =
+            |i: usize| (i > 0 && letters[i - 1].end == letters[i].start).then(|| i - 1);
+        let words_with_typed_stress: HashSet<usize> = letters
+            .iter()
+            .filter(|letter| self.marks_of(letter).contains(HATAMA))
+            .map(|letter| letter.word)
+            .collect();
+
+        let mut added = vec![String::new(); count];
+        for i in 0..count {
+            let letter = &letters[i];
+            let marks = self.marks_of(letter);
+            let word_final = self.word_final(letter);
+            let next = adjacent_next(i);
+            // A following letter nobody pointed that reads as silent: a vowel
+            // letter (mater) this letter's vowel can be written on.
+            let bare_next = next.filter(|&n| {
+                self.marks_of(&letters[n]).is_empty()
+                    && letters[n].consonant == NONE
+                    && letters[n].vowel == NONE
+            });
+
+            if !marks
+                .chars()
+                .any(|c| matches!(c, DAGESH | RAFE | SHIN_DOT | SIN_DOT))
+                && let Some(mark) = consonant_mark(letter, word_final)
+            {
+                added[i].push(mark);
+            }
+
+            let mut carrier = i;
+            if !has_vowel_mark(letter.letter, marks) {
+                let mater_vav =
+                    bare_next.filter(|&n| letters[n].letter == 'ו' && letter.letter != 'ו');
+                let mater_yod = bare_next.filter(|&n| letters[n].letter == 'י');
+                let silent_final = bare_next.filter(|&n| {
+                    matches!(letters[n].letter, 'ה' | 'א') && self.word_final(&letters[n])
+                });
+                let is_vav = letter.letter == 'ו';
+                let consonantal = letter.consonant != NONE;
+                match letter.vowel.as_str() {
+                    // Holam male and shuruk: the vowel sits on the vav.
+                    "o" | "u" if mater_vav.is_some() => {
+                        let vav = mater_vav.expect("checked");
+                        added[vav].push(if letter.vowel == "o" { HOLAM } else { DAGESH });
+                        carrier = vav;
+                    }
+                    "a" if silent_final.is_some() || (letter.letter == 'ך' && word_final) => {
+                        added[i].push(QAMATS)
+                    }
+                    "a" => added[i].push(PATAH),
+                    "e" if mater_yod.is_some() => added[i].push(TSERE),
+                    "e" => added[i].push(SEGOL),
+                    "i" => added[i].push(HIRIQ),
+                    // Plain holam on a consonantal vav would read as holam male.
+                    "o" if is_vav && consonantal => added[i].push(HOLAM_HASER_FOR_VAV),
+                    "o" => added[i].push(HOLAM),
+                    "u" if is_vav && !consonantal => added[i].push(DAGESH),
+                    "u" => added[i].push(QUBUTS),
+                    _ => {
+                        let next_carries_vowel = next.is_some_and(|n| {
+                            letters[n].letter == 'ו'
+                                && letters[n].consonant == NONE
+                                && matches!(letters[n].vowel.as_str(), "o" | "u")
+                        });
+                        // A bare yod after hiriq or tsere reads as a vowel
+                        // letter, so a consonantal one needs its shva even at
+                        // the end of a word.
+                        let consonantal_yod = letter.letter == 'י'
+                            && adjacent_previous(i)
+                                .is_some_and(|p| matches!(letters[p].vowel.as_str(), "i" | "e"));
+                        if consonantal
+                            && !next_carries_vowel
+                            && (!word_final || letter.letter == 'ך' || consonantal_yod)
+                        {
+                            added[i].push(SHVA);
+                        }
+                    }
+                }
+            }
+
+            if with_stress
+                && letter.stressed
+                && letter.vowel != NONE
+                && !words_with_typed_stress.contains(&letter.word)
+                && !marks.contains(HATAMA)
+            {
+                added[carrier].push(HATAMA);
+            }
+        }
+
+        let mut output = String::with_capacity(self.plain.len() * 2);
+        let mut next_letter = 0;
+        for (offset, c) in self.plain.char_indices() {
+            output.push(self.restore.get(&offset).copied().unwrap_or(c));
+            if next_letter < count && letters[next_letter].start == offset {
+                output.push_str(self.marks_of(&letters[next_letter]));
+                output.push_str(&added[next_letter]);
+                next_letter += 1;
+            }
+        }
+        output.nfc().collect()
+    }
+}
+
+fn has_vowel_mark(letter: char, marks: &str) -> bool {
+    marks
+        .chars()
+        .any(|c| matches!(c, '\u{05B0}'..='\u{05BB}' | QAMATS_QATAN))
+        || (letter == 'ו' && marks.contains(DAGESH))
+}
+
+fn consonant_mark(letter: &Letter, word_final: bool) -> Option<char> {
+    match (letter.letter, letter.consonant.as_str()) {
+        ('ב', "b") | ('כ' | 'ך', "k") | ('פ' | 'ף', "p") => Some(DAGESH),
+        ('ש', "ʃ") => Some(SHIN_DOT),
+        ('ש', "s") => Some(SIN_DOT),
+        // Mappiq: a pronounced final he.
+        ('ה', "h") if word_final => Some(DAGESH),
+        _ => None,
+    }
 }
 
 pub struct G2P {
@@ -266,12 +560,36 @@ impl G2P {
     /// Convert Hebrew text to IPA.
     ///
     /// `speaker` / `target_speaker`: 0 unknown, 1 male, 2 female. Ignored on legacy models.
+    /// Niqqud the writer typed wins over the model, including the hatama
+    /// (U+05AB) as the stressed syllable.
     pub fn phonemize(
         &mut self,
         text: &str,
         speaker: u8,
         target_speaker: u8,
     ) -> anyhow::Result<String> {
+        Ok(self.read(text, speaker, target_speaker)?.to_ipa())
+    }
+
+    /// Add niqqud to Hebrew text, returning NFC text.
+    ///
+    /// Punctuation, whitespace, geresh and non-Hebrew text are returned as
+    /// written, and every mark the writer already typed is kept. With
+    /// `with_stress`, the stressed letter of each word gets the hatama
+    /// (U+05AB), which [`Self::phonemize`] reads back as the stress.
+    pub fn diacritize(
+        &mut self,
+        text: &str,
+        speaker: u8,
+        target_speaker: u8,
+        with_stress: bool,
+    ) -> anyhow::Result<String> {
+        Ok(self
+            .read(text, speaker, target_speaker)?
+            .to_nikud(with_stress))
+    }
+
+    fn read(&mut self, text: &str, speaker: u8, target_speaker: u8) -> anyhow::Result<Reading> {
         if speaker > 2 || target_speaker > 2 {
             anyhow::bail!("speaker and target_speaker must be 0, 1, or 2");
         }
@@ -281,9 +599,20 @@ impl G2P {
             );
         }
 
-        let text = normalize_graphemes(text);
-        let (normalized, nikud) = separate_nikud(&text);
-        let (ids, mask, offsets) = self.tokenize(&normalized);
+        let Separated {
+            plain,
+            marks: nikud,
+            restore,
+        } = separate_nikud(text);
+        if !plain.chars().any(is_hebrew) {
+            return Ok(Reading {
+                plain,
+                marks: nikud,
+                restore,
+                letters: Vec::new(),
+            });
+        }
+        let (ids, mask, offsets) = self.tokenize(&plain);
         let len = ids.len();
 
         let input_ids = Tensor::<i64>::from_array(([1, len], ids.into_boxed_slice()))?;
@@ -325,96 +654,23 @@ impl G2P {
                 .unwrap_or(0)
         };
 
-        let word_spans: Vec<(usize, usize)> = {
-            let mut spans = Vec::new();
-            let mut in_word = false;
-            let mut word_start = 0;
-            for (i, c) in normalized.char_indices() {
-                if c.is_whitespace() {
-                    if in_word {
-                        spans.push((word_start, i));
-                        in_word = false;
-                    }
-                } else if !in_word {
-                    word_start = i;
-                    in_word = true;
-                }
-            }
-            if in_word {
-                spans.push((word_start, normalized.len()));
-            }
-            spans
-        };
-
-        let vowel_ids: Vec<i64> = (0..offsets.len())
-            .map(|tok_idx| argmax(vowel_data, tok_idx * num_vowels, num_vowels))
-            .collect();
-
-        // Prefer stress over tokens predicted to carry a vowel (RenikudPlus behavior).
-        let stressed_positions: HashSet<usize> = {
-            let mut stressed = HashSet::new();
-            for (ws, we) in &word_spans {
-                let candidates: Vec<usize> = offsets
-                    .iter()
-                    .enumerate()
-                    .filter(|&(tok_idx, &(start, end))| {
-                        end > start
-                            && start >= *ws
-                            && start < *we
-                            && effective_vowel(
-                                &normalized,
-                                &nikud,
-                                start,
-                                end,
-                                self.vowel_vocab
-                                    .get(&vowel_ids[tok_idx])
-                                    .map(String::as_str)
-                                    .unwrap_or("∅"),
-                            ) != "∅"
-                    })
-                    .map(|(i, _)| i)
-                    .collect();
-                let pool = if candidates.is_empty() {
-                    offsets
-                        .iter()
-                        .enumerate()
-                        .filter(|&(_, &(start, end))| end > start && start >= *ws && start < *we)
-                        .map(|(i, _)| i)
-                        .collect::<Vec<_>>()
-                } else {
-                    candidates
-                };
-                if let Some(idx) = pool.into_iter().max_by(|&a, &b| {
-                    let sa = stress_data[a * 2 + 1];
-                    let sb = stress_data[b * 2 + 1];
-                    sa.partial_cmp(&sb).unwrap_or(std::cmp::Ordering::Equal)
-                }) {
-                    stressed.insert(idx);
-                }
-            }
-            stressed
-        };
-
-        let mut result = String::new();
-        let mut prev_end = 0usize;
+        let mut letters = Vec::new();
+        let mut stress_scores = Vec::new();
+        let mut word = 0usize;
+        let mut previous_end = 0usize;
         for (tok_idx, &(start, end)) in offsets.iter().enumerate() {
-            let char_len = end.saturating_sub(start);
-            if char_len == 0 {
+            if end <= start {
                 continue;
             }
-
-            if start > prev_end {
-                result.push_str(&normalized[prev_end..start]);
+            if plain[previous_end..start].chars().any(char::is_whitespace) {
+                word += 1;
             }
-
-            let c = normalized[start..end].chars().next().unwrap();
-            prev_end = end;
-
+            let c = plain[start..end].chars().next().expect("non-empty span");
+            if c.is_whitespace() {
+                word += 1;
+            }
+            previous_end = end;
             if !is_hebrew(c) {
-                if c == '\'' || c == '"' {
-                    continue;
-                }
-                result.push(c);
                 continue;
             }
 
@@ -438,68 +694,105 @@ impl G2P {
             } else {
                 argmax(cons_data, tok_idx * num_consonants, num_consonants)
             };
-            let vowel_id = vowel_ids[tok_idx];
-            let stressed = stressed_positions.contains(&tok_idx);
-
-            let consonant_str: String;
-            let consonant = if let Some(geresh) = self.geresh_map.get(&c) {
-                if normalized[end..].starts_with('\'') {
-                    geresh.as_str()
-                } else {
-                    self.consonant_vocab
-                        .get(&consonant_id)
-                        .map(String::as_str)
-                        .unwrap_or("∅")
-                }
-            } else {
-                consonant_str = self
+            let model_consonant = match self.geresh_map.get(&c) {
+                Some(geresh) if plain[end..].starts_with('\'') => geresh.as_str(),
+                _ => self
                     .consonant_vocab
                     .get(&consonant_id)
-                    .cloned()
-                    .unwrap_or_else(|| "∅".to_string());
-                &consonant_str
+                    .map(String::as_str)
+                    .unwrap_or(NONE),
             };
-            let vowel = self
+            let model_vowel = self
                 .vowel_vocab
-                .get(&vowel_id)
+                .get(&argmax(vowel_data, tok_idx * num_vowels, num_vowels))
                 .map(String::as_str)
-                .unwrap_or("∅");
+                .unwrap_or(NONE);
 
             let marks = nikud.get(&start).map(String::as_str).unwrap_or("");
-            let mater_yod = mater_yod(&normalized, &nikud, c, marks, start);
-            let consonant = if mater_yod {
-                "∅"
+            let consonant = if mater_yod(&plain, &nikud, c, marks, start) {
+                NONE
             } else {
-                marked_consonant(c, marks).unwrap_or(consonant)
+                match marked_consonant(c, marks) {
+                    // A pointed vav is consonantal; keep the model's /w/ over /v/.
+                    Some("v") if c == 'ו' && model_consonant == "w" => "w",
+                    Some(marked) => marked,
+                    None => model_consonant,
+                }
             };
-            let vowel = effective_vowel(&normalized, &nikud, start, end, vowel);
+            let vowel = effective_vowel(&plain, &nikud, start, end, model_vowel);
 
-            let word_final = end >= normalized.len()
-                || normalized[end..].starts_with(|c: char| c.is_whitespace() || !c.is_alphabetic());
-            if c == 'ח' && word_final && vowel == "a" {
-                if stressed {
-                    result.push_str(STRESS);
-                }
-                result.push_str("aχ");
-            } else {
-                if consonant != "∅" {
-                    result.push_str(consonant);
-                }
-                if stressed && vowel != "∅" {
-                    result.push_str(STRESS);
-                }
-                if vowel != "∅" {
-                    result.push_str(vowel);
-                }
+            letters.push(Letter {
+                start,
+                end,
+                letter: c,
+                word,
+                consonant: consonant.to_owned(),
+                vowel: vowel.to_owned(),
+                stressed: false,
+            });
+            stress_scores.push(stress_data[tok_idx * 2 + 1]);
+        }
+        drop(outputs);
+
+        // A holam or shuruk vav written by the writer carries the vowel the
+        // model scored on the consonant before it, so it carries that
+        // consonant's stress score too.
+        for i in 1..letters.len() {
+            let previous = &letters[i - 1];
+            if previous.end == letters[i].start
+                && before_mater_vav(
+                    &plain,
+                    &nikud,
+                    previous.letter,
+                    nikud.get(&previous.start).map(String::as_str).unwrap_or(""),
+                    previous.end,
+                )
+            {
+                stress_scores[i] = stress_scores[i].max(stress_scores[i - 1]);
             }
         }
 
-        if prev_end < normalized.len() {
-            result.push_str(&normalized[prev_end..]);
+        // One stress per word: the writer's hatama if typed, otherwise the
+        // highest-scoring letter that carries a vowel (RenikudPlus behavior).
+        let mut first = 0;
+        while first < letters.len() {
+            let word = letters[first].word;
+            let last = letters[first..]
+                .iter()
+                .position(|letter| letter.word != word)
+                .map_or(letters.len(), |n| first + n);
+            let typed = (first..last).rev().find(|&i| {
+                nikud
+                    .get(&letters[i].start)
+                    .is_some_and(|marks| marks.contains(HATAMA))
+            });
+            let chosen = typed.or_else(|| {
+                let voiced: Vec<usize> = (first..last)
+                    .filter(|&i| letters[i].vowel != NONE)
+                    .collect();
+                let pool = if voiced.is_empty() {
+                    (first..last).collect()
+                } else {
+                    voiced
+                };
+                pool.into_iter().max_by(|&a, &b| {
+                    stress_scores[a]
+                        .partial_cmp(&stress_scores[b])
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+            });
+            if let Some(i) = chosen {
+                letters[i].stressed = true;
+            }
+            first = last;
         }
 
-        drop(outputs);
-        Ok(result)
+        Ok(Reading {
+            plain,
+            marks: nikud,
+            restore,
+            letters,
+        })
     }
 }
 
@@ -507,57 +800,245 @@ impl G2P {
 mod tests {
     use super::*;
 
+    fn letter(start: usize, c: char, word: usize, consonant: &str, vowel: &str) -> Letter {
+        Letter {
+            start,
+            end: start + c.len_utf8(),
+            letter: c,
+            word,
+            consonant: consonant.to_owned(),
+            vowel: vowel.to_owned(),
+            stressed: false,
+        }
+    }
+
+    /// Build a reading as the model would for plain `text`, one (consonant,
+    /// vowel) per Hebrew letter, with the stressed letter index per word.
+    fn reading(text: &str, predictions: &[(&str, &str)], stressed: &[usize]) -> Reading {
+        let Separated {
+            plain,
+            marks,
+            restore,
+        } = separate_nikud(text);
+        let mut letters = Vec::new();
+        let mut word = 0;
+        let mut predictions = predictions.iter();
+        for (offset, c) in plain.char_indices() {
+            if c.is_whitespace() {
+                word += 1;
+            }
+            if is_hebrew(c) {
+                let (consonant, vowel) = predictions.next().expect("prediction per letter");
+                letters.push(letter(offset, c, word, consonant, vowel));
+            }
+        }
+        for &i in stressed {
+            letters[i].stressed = true;
+        }
+        Reading {
+            plain,
+            marks,
+            restore,
+            letters,
+        }
+    }
+
     #[test]
     fn nikud_stays_aligned_in_mixed_text() {
-        let (plain, marks) = separate_nikud("לכן אֶן קֶלְוִין שלום");
+        let Separated {
+            plain,
+            marks: nikud,
+            ..
+        } = separate_nikud("לכן אֶן קֶלְוִין שלום");
         assert_eq!(plain, "לכן אן קלוין שלום");
         assert_eq!(
-            explicit_vowel('א', &marks[&plain.find('א').unwrap()]),
+            explicit_vowel('א', &nikud[&plain.find('א').unwrap()]),
             Some("e")
         );
         assert_eq!(
-            explicit_vowel('ק', &marks[&plain.find('ק').unwrap()]),
+            explicit_vowel('ק', &nikud[&plain.find('ק').unwrap()]),
             Some("e")
         );
         assert_eq!(
-            explicit_vowel('ל', &marks[&(plain.find('ק').unwrap() + 2)]),
+            explicit_vowel('ל', &nikud[&(plain.find('ק').unwrap() + 2)]),
             Some("∅")
         );
         assert_eq!(
-            explicit_vowel('ו', &marks[&plain.find('ו').unwrap()]),
+            explicit_vowel('ו', &nikud[&plain.find('ו').unwrap()]),
             Some("i")
         );
-        assert!(!marks.contains_key(&plain.find('ש').unwrap()));
+        assert!(!nikud.contains_key(&plain.find('ש').unwrap()));
     }
 
     #[test]
     fn explicit_consonants_and_vowels_override_predictions() {
-        assert_eq!(marked_consonant('ב', "ֵּ"), Some("b"));
+        assert_eq!(marked_consonant('ב', "ֵּ"), Some("b"));
         assert_eq!(marked_consonant('ש', "ׂ"), Some("s"));
         assert_eq!(marked_consonant('ו', "ִ"), Some("v"));
         assert_eq!(marked_consonant('ו', "ּ"), Some("∅"));
+        assert_eq!(marked_consonant('ו', "ֺ"), Some("v"));
         assert_eq!(explicit_vowel('ו', "ּ"), Some("u"));
         assert_eq!(explicit_vowel('ק', ""), None);
-        assert_eq!(separate_nikud("אֶן־שלום׃").0, "אן־שלום׃");
+        assert_eq!(separate_nikud("אֶן־שלום׃").plain, "אן־שלום׃");
     }
 
     #[test]
     fn a_mater_vav_takes_the_vowel_rather_than_adding_one() {
-        let (plain, marks) = separate_nikud("שָׁלוֹם");
+        let Separated {
+            plain,
+            marks: nikud,
+            ..
+        } = separate_nikud("שָׁלוֹם");
         let lamed = plain.find('ל').expect("lamed");
         let end = lamed + 'ל'.len_utf8();
         // The lamed carries no vowel of its own; the holam vav after it does.
-        assert!(before_mater_vav(&plain, &marks, 'ל', "", end));
+        assert!(before_mater_vav(&plain, &nikud, 'ל', "", end));
         // So the model's guess for the lamed is dropped rather than kept
         // alongside the writer's mark, which is what spelled שלום as ʃalˈoom.
-        assert_eq!(effective_vowel(&plain, &marks, lamed, end, "o"), "∅");
+        assert_eq!(effective_vowel(&plain, &nikud, lamed, end, "o"), "∅");
     }
 
     #[test]
     fn a_consonant_with_its_own_vowel_keeps_it_before_a_vav() {
-        let (plain, marks) = separate_nikud("שָׁלוֹם");
+        let Separated {
+            plain,
+            marks: nikud,
+            ..
+        } = separate_nikud("שָׁלוֹם");
         let shin = plain.find('ש').expect("shin");
         let end = shin + 'ש'.len_utf8();
-        assert_eq!(effective_vowel(&plain, &marks, shin, end, "∅"), "a");
+        assert_eq!(effective_vowel(&plain, &nikud, shin, end, "∅"), "a");
+    }
+
+    #[test]
+    fn diacritizes_holam_male_dagesh_and_shin_dot() {
+        let reading = reading(
+            "שלום, ספר",
+            &[
+                ("ʃ", "a"),
+                ("l", "o"),
+                (NONE, NONE),
+                ("m", NONE),
+                ("s", "e"),
+                ("f", "e"),
+                ("ʁ", NONE),
+            ],
+            &[1, 4],
+        );
+        assert_eq!(reading.to_ipa(), "ʃalˈom, sˈefeʁ");
+        let nikud = reading.to_nikud(true);
+        let expected: String = "שַׁלוֹ\u{05AB}ם, סֶ\u{05AB}פֶר".nfc().collect();
+        assert_eq!(nikud, expected);
+        let plain: String = "שַׁלוֹם, סֶפֶר".nfc().collect();
+        assert_eq!(reading.to_nikud(false), plain);
+    }
+
+    #[test]
+    fn diacritizes_dagesh_shuruk_hiriq_male_and_final_kaf() {
+        // בּוּקִי לְךָ: b u (shuruk on the vav), k i + mater yod, l shva, χ a.
+        let reading = reading(
+            "בוקי לך",
+            &[
+                ("b", "u"),
+                (NONE, NONE),
+                ("k", "i"),
+                (NONE, NONE),
+                ("l", NONE),
+                ("χ", "a"),
+            ],
+            &[0, 5],
+        );
+        let expected: String = "בּוּ\u{05AB}קִי לְךָ\u{05AB}".nfc().collect();
+        assert_eq!(reading.to_nikud(true), expected);
+    }
+
+    #[test]
+    fn furtive_patah_moves_from_a_silent_vav_to_the_final_het() {
+        let reading = reading("רוח", &[("ʁ", "u"), (NONE, "a"), ("χ", NONE)], &[0]);
+        assert_eq!(reading.to_ipa(), "ʁˈuaχ");
+        let expected: String = "רוּ\u{05AB}חַ".nfc().collect();
+        assert_eq!(reading.to_nikud(true), expected);
+    }
+
+    #[test]
+    fn typed_niqqud_and_punctuation_are_preserved() {
+        // The writer pointed the qamats and the sin; the rest is predicted.
+        let reading = reading(
+            "שָׂרה׳ \"abc\"",
+            &[("s", "a"), ("ʁ", "a"), (NONE, NONE)],
+            &[1],
+        );
+        let expected: String = "שָׂרָ\u{05AB}ה׳ \"abc\"".nfc().collect();
+        assert_eq!(reading.to_nikud(true), expected);
+    }
+
+    #[test]
+    fn consonantal_vav_keeps_its_consonant_through_the_round_trip() {
+        let reading = reading(
+            "וורד",
+            &[("v", "e"), (NONE, NONE), ("ʁ", "e"), ("d", NONE)],
+            &[0],
+        );
+        let nikud = reading.to_nikud(true);
+        // The consonantal vav takes its segol; the bare second vav stays bare.
+        assert!(nikud.starts_with("ו\u{05B6}\u{05AB}ו"), "{nikud}");
+        let reading = reading_from_nikud("וֺ");
+        assert_eq!(reading.consonant, "v");
+    }
+
+    fn reading_from_nikud(text: &str) -> Letter {
+        let Separated {
+            plain,
+            marks: nikud,
+            ..
+        } = separate_nikud(text);
+        let c = plain.chars().next().unwrap();
+        let marks = nikud.get(&0).map(String::as_str).unwrap_or("");
+        let consonant = marked_consonant(c, marks).unwrap_or(NONE);
+        let vowel = effective_vowel(&plain, &nikud, 0, c.len_utf8(), NONE);
+        letter(0, c, 0, consonant, vowel)
+    }
+
+    #[test]
+    fn diacritized_letters_read_back_as_the_prediction() {
+        // Each generated pointing must decode to the class it came from.
+        for (text, consonant, vowel) in [
+            ("בַּ", "b", "a"),
+            ("כֶ", NONE, "e"),
+            ("פִּ", "p", "i"),
+            ("שׁ", "ʃ", NONE),
+            ("שׂ", "s", NONE),
+            ("לְ", NONE, NONE),
+            ("קֻ", NONE, "u"),
+        ] {
+            let letter = reading_from_nikud(text);
+            assert_eq!(letter.consonant, consonant, "{text}");
+            assert_eq!(letter.vowel, vowel, "{text}");
+        }
+    }
+
+    /// Needs `MAMBOTTS_RENIKUD_PATH` pointing at `renikud-plus.onnx`.
+    #[test]
+    #[ignore = "requires MAMBOTTS_RENIKUD_PATH pointing to renikud-plus.onnx"]
+    fn diacritize_then_phonemize_matches_phonemize_with_real_model() {
+        let model = std::env::var("MAMBOTTS_RENIKUD_PATH").expect("set MAMBOTTS_RENIKUD_PATH");
+        let mut g2p = G2P::new(&model).unwrap();
+        for text in [
+            "שלום עולם, מה שלומך היום?",
+            "הילדים הלכו לבית הספר בבוקר.",
+            "ספר",
+            "שבת שלום",
+            "אני אוהב machine learning וגם ג׳אז.",
+            "הַמְּנוֹרָה מאירה.",
+        ] {
+            let ipa = g2p.phonemize(text, 0, 0).unwrap();
+            let nikud = g2p.diacritize(text, 0, 0, true).unwrap();
+            let round_trip = g2p.phonemize(&nikud, 0, 0).unwrap();
+            println!("{text}\n  {nikud}\n  {ipa}\n  {round_trip}");
+            assert_eq!(round_trip, ipa, "{text} -> {nikud}");
+            let plain: String = nikud.chars().filter(|&c| !is_mark(c)).collect();
+            let original: String = text.nfd().filter(|&c| !is_mark(c)).collect();
+            assert_eq!(plain, original, "letters and punctuation stay as written");
+        }
     }
 }

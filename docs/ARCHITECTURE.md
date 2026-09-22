@@ -41,7 +41,7 @@ the loading path. See [ADDING_MODELS.md](./ADDING_MODELS.md).
 - fixed `Noa`, `Lily`, `Daniel`, and `Adam` voice styles;
 - no reference-voice cloning;
 - [RenikudPlus](https://github.com/maxmelichov/RenikudPlus) ONNX phonemization for Hebrew, including optional source/target speaker conditioning;
-- optional [Phonikud](https://github.com/phonikud/phonikud) vocalization and diacritics controls.
+- Hebrew diacritization (`POST /v1/diacritize`) from the same RenikudPlus pass: its per-letter consonant, vowel and stress predictions are written back as niqqud, so the diacritized text phonemizes the same as the original.
 
 Its bundle is installed in the application data directory under `models/blue-onnx-v2/` and requires the [BlueTTS](https://github.com/maxmelichov/BlueTTS) ONNX pipeline, voice embeddings, and `renikud-plus.onnx`.
 

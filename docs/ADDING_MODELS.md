@@ -85,7 +85,7 @@ Use this when you are not introducing a new engine. Examples:
 
 ### BlueTTS bundle expectations today
 
-Registered Blue files currently include the ONNX pipeline (`duration_predictor`, `text_encoder`, `vector_estimator`, `vocoder`), `vocab.json`, `tts.json`, voice styles under `voices/`, and `renikud-plus.onnx` for Hebrew G2P. Optional Phonikud is downloaded separately when selected.
+Registered Blue files currently include the ONNX pipeline (`duration_predictor`, `text_encoder`, `vector_estimator`, `vocoder`), `vocab.json`, `tts.json`, voice styles under `voices/`, and `renikud-plus.onnx` for Hebrew G2P and diacritization.
 
 If your change breaks the existing Blue IO contract, treat it as a new runtime (Option B) or a major version bump of the Blue directory name (for example a new `directory` / `version` so old and new installs do not collide).
 

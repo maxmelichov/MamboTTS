@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useMemo, useRef } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { useNavigate } from "react-router-dom";
-import type { ModelBundle, RunnerInfo, StudioState } from "../../lib/types";
+import type { EditorInputSource, ModelBundle, RunnerInfo, StudioState } from "../../lib/types";
 import { AppFrame } from "../../components/AppFrame";
 import { CreateStatus } from "../../components/CreateStatus";
 import { ErrorBlock } from "../../components/ui";
@@ -21,14 +21,11 @@ type PageProps = {
 type HomePageProps = PageProps & {
   studio: StudioState;
   setStudio: Dispatch<SetStateAction<StudioState>>;
-  advancedMode: boolean;
-  hebrewG2pEngine: string;
-  phonikudPath: string;
 };
 
-export function HomePage({ bundle, setBundle, studio, setStudio, advancedMode, hebrewG2pEngine, phonikudPath }: HomePageProps) {
+export function HomePage({ bundle, setBundle, studio, setStudio }: HomePageProps) {
   const navigate = useNavigate();
-  const { text, phonemes, diacritics, languages, language, blueVoice, blueVoiceIds, speaker, targetSpeaker, speed, audioPath, streamChunkPaths, audioAutoplayPending, step, status, busy, error } = studio;
+  const { text, phonemes, diacritics, diacriticsSource, languages, language, blueVoice, blueVoiceIds, speaker, targetSpeaker, speed, audioPath, streamChunkPaths, audioAutoplayPending, step, status, busy, error } = studio;
   const loadingLanguagesRef = useRef(false);
 
   const audioSrc = useMemo(() => (audioPath ? convertFileSrc(audioPath) : ""), [audioPath]);
@@ -43,6 +40,15 @@ export function HomePage({ bundle, setBundle, studio, setStudio, advancedMode, h
     [streamedAudioSrcs, audioSrc],
   );
   const updateStudio = (patch: Partial<StudioState>) => setStudio((current) => ({ ...current, ...patch }));
+  const isHebrew = language === "he" || (language === "auto" && /[֐-׿]/.test(text));
+  // Vocalized text only counts while it still matches the plain text it came
+  // from; after the text is edited it is kept for reference but not spoken.
+  const diacriticsStale = Boolean(diacritics) && diacriticsSource !== text;
+  const vocalized = isHebrew && !diacriticsStale && diacritics.trim() ? diacritics : "";
+  // Generate sends the most refined layer present: edited IPA, then vocalized
+  // Hebrew (RenikudPlus honors typed niqqud), then the plain text.
+  const inputSource: EditorInputSource = phonemes.trim() ? "phonemes" : vocalized ? "diacritics" : "text";
+  const synthesisInput = inputSource === "phonemes" ? phonemes : inputSource === "diacritics" ? vocalized : text;
 
   useEffect(() => {
     const unlisten = listen<string>("synthesis-chunk", ({ payload }) => {
@@ -76,8 +82,6 @@ export function HomePage({ bundle, setBundle, studio, setStudio, advancedMode, h
             runtime: currentBundle.runtime,
             model_path: currentBundle.model_path,
             renikud_path: currentBundle.renikud_path,
-            hebrew_g2p_engine: hebrewG2pEngine,
-            phonikud_path: phonikudPath,
             speaker,
             target_speaker: targetSpeaker,
           },
@@ -117,10 +121,8 @@ export function HomePage({ bundle, setBundle, studio, setStudio, advancedMode, h
         runtime: current.runtime,
         model_path: current.model_path,
         renikud_path: current.renikud_path,
-            hebrew_g2p_engine: hebrewG2pEngine,
-            phonikud_path: phonikudPath,
-            speaker,
-            target_speaker: targetSpeaker,
+        speaker,
+        target_speaker: targetSpeaker,
       },
     });
   }
@@ -129,15 +131,17 @@ export function HomePage({ bundle, setBundle, studio, setStudio, advancedMode, h
     if (!text.trim()) return;
     await ensureModelLoaded();
     const output = await invoke<string>("phonemize", {
-      request: { input: diacritics || text, language },
+      request: { input: vocalized || text, language },
     });
     updateStudio({ phonemes: output });
   }
 
   async function addDiacritics() {
+    if (!text.trim()) return;
     await ensureModelLoaded();
-    const output = await invoke<string>("diacritize", { request: { input: text, language: "he" } });
-    updateStudio({ diacritics: output, phonemes: "" });
+    const source = text;
+    const output = await invoke<string>("diacritize", { request: { input: source, language: "he" } });
+    updateStudio({ diacritics: output, diacriticsSource: source, phonemes: "" });
   }
 
   async function createVoice() {
@@ -147,7 +151,8 @@ export function HomePage({ bundle, setBundle, studio, setStudio, advancedMode, h
       navigate("/onboard", { replace: true });
       return;
     }
-    const input = advancedMode && phonemes.trim() ? phonemes : text;
+    const input = synthesisInput;
+    const inputIsPhonemes = inputSource === "phonemes";
     if (!input.trim()) {
       updateStudio({ status: "Input text required." });
       return;
@@ -164,10 +169,8 @@ export function HomePage({ bundle, setBundle, studio, setStudio, advancedMode, h
           runtime: current.runtime,
           model_path: current.model_path,
           renikud_path: current.renikud_path,
-            hebrew_g2p_engine: hebrewG2pEngine,
-            phonikud_path: phonikudPath,
-            speaker,
-            target_speaker: targetSpeaker,
+          speaker,
+          target_speaker: targetSpeaker,
         },
       });
 
@@ -189,7 +192,7 @@ export function HomePage({ bundle, setBundle, studio, setStudio, advancedMode, h
       const synthesisVoice = nextStudio.blueVoice ?? blueVoice;
       const selectedLanguage = supportedLanguages.includes(language) ? language : "auto";
       if (selectedLanguage !== language) updateStudio({ language: "auto" });
-      const synthesisLanguage = advancedMode && phonemes.trim() && selectedLanguage === "auto"
+      const synthesisLanguage = inputIsPhonemes && selectedLanguage === "auto"
         ? (/[֐-׿]/.test(text) ? "he" : "en")
         : selectedLanguage;
 
@@ -199,7 +202,7 @@ export function HomePage({ bundle, setBundle, studio, setStudio, advancedMode, h
           input,
           voice: synthesisVoice || undefined,
           language: synthesisLanguage,
-          input_is_phonemes: advancedMode && Boolean(phonemes.trim()),
+          input_is_phonemes: inputIsPhonemes,
           speed,
         },
       });
@@ -230,11 +233,14 @@ export function HomePage({ bundle, setBundle, studio, setStudio, advancedMode, h
               text={text}
               setText={(nextText) => updateStudio({ text: nextText, phonemes: "" })}
               language={language}
-              hebrewG2pEngine={hebrewG2pEngine}
+              isHebrew={isHebrew}
+              inputSource={inputSource}
+              synthesisInput={synthesisInput}
               diacritics={diacritics}
+              diacriticsStale={diacriticsStale}
               setDiacritics={(nextDiacritics) => updateStudio({ diacritics: nextDiacritics, phonemes: "" })}
+              clearDiacritics={() => updateStudio({ diacritics: "", diacriticsSource: "", phonemes: "" })}
               addDiacritics={addDiacritics}
-              advancedMode={advancedMode}
               phonemes={phonemes}
               setPhonemes={(nextPhonemes) => updateStudio({ phonemes: nextPhonemes })}
               convertToPhonemes={convertToPhonemes}
@@ -270,7 +276,6 @@ export function HomePage({ bundle, setBundle, studio, setStudio, advancedMode, h
               busy={busy}
               language={language}
               languages={languages}
-              hebrewG2pEngine={hebrewG2pEngine}
               speaker={speaker}
               targetSpeaker={targetSpeaker}
               setLanguage={(nextLanguage) => updateStudio({ language: nextLanguage })}

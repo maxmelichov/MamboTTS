@@ -317,5 +317,4 @@ the desktop will offer them. Full instructions for contributors:
 ## Upstream projects
 
 - [BlueTTS](https://github.com/maxmelichov/BlueTTS) provides the ONNX text-to-speech model.
-- [RenikudPlus](https://github.com/maxmelichov/RenikudPlus) provides Hebrew grapheme-to-IPA inference and optional speaker conditioning.
-- [Phonikud](https://github.com/phonikud/phonikud) provides optional Hebrew diacritics and vocalization tooling.
+- [RenikudPlus](https://github.com/maxmelichov/RenikudPlus) provides Hebrew grapheme-to-IPA inference, Hebrew diacritization, and optional speaker conditioning.

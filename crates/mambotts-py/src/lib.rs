@@ -10,10 +10,10 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use blue_rs::{
-    BlueTts, ChunkingOptions, SynthesisOptions, VoiceStyle,
     phonemize::{Language, Phonemizer},
+    BlueTts, ChunkingOptions, SynthesisOptions, VoiceStyle,
 };
-use mambotts_registry::{BLUE_VOICES, DEFAULT_BLUE_VOICE, blue_voice_name};
+use mambotts_registry::{blue_voice_name, BLUE_VOICES, DEFAULT_BLUE_VOICE};
 use pyo3::exceptions::{PyKeyError, PyValueError};
 use pyo3::prelude::*;
 
@@ -101,7 +101,12 @@ impl BlueTtsEngine {
         let language = resolve_language(text, language)?;
         // G2P is CPU work with no Python involvement, so the GIL goes
         // back to the interpreter for its duration.
-        py.detach(|| self.lock()?.phonemizer.g2p(text, language).map_err(to_py_err))
+        py.detach(|| {
+            self.lock()?
+                .phonemizer
+                .g2p(text, language)
+                .map_err(to_py_err)
+        })
     }
 
     /// Synthesizes text, returning mono `f32` samples.
@@ -121,7 +126,9 @@ impl BlueTtsEngine {
         py.detach(|| {
             let mut engine = self.lock()?;
             let style = engine.style_for(voice)?.clone();
-            let Engine { tts, phonemizer, .. } = &mut *engine;
+            let Engine {
+                tts, phonemizer, ..
+            } = &mut *engine;
             tts.synthesize_text(phonemizer, text, &style, options)
                 .map_err(to_py_err)
         })
