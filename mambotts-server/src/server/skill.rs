@@ -46,7 +46,7 @@ Useful endpoints for the desktop Phoneme editor:
 
 - POST /v1/phonemize → `{"phonemes":"..."}`
 - GET /v1/phonemes → BlueTTS phoneme inventory
-- POST /v1/diacritize with `{"input":"..."}` → `{"phonemes":"<Hebrew with niqqud>"}` (RenikudPlus; typed niqqud is kept, stress marked with the hatama U+05AB)
+- POST /v1/diacritize with `{"input":"..."}` → `{"phonemes":"<Hebrew with niqqud>"}` (RenikudPlus re-points the text from its own reading; the stressed syllable is marked with the hatama U+05AB, which /v1/phonemize reads back. Add `"stress": false` for plain niqqud with no stress mark.)
 - POST /v1/audio/speech with `input_is_phonemes: true` and `stream: true` to speak edited IPA
 
 If the API returns no_model, ask the user to install the MamboTTS model in the desktop app first.

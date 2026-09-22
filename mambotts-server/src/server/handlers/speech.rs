@@ -8,7 +8,7 @@ use axum::{
 use futures_util::stream;
 
 use super::super::{
-    dto::{PhonemeInventoryResponse, PhonemizeBody, PhonemizeResponse, SpeechBody},
+    dto::{DiacritizeBody, PhonemeInventoryResponse, PhonemizeBody, PhonemizeResponse, SpeechBody},
     errors::write_error,
     state::SharedServer,
     util::first_non_empty,
@@ -65,7 +65,7 @@ pub async fn phoneme_inventory(State(server): State<SharedServer>) -> Response {
 
 pub async fn diacritize(
     State(server): State<SharedServer>,
-    Json(body): Json<PhonemizeBody>,
+    Json(body): Json<DiacritizeBody>,
 ) -> Response {
     if body.input.trim().is_empty() {
         return write_error(
@@ -82,7 +82,7 @@ pub async fn diacritize(
             "no model loaded",
         );
     };
-    match ctx.diacritize(&body.input) {
+    match ctx.diacritize(&body.input, body.stress) {
         Ok(text) => Json(PhonemizeResponse { phonemes: text }).into_response(),
         Err(err) => write_error(
             StatusCode::INTERNAL_SERVER_ERROR,

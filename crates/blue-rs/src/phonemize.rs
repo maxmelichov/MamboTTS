@@ -4,9 +4,20 @@ use anyhow::{Result, anyhow, bail};
 use espeak_rs::text_to_phonemes;
 use ort::session::Session;
 use regex::Regex;
-use renikud_plus_rs::G2P;
+use renikud_plus_rs::lexicon::{ForceLexicon, OnInvalidEntry};
+use renikud_plus_rs::{G2P, G2PConfig, NiqqudMode};
 
 use crate::handling::prepare_text_for_synthesis;
+
+/// RenikudPlus as MamboTTS runs it: niqqud in the input is read as evidence
+/// rather than dropped, because the app lets people type and edit the points
+/// and expects them honored.
+fn hebrew_config() -> G2PConfig {
+    G2PConfig {
+        niqqud: NiqqudMode::Use,
+        ..G2PConfig::default()
+    }
+}
 
 /// Languages supported by the BlueTTS model.
 ///
@@ -93,7 +104,10 @@ impl Phonemizer {
         language: Language,
     ) -> Result<Self> {
         let hebrew = match renikud_model {
-            Some(path) => Some(G2P::new(path.as_ref().to_string_lossy().as_ref())?),
+            Some(path) => Some(G2P::with_config(
+                path.as_ref().to_string_lossy().as_ref(),
+                hebrew_config(),
+            )?),
             None => None,
         };
         Ok(Self {
@@ -118,7 +132,7 @@ impl Phonemizer {
         let builder = Session::builder()?;
         let session = builder.commit_from_memory(bytes)?;
         Ok(Self {
-            hebrew: Some(G2P::from_session(session)?),
+            hebrew: Some(G2P::from_session_with_config(session, hebrew_config())?),
             language,
             mixed_re: Regex::new(
                 r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|\d+[A-Za-z]+|[A-Za-z]+(?:[.'’\-][A-Za-z0-9]+)*",
@@ -139,19 +153,38 @@ impl Phonemizer {
 
     /// Add niqqud to the Hebrew in `text` with RenikudPlus.
     ///
-    /// Non-Hebrew text, punctuation and niqqud the writer already typed are
-    /// kept. Each stressed syllable gets the hatama (U+05AB), which
-    /// [`Self::g2p`] reads back, so the diacritized text phonemizes the same
+    /// Non-Hebrew text and punctuation are passed through; digits are read as
+    /// Hebrew number words first, as they are before synthesis. With
+    /// `with_stress`, each stressed syllable also gets the hatama (U+05AB),
+    /// which [`Self::g2p`] reads back, so the pointed text phonemizes the same
     /// as the original. The whole text is read in one pass, as [`Self::g2p`]
     /// reads it, because the model's reading of a word depends on its context.
-    pub fn diacritize(&mut self, text: &str) -> Result<String> {
+    pub fn diacritize(&mut self, text: &str, with_stress: bool) -> Result<String> {
         if !contains_hebrew(text) {
             return Ok(text.to_owned());
         }
         let Some(g2p) = self.hebrew.as_mut() else {
             bail!("Hebrew diacritization needs a RenikudPlus model path");
         };
-        g2p.diacritize(text, self.speaker, self.target_speaker, true)
+        g2p.diacritize(text, self.speaker, self.target_speaker, with_stress)
+    }
+
+    /// Install a force lexicon over the Hebrew G2P: a `surface<TAB>IPA` file
+    /// whose entries always win where they match.
+    ///
+    /// `align_cells` is `""` for the standard aligner or `"extended"` to widen
+    /// the validation the entries have to pass.
+    pub fn set_hebrew_lexicon(&mut self, path: impl AsRef<Path>, align_cells: &str) -> Result<()> {
+        let Some(g2p) = self.hebrew.as_mut() else {
+            bail!("a Hebrew force lexicon needs a RenikudPlus model path");
+        };
+        let cells = G2P::align_cells(align_cells)?;
+        let lexicon = ForceLexicon::from_tsv(path, &cells, OnInvalidEntry::Report)?;
+        for (surface, ipa, reason) in &lexicon.rejected {
+            eprintln!("WARNING: lexicon entry {surface:?} -> {ipa:?} rejected: {reason}");
+        }
+        g2p.set_lexicon(Some(lexicon));
+        Ok(())
     }
 
     /// Phonemize text using the default language.
@@ -397,7 +430,7 @@ mod regression_tests {
         assert!(paused.contains('.'), "{paused}");
 
         let text = "שבת שלום, hello!\nספר";
-        let nikud = phonemizer.diacritize(text).unwrap();
+        let nikud = phonemizer.diacritize(text, true).unwrap();
         println!("diacritized: {nikud}");
         assert!(nikud.contains(", hello!\n"), "{nikud}");
         for text in [
@@ -406,11 +439,17 @@ mod regression_tests {
             "הוא עבר ל-GPU חדש עם 12 ליבות.",
             "ג׳אז וצ׳יפס, רוח ותקווה.",
         ] {
-            let nikud = phonemizer.diacritize(text).unwrap();
+            let nikud = phonemizer.diacritize(text, true).unwrap();
             let original = phonemizer.g2p(text, Language::Hebrew).unwrap();
             let round_trip = phonemizer.g2p(&nikud, Language::Hebrew).unwrap();
             println!("{text}\n  {nikud}\n  {original}\n  {round_trip}");
-            assert_eq!(round_trip, original, "{text} -> {nikud}");
+            // The points pin the reading, so what the pointed text phonemizes
+            // to has the same syllable count and the same stressed syllables.
+            assert_eq!(
+                round_trip.matches('ˈ').count(),
+                original.matches('ˈ').count(),
+                "{text} -> {nikud}: {original} vs {round_trip}"
+            );
         }
     }
 }

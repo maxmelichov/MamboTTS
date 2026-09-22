@@ -109,6 +109,26 @@ pub struct PhonemizeBody {
     pub language: String,
 }
 
+/// Diacritization only ever applies to Hebrew, so unlike [`PhonemizeBody`]
+/// this one has no language: a `language` field in the request is accepted and
+/// ignored, which is what the desktop sends.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct DiacritizeBody {
+    pub input: String,
+    /// Mark the stressed syllable of every word with the hatama (U+05AB).
+    ///
+    /// Niqqud has no stress mark of its own, so without this the pointed text
+    /// cannot say where the stress falls, and phonemizing it back gives the
+    /// model a second, independent guess. Defaults to true, which is what the
+    /// desktop's Phoneme editor round-trips through.
+    #[serde(default = "default_stress")]
+    pub stress: bool,
+}
+
+fn default_stress() -> bool {
+    true
+}
+
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PhonemizeResponse {
     pub phonemes: String,
