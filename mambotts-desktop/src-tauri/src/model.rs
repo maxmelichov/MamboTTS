@@ -239,15 +239,25 @@ async fn download_runtime_bundle(
         known_sum.max(estimated)
     });
     let mut downloaded = 0_u64;
-    for file in source.files {
+    for (file, remote_len) in source.files.iter().zip(totals.iter()) {
         let destination = dir.join(&file.name);
         // A file only gets its real name once it has downloaded completely
-        // (it is written as `.part` first), so one that exists is done. Keeping
-        // it means a retry after a dropped connection picks up where it left
-        // off instead of fetching the whole 1.4 GB bundle again. This matches
-        // the installed check above, which also goes by file presence.
+        // (it is written as `.part` first), so a retry after a dropped
+        // connection can keep what already finished instead of fetching the
+        // whole bundle again.
+        //
+        // Presence alone is not enough, though. A model can be republished
+        // under the same name, and renikud-plus.onnx has been: installs hold
+        // an older export than the one the server now serves, at a different
+        // size. Keeping any file that exists would leave those installs on the
+        // old model for good. So a file is kept only when it matches the size the server
+        // reports. When the server gives no size there is nothing to compare,
+        // and the file is kept, as before.
         if let Ok(metadata) = tokio::fs::metadata(&destination).await {
-            if metadata.is_file() && metadata.len() > 0 {
+            let complete = metadata.is_file()
+                && metadata.len() > 0
+                && remote_len.map_or(true, |expected| expected == metadata.len());
+            if complete {
                 downloaded += metadata.len();
                 continue;
             }

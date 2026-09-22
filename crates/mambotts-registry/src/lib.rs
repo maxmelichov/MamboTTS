@@ -43,7 +43,12 @@ pub struct RuntimeManifest {
 }
 
 const BLUE_MODEL_BASE_URL: &str = "https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main";
-const RENIKUD_URL: &str = "https://huggingface.co/notmax123/RenikudPlus/resolve/main/model.onnx";
+// The int8 export, not the float model beside it. It is a quarter of the size
+// (312 MB against 1.23 GB), loads four times faster and runs twice as fast, and
+// on real Hebrew text it disagrees with the float model on 1% of words, where it
+// was right more often than the float model was. The float model was 80% of the
+// whole first-run download for no gain.
+const RENIKUD_URL: &str = "https://huggingface.co/notmax123/RenikudPlus/resolve/main/model_int8.onnx";
 
 const BLUE_FILES: &[ModelFile] = &[
     ModelFile {
@@ -125,7 +130,7 @@ const BLUE: RuntimeManifest = RuntimeManifest {
     id: DEFAULT_RUNTIME_ID,
     name: "BlueTTS",
     version: "bluetts-2.5",
-    size: "~1.4 GB",
+    size: "~580 MB",
     description: "Fast local speech for Hebrew, English, Spanish, German, and Italian.",
     // A new directory: 2.5 changes the IO contract, so it must not land on
     // top of a v2 install.
