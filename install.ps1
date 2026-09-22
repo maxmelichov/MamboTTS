@@ -12,7 +12,7 @@
 
     Models are not downloaded here. The desktop app fetches them itself the first
     time you open it, through its onboarding screen, into its own application
-    data directory. That is around 1.5 GB and it only happens once. Downloading
+    data directory. That is around 600 MB and it only happens once. Downloading
     them from this script as well would put a second copy of the same gigabyte
     and a half somewhere the app never looks.
 
@@ -106,7 +106,7 @@ $FallbackModelFiles = @(
     @{ name = 'voices/libri_female_6147.json'; url = 'https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main/voices/libri_female_6147.json' },
     @{ name = 'voices/libri_male_6209.json';   url = 'https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main/voices/libri_male_6209.json' },
     @{ name = 'voices/libri_male_8088.json';   url = 'https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main/voices/libri_male_8088.json' },
-    @{ name = 'renikud-plus.onnx';             url = 'https://huggingface.co/notmax123/RenikudPlus/resolve/main/model.onnx' }
+    @{ name = 'renikud-plus.onnx';             url = 'https://huggingface.co/notmax123/RenikudPlus/resolve/main/model_int8.onnx' }
 )
 
 function Assert-Supported {
@@ -416,9 +416,9 @@ function Install-Models {
 
     $modelDir = Join-Path $InstallDir $ModelSubDir
     Write-Step "Downloading the BlueTTS model into $modelDir"
-    # renikud-plus.onnx is 1.23 GB of that on its own; the BlueTTS ONNX files
-    # account for most of the rest.
-    Write-Detail 'This is around 1.5 GB and only happens once.'
+    # renikud-plus.onnx is about 310 MB of that; the BlueTTS ONNX files are
+    # most of the rest.
+    Write-Detail 'This is around 600 MB and only happens once.'
     New-Item -ItemType Directory -Path $modelDir -Force | Out-Null
 
     $index = 0
@@ -521,7 +521,7 @@ function Install-DesktopMode {
     Write-Host ''
     Write-Host 'This downloads the MamboTTS desktop app and runs its installer. The app'
     Write-Host 'downloads its voices and models itself the first time you open it, which'
-    Write-Host 'is around 1.5 GB, so this part is quick.'
+    Write-Host 'is around 600 MB, so this part is quick.'
     Write-Host ''
     Write-Host 'If you only want the HTTP API and no window, run this again with -Server.'
     Write-Host ''
@@ -549,7 +549,7 @@ function Install-DesktopMode {
     }
     Write-Host ''
     Write-Host 'The first launch opens an onboarding screen that downloads the BlueTTS'
-    Write-Host 'model and the Hebrew phonemizer, around 1.5 GB, into the app data folder.'
+    Write-Host 'model and the Hebrew phonemizer, around 600 MB, into the app data folder.'
     Write-Host 'Leave it running until it finishes; after that it starts straight up.'
     Write-Host ''
     Write-Host 'To remove it later: Settings, Installed apps, MamboTTS.'
