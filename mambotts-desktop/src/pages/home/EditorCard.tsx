@@ -39,9 +39,11 @@ const hebrewPhonemeGroups = [
 const diacriticGroups = [
   { label: "Vowels", marks: [["ְ", "Sheva"], ["ֱ", "Hataf Segol"], ["ֲ", "Hataf Patah"], ["ֳ", "Hataf Qamats"], ["ִ", "Hiriq"], ["ֵ", "Tsere"], ["ֶ", "Segol"], ["ַ", "Patah"], ["ָ", "Qamats"], ["ֹ", "Holam"], ["ֻ", "Qubuts"], ["ׇ", "Qamats Qatan"]] },
   { label: "Letter marks", marks: [["ּ", "Dagesh"], ["ֿ", "Rafe"], ["ׁ", "Shin dot"], ["ׂ", "Sin dot"]] },
-  { label: "Pronunciation", marks: [["ֽ", "Meteg"], ["֫", "Hatama"]] },
+  { label: "Pronunciation", marks: [["ֽ", "Meteg"], ["\u05ab", "Hatama (stress)"]] },
 ] as const;
 
+/** RenikudPlus marks the stressed letter with the accent ole (U+05AB) and reads one per word back as the stress. */
+const HATAMA = "\u05ab";
 const vowelMarks = new Set<string>(diacriticGroups[0].marks.map(([mark]) => mark));
 const hebrewLetter = /[\u05d0-\u05ea]/;
 const hebrewMark = /[\u0591-\u05c7]/;
@@ -203,12 +205,34 @@ export function EditorCard({
       .filter((current) => !(isVowel && vowelMarks.has(current)));
     if (!hasMark) nextMarks.push(mark);
     chars.splice(selectedLetter + 1, end - selectedLetter - 1, ...nextMarks);
+    if (mark === HATAMA && !hasMark) {
+      // A word has one stress, and RenikudPlus keeps only the last hatama it
+      // finds in a word, so moving the stress has to take it off the letter
+      // that had it. Words are whitespace-delimited, as they are for the model.
+      let wordStart = selectedLetter;
+      while (wordStart > 0 && !/\s/.test(chars[wordStart - 1])) wordStart -= 1;
+      let wordEnd = selectedLetter;
+      while (wordEnd < chars.length && !/\s/.test(chars[wordEnd])) wordEnd += 1;
+      const keep = selectedLetter + 1 + nextMarks.indexOf(HATAMA);
+      let removedBefore = 0;
+      for (let index = wordEnd - 1; index >= wordStart; index -= 1) {
+        if (chars[index] !== HATAMA || index === keep) continue;
+        chars.splice(index, 1);
+        if (index < selectedLetter) removedBefore += 1;
+      }
+      // Dropping a hatama earlier in the word moves the selected letter left.
+      setDiacritics(chars.join(""));
+      setSelectedLetter(selectedLetter - removedBefore);
+      return;
+    }
     setDiacritics(chars.join(""));
     setSelectedLetter(selectedLetter);
   }
 
   const selectedCharacter = selectedLetter === null ? "" : Array.from(diacritics)[selectedLetter] ?? "";
   const diacriticLetters = hebrewLetterClusters(diacritics);
+  const selectedCluster = diacriticLetters.find((cluster) => "start" in cluster && cluster.start === selectedLetter)?.value ?? selectedCharacter;
+  const selectedMarks = new Set(Array.from(selectedCluster).slice(1));
   const diacriticWords = groupHebrewWords(diacriticLetters);
 
   const tabs: Array<{ id: EditorTab; label: string }> = [
@@ -291,20 +315,23 @@ export function EditorCard({
                 {diacriticWords.map((word, wordIndex) => (
                   <div key={wordIndex} className="flex items-center rounded-lg border border-border/20 bg-white p-1 shadow-sm">
                     {word.map((cluster, index) => "start" in cluster ? (
-                      <button key={`${cluster.start}-${index}`} type="button" onClick={() => setSelectedLetter(cluster.start)} className={cn("grid h-11 min-w-9 place-items-center rounded-md px-1.5 text-2xl transition-colors", selectedLetter === cluster.start ? "bg-primary text-white" : "text-primary hover:bg-primary/10")}>{cluster.value}</button>
+                      <button key={`${cluster.start}-${index}`} type="button" onClick={() => setSelectedLetter(cluster.start)} title={cluster.value.includes(HATAMA) ? "Stressed" : undefined} className={cn("relative grid h-11 min-w-9 place-items-center rounded-md px-1.5 text-2xl transition-colors", selectedLetter === cluster.start ? "bg-primary text-white" : "text-primary hover:bg-primary/10")}>
+                        {cluster.value}
+                        {cluster.value.includes(HATAMA) && <span aria-hidden className={cn("absolute inset-x-2 bottom-1 h-0.5 rounded-full", selectedLetter === cluster.start ? "bg-white/70" : "bg-amber-500")} />}
+                      </button>
                     ) : <span key={`symbol-${index}`} className="px-0.5 text-xl text-secondary/50">{cluster.value}</span>)}
                   </div>
                 ))}
               </div>
               {selectedCharacter && (
                 <div className="space-y-3 rounded-lg border border-border/20 bg-background/20 p-3">
-                  <p className="text-sm font-semibold text-primary">Editing <span className="text-2xl">{selectedCharacter}</span></p>
+                  <p className="text-sm font-semibold text-primary">Editing <span dir="rtl" className="text-2xl">{selectedCluster}</span>{selectedMarks.has(HATAMA) && <span className="ms-2 text-xs font-normal text-amber-600">stressed</span>}</p>
                   {diacriticGroups.map((group, groupIndex) => (
                     <div key={group.label}>
                       <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-secondary/45">{group.label}</p>
                       <div className="flex flex-wrap gap-2">
                         {group.marks.map(([mark, name]) => (
-                          <button key={mark} type="button" title={name} onClick={() => changeDiacritic(mark, groupIndex === 0)} disabled={busy} className="flex h-12 items-center gap-2 rounded-md border border-border/30 bg-white px-3 text-primary transition-colors hover:border-primary hover:bg-primary hover:text-white disabled:opacity-50">
+                          <button key={mark} type="button" title={selectedMarks.has(mark) ? `Remove ${name}` : name} aria-pressed={selectedMarks.has(mark)} onClick={() => changeDiacritic(mark, groupIndex === 0)} disabled={busy} className={cn("flex h-12 items-center gap-2 rounded-md border px-3 transition-colors hover:border-primary hover:bg-primary hover:text-white disabled:opacity-50", selectedMarks.has(mark) ? "border-primary bg-primary/10 text-primary" : "border-border/30 bg-white text-primary")}>
                             <span className="text-xl">{selectedCharacter}{mark}</span><span className="text-[10px] opacity-55">{name}</span>
                           </button>
                         ))}
