@@ -477,7 +477,11 @@ export function EditorCard({
           {busy ? (
             // While a take is generating the same slot becomes Stop, so a long
             // document started by mistake can be abandoned without quitting.
-            <Button variant="outline" onClick={stopVoice} disabled={stopping} title="Stop generating" className="h-12 px-8 text-sm">
+            // It keeps Generate's dark fill on purpose: the pointer is still
+            // resting on this slot from the click, and the pointing hand is
+            // white, so a white button here made the cursor all but vanish
+            // for the whole generation.
+            <Button onClick={stopVoice} disabled={stopping} title="Stop generating" className="h-12 px-8 text-sm shadow-xl shadow-primary/5">
               <span className="flex items-center gap-2">
                 {stopping ? <Loader2 className="h-4 w-4 animate-spin" /> : <Square className="h-3.5 w-3.5 fill-current" />}
                 {stopping ? "Stopping..." : "Stop"}
