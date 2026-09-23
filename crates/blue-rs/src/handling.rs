@@ -3,6 +3,8 @@
 //! Niqqud the writer typed is kept through normalization; RenikudPlus reads it
 //! directly during G2P.
 
+use std::sync::OnceLock;
+
 use regex::{Captures, Regex};
 
 use crate::hebrew_numbers::normalize_hebrew_numbers;
@@ -168,6 +170,7 @@ pub fn prepare_text_for_synthesis(text: &str, lang: &str) -> String {
         text = expand_letter_labels(&text);
         text = expand_geresh_loanwords(&text);
         text = expand_dialogue_quotes(&text);
+        text = expand_prefixes_before_latin(&text);
         text = expand_lamed_before_latin(&text);
     }
     text = expand_alphanumeric_codes(&text, &lang);
@@ -315,8 +318,47 @@ fn expand_dialogue_quotes(text: &str) -> String {
     closing.replace_all(&text, "$1, ").into_owned()
 }
 
+/// Prefix letters hyphenated onto a Latin word (ה-PDF, מה-PDF, ל-Google),
+/// pointed so the model reads the prefix and not a word spelled the same
+/// (מה as "ma"). The Latin word already carries the article in speech, so
+/// ב, ל and כ take the definite patah the way they are said aloud.
+fn expand_prefixes_before_latin(text: &str) -> String {
+    static PREFIX: OnceLock<Regex> = OnceLock::new();
+    let prefix = PREFIX.get_or_init(|| {
+        Regex::new(
+            r"(^|[^\p{L}\p{M}\p{N}])((?:[\u{05d0}-\u{05ea}][\u{0591}-\u{05C7}]*){1,2})[-\u{2010}\u{2011}\u{2013}\u{05be}]?([A-Za-z])",
+        )
+        .expect("valid prefix regex")
+    });
+    prefix
+        .replace_all(text, |caps: &Captures| {
+            let pointed = match strip_nikud(&caps[2]).as_str() {
+                "ה" => "הַ",
+                "ב" => "בַּ",
+                "ל" => "לַ",
+                "כ" => "כַּ",
+                "מ" => "מִ",
+                "ו" => "וְ",
+                "ש" => "שֶׁ",
+                // The mapiq keeps the final ה sounded: bare, it reads "mea".
+                "מה" => "מֵהַּ",
+                "וה" => "וְהַ",
+                "שה" => "שֶׁהַ",
+                "וב" => "וּבַ",
+                "ול" => "וְלַ",
+                "ומ" => "וּמִ",
+                "וש" => "וְשֶׁ",
+                "שב" => "שֶׁבַּ",
+                _ => return caps[0].to_owned(),
+            };
+            format!("{}{pointed} {}", &caps[1], &caps[3])
+        })
+        .into_owned()
+}
+
 fn expand_lamed_before_latin(text: &str) -> String {
-    Regex::new(r"(?u)(^|[^\u{0590}-\u{05ff}])ל[\u{0591}-\u{05C7}]*\s*[-–—‑]?\s*([A-Za-z0-9])")
+    // A pointed ל was already read as a prefix by expand_prefixes_before_latin.
+    Regex::new(r"(?u)(^|[^\u{0590}-\u{05ff}])ל\s*[-\u{2013}\u{2014}\u{2011}]?\s*([A-Za-z0-9])")
         .expect("valid regex")
         .replace_all(text, "$1אל $2")
         .into_owned()
@@ -882,6 +924,27 @@ mod tests {
     }
 
     #[test]
+    fn prefixes_hyphenated_onto_latin_words_are_pointed() {
+        for (text, expected) in [
+            ("פרטים מה-PDF המצורף", "פרטים מֵהַּ PDF המצורף"),
+            ("ה-PDF", "הַ PDF"),
+            ("ל-Google", "לַ Google"),
+            ("לַ-Google", "לַ Google"),
+            ("וה-API, שה-GPU", "וְהַ API, שֶׁהַ GPU"),
+            ("מ-Google וב-Apple", "מִ Google וּבַ Apple"),
+            ("עבר ל-GPU", "עבר לַ GPU"),
+        ] {
+            assert_eq!(prepare_text_for_synthesis(text, "he"), expected, "{text}");
+        }
+        // Not a prefix: a whole word before the hyphen, Hebrew after it, or a
+        // letter pair that is no prefix cluster.
+        assert_eq!(expand_prefixes_before_latin("בית-ספר"), "בית-ספר");
+        assert_eq!(expand_prefixes_before_latin("מה-שלום"), "מה-שלום");
+        assert_eq!(expand_prefixes_before_latin("גם-PDF"), "גם-PDF");
+        assert_eq!(expand_prefixes_before_latin("שלום-PDF"), "שלום-PDF");
+    }
+
+    #[test]
     fn normalization_keeps_typed_nikud() {
         let text = normalize_for_speech("הַמְּנוֹרָה מאירה.");
         assert!(contains_nikud(&text));
@@ -924,7 +987,7 @@ mod tests {
             "he",
         );
         assert!(text.contains("<en>Gemini</en>"));
-        assert!(text.contains("אל GPU"));
+        assert!(text.contains("לַ GPU"));
         assert!(text.contains(REF_CODE_MARK_OPEN));
         assert!(text.contains("אחוז"));
     }
