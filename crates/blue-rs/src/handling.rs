@@ -777,15 +777,47 @@ fn normalize_hebrew_punctuation(text: &str) -> String {
             output.push('׳');
             continue;
         }
-        if character == '-'
+        // A hyphen or maqaf between Hebrew words joins a compound (בית-ספר,
+        // תל-אביב) whose parts are still said as separate words. Only a prefix
+        // hyphenated onto its word (ו-ירושלים) is one word.
+        if matches!(character, '-' | '\u{05be}')
             && previous.is_some_and(is_hebrew_letter)
             && next.is_some_and(is_hebrew_letter)
         {
+            if !is_hyphenated_prefix(&chars[..index]) {
+                output.push(' ');
+            }
             continue;
         }
         output.push(character);
     }
     output
+}
+
+/// Whether the word that `before` ends with is a bare prefix (ו, ה, ב, ל,
+/// כ, מ, ש, or a cluster such as וה or שה) rather than a word of its own.
+fn is_hyphenated_prefix(before: &[char]) -> bool {
+    let start = before
+        .iter()
+        .rposition(|&c| !is_hebrew_letter(c) && !is_nikud(c))
+        .map_or(0, |i| i + 1);
+    let word: String = before[start..].iter().filter(|&&c| !is_nikud(c)).collect();
+    matches!(
+        word.as_str(),
+        "ו" | "ה"
+            | "ב"
+            | "ל"
+            | "כ"
+            | "מ"
+            | "ש"
+            | "וה"
+            | "שה"
+            | "וב"
+            | "ול"
+            | "ומ"
+            | "וש"
+            | "וכ"
+    )
 }
 
 fn normalize_punctuation(text: &str) -> String {
@@ -1148,6 +1180,32 @@ mod tests {
         assert_eq!(expand_prefixes_before_latin("מה-שלום"), "מה-שלום");
         assert_eq!(expand_prefixes_before_latin("גם-PDF"), "גם-PDF");
         assert_eq!(expand_prefixes_before_latin("שלום-PDF"), "שלום-PDF");
+    }
+
+    #[test]
+    fn hebrew_compounds_split_at_the_hyphen_but_prefixes_stay_on() {
+        for (text, expected) in [
+            ("בית-ספר", "בית ספר"),
+            ("בית\u{05be}ספר", "בית ספר"),
+            ("תל-אביב", "תל אביב"),
+            ("ראש-הממשלה", "ראש הממשלה"),
+            ("אי-אפשר", "אי אפשר"),
+            ("בֵּית-סֵפֶר", "בֵּית סֵפֶר"),
+            ("ו-ירושלים", "וירושלים"),
+            ("וְ-ירושלים", "וְירושלים"),
+            ("ה-מדינה", "המדינה"),
+            ("וה-מדינה", "והמדינה"),
+        ] {
+            assert_eq!(normalize_hebrew_punctuation(text), expected, "{text}");
+        }
+        for (text, expected) in [
+            ("למד בבית-ספר גדול.", "למד בבית ספר גדול."),
+            ("ו-ירושלים", "וירושלים"),
+            ("ב-PDF", "בַּ PDF"),
+        ] {
+            assert_eq!(prepare_text_for_synthesis(text, "he"), expected, "{text}");
+        }
+        assert!(!prepare_text_for_synthesis("ב-2011", "he").contains('-'));
     }
 
     #[test]
