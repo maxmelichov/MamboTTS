@@ -321,25 +321,7 @@ impl Phonemizer {
     }
 
     fn wrap_segments(&self, segments: Vec<(Language, String)>) -> String {
-        let mut result = String::new();
-        let mut previous = None;
-        for (language, ipa) in segments {
-            if let Some(previous) = previous {
-                if previous != language {
-                    result.push_str(" , ");
-                } else if !result.is_empty() {
-                    result.push(' ');
-                }
-            }
-            result.push_str(&format!(
-                "<{}>{}</{}>",
-                language.code(),
-                ipa.trim(),
-                language.code()
-            ));
-            previous = Some(language);
-        }
-        normalize_spaces(&result)
+        wrap_segments(segments)
     }
 
     fn phonemize_espeak(&self, text: &str, language: Language) -> Result<String> {
@@ -367,6 +349,43 @@ impl Phonemizer {
 pub fn phonemize(text: &str, renikud_model: Option<impl AsRef<Path>>) -> Result<String> {
     let mut phonemizer = Phonemizer::new(renikud_model)?;
     phonemizer.phonemize(text)
+}
+
+/// Join language segments into one tagged string. A change of language is
+/// only a word break: the text's own punctuation is the only pause, so a
+/// segment that starts with punctuation, or is nothing but punctuation (the
+/// period after a Latin word), attaches to what came before it.
+fn wrap_segments(segments: Vec<(Language, String)>) -> String {
+    let mut merged: Vec<(Language, String)> = Vec::new();
+    for (language, ipa) in segments {
+        let ipa = normalize_spaces(&ipa);
+        if ipa.is_empty() {
+            continue;
+        }
+        match merged.last_mut() {
+            Some(last) if !ipa.chars().any(char::is_alphanumeric) => last.1.push_str(&ipa),
+            Some(last) if last.0 == language => {
+                if !starts_with_punctuation(&ipa) {
+                    last.1.push(' ');
+                }
+                last.1.push_str(&ipa);
+            }
+            _ => merged.push((language, ipa)),
+        }
+    }
+    let mut result = String::new();
+    for (language, ipa) in merged {
+        if !result.is_empty() && !starts_with_punctuation(&ipa) {
+            result.push(' ');
+        }
+        let code = language.code();
+        result.push_str(&format!("<{code}>{ipa}</{code}>"));
+    }
+    result
+}
+
+fn starts_with_punctuation(text: &str) -> bool {
+    text.starts_with(['.', ',', '!', '?', ';', ':', ')', ']', '}'])
 }
 
 fn contains_hebrew(text: &str) -> bool {
@@ -414,6 +433,42 @@ fn email_to_spoken_english(email: &str) -> String {
 #[cfg(test)]
 mod espeak_tests {
     use super::*;
+
+    /// A change of language is a word break, not a pause: no comma between
+    /// segments, and a trailing period attaches to the last word.
+    #[test]
+    fn joins_language_segments_with_a_space() {
+        let he = |ipa: &str| (Language::Hebrew, ipa.to_owned());
+        let en = |ipa: &str| (Language::English, ipa.to_owned());
+        for (segments, expected) in [
+            (
+                vec![he("pʁatˈim mˈeha"), en("pˌiːdˌiːˈɛf"), he("hametsuʁˈaf.")],
+                "<he>pʁatˈim mˈeha</he> <en>pˌiːdˌiːˈɛf</en> <he>hametsuʁˈaf.</he>",
+            ),
+            (
+                vec![he("kitˈa ʔˈalef, mˈeha"), en("pˌiːdˌiːˈɛf"), he(".")],
+                "<he>kitˈa ʔˈalef, mˈeha</he> <en>pˌiːdˌiːˈɛf.</en>",
+            ),
+            (
+                vec![en("pˌiːdˌiːˈɛf"), he(", ʃalˈom")],
+                "<en>pˌiːdˌiːˈɛf</en><he>, ʃalˈom</he>",
+            ),
+            (vec![he("ʃalˈom"), he(" ʔolˈam ")], "<he>ʃalˈom ʔolˈam</he>"),
+        ] {
+            assert_eq!(wrap_segments(segments), expected);
+        }
+    }
+
+    #[test]
+    fn mixed_latin_and_punctuation_have_no_stray_commas() {
+        // Without a Hebrew model the Hebrew segments pass through as-is, which
+        // is enough to see how Latin segments and punctuation are joined.
+        let mut phonemizer = Phonemizer::with_language(None::<&str>, Language::English).unwrap();
+        let ipa = phonemizer
+            .phonemize_prepared("hello PDF, world.", Language::Hebrew)
+            .unwrap();
+        assert_eq!(ipa, "<en>həlˈoʊ pˌiːdˌiːˈɛf, wˈɜːld.</en>");
+    }
 
     /// Issue #12: eSpeak-backed languages came back as one run-on token, with
     /// no word breaks and no punctuation for the model to pause on.
