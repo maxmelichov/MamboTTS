@@ -80,7 +80,7 @@ $TagPrefix = 'mambotts-desktop-'
 # Used when the GitHub API cannot be reached, which is common enough from a
 # shared address that a hard failure would be the wrong default. Keep this in
 # step with the newest published desktop release.
-$FallbackVersion = '1.3.6'
+$FallbackVersion = '1.3.7'
 $ModelSubDir = 'models\bluetts-2.5'
 
 function Write-Step { param([string] $Message) Write-Host "==> $Message" -ForegroundColor Cyan }
