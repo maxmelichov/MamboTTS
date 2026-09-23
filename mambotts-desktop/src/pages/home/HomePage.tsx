@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { useNavigate } from "react-router-dom";
-import type { EditorInputSource, EditorLayer, ModelBundle, RunnerInfo, StudioState } from "../../lib/types";
+import type { EditorInputSource, ModelBundle, RunnerInfo, StudioState } from "../../lib/types";
 import { AppFrame } from "../../components/AppFrame";
 import { CreateStatus } from "../../components/CreateStatus";
 import { ErrorBlock } from "../../components/ui";
@@ -12,26 +12,33 @@ import { StudioHeader } from "../../components/WorkspaceHeader";
 import { EditorCard } from "./EditorCard";
 import { VoiceSettings } from "./VoiceSettings";
 
-const layerStorageKeys: Record<EditorLayer, string> = {
-  diacritics: "editor-layer-diacritics",
-  phonemes: "editor-layer-phonemes",
-};
+const PRONUNCIATION_KEY = "editor-pronunciation";
+/** The two per-layer switches this one setting replaced. */
+const RETIRED_LAYER_KEYS = ["editor-layer-diacritics", "editor-layer-phonemes"];
 
-/** The optional editor layers stay off until someone turns them on, then stay as they were left. */
-function readLayerEnabled(layer: EditorLayer): boolean {
+/**
+ * The pronunciation layers (Niqqud and IPA) stay off until someone turns them
+ * on, then stay as they were left. Someone who had either of the old separate
+ * switches on finds the combined one on.
+ */
+function readPronunciationEnabled(): boolean {
   try {
-    return localStorage.getItem(layerStorageKeys[layer]) === "on";
+    const stored = localStorage.getItem(PRONUNCIATION_KEY);
+    if (stored !== null) return stored === "on";
+    const migrated = RETIRED_LAYER_KEYS.some((key) => localStorage.getItem(key) === "on");
+    storePronunciationEnabled(migrated);
+    return migrated;
   } catch {
     return false;
   }
 }
 
-function storeLayerEnabled(layer: EditorLayer, enabled: boolean) {
+function storePronunciationEnabled(enabled: boolean) {
   try {
-    if (enabled) localStorage.setItem(layerStorageKeys[layer], "on");
-    else localStorage.removeItem(layerStorageKeys[layer]);
+    localStorage.setItem(PRONUNCIATION_KEY, enabled ? "on" : "off");
+    RETIRED_LAYER_KEYS.forEach((key) => localStorage.removeItem(key));
   } catch {
-    // Storage can be unavailable; the toggle still applies for this session.
+    // Storage can be unavailable; the switch still applies for this session.
   }
 }
 
@@ -62,13 +69,10 @@ export function HomePage({ bundle, setBundle, studio, setStudio }: HomePageProps
   const navigate = useNavigate();
   const { text, phonemes, diacritics, diacriticsSource, languages, language, blueVoice, blueVoiceIds, speaker, targetSpeaker, speed, audioPath, streamChunkUrls, generation, audioAutoplayPending, step, status, busy, error } = studio;
   const loadingLanguagesRef = useRef(false);
-  const [layers, setLayers] = useState<Record<EditorLayer, boolean>>(() => ({
-    diacritics: readLayerEnabled("diacritics"),
-    phonemes: readLayerEnabled("phonemes"),
-  }));
-  function setLayerEnabled(layer: EditorLayer, enabled: boolean) {
-    storeLayerEnabled(layer, enabled);
-    setLayers((current) => ({ ...current, [layer]: enabled }));
+  const [pronunciationEnabled, setPronunciationState] = useState(readPronunciationEnabled);
+  function setPronunciationEnabled(enabled: boolean) {
+    storePronunciationEnabled(enabled);
+    setPronunciationState(enabled);
   }
   const [stopping, setStopping] = useState(false);
   // The take in flight: its cancel id, whether Stop was pressed, and whether
@@ -89,10 +93,10 @@ export function HomePage({ bundle, setBundle, studio, setStudio }: HomePageProps
   );
   const updateStudio = (patch: Partial<StudioState>) => setStudio((current) => ({ ...current, ...patch }));
   const isHebrew = language === "he" || (language === "auto" && /[֐-׿]/.test(text));
-  // Diacritics and Phonemes are opt-in layers. A layer that is switched off
-  // keeps its content for when it comes back, but is never spoken.
-  const diacriticsEnabled = layers.diacritics && isHebrew;
-  const phonemesEnabled = layers.phonemes;
+  // Niqqud and IPA are opt-in layers behind one switch. Switched off, they
+  // keep their content for when they come back, but are never spoken.
+  const diacriticsEnabled = pronunciationEnabled && isHebrew;
+  const phonemesEnabled = pronunciationEnabled;
   // Vocalized text only counts while it still matches the plain text it came
   // from; after the text is edited it is kept for reference but not spoken.
   const diacriticsStale = Boolean(diacritics) && diacriticsSource !== text;
@@ -183,21 +187,28 @@ export function HomePage({ bundle, setBundle, studio, setStudio }: HomePageProps
     });
   }
 
-  async function convertToPhonemes() {
+  /**
+   * IPA derives from the vocalized Hebrew when there is some, so the niqqud
+   * edits carry through. `freshVocalized` is niqqud produced in the same step,
+   * which this render's state has not caught up with yet.
+   */
+  async function convertToPhonemes(freshVocalized?: string) {
     if (!text.trim()) return;
     await ensureModelLoaded();
     const output = await invoke<string>("phonemize", {
-      request: { input: vocalized || text, language },
+      request: { input: freshVocalized || vocalized || text, language },
     });
     updateStudio({ phonemes: output });
   }
 
-  async function addDiacritics() {
-    if (!text.trim()) return;
+  /** Vocalizes the text and resolves with the vocalized version. */
+  async function addDiacritics(): Promise<string> {
+    if (!text.trim()) return "";
     await ensureModelLoaded();
     const source = text;
     const output = await invoke<string>("diacritize", { request: { input: source, language: "he" } });
     updateStudio({ diacritics: output, diacriticsSource: source, phonemes: "" });
+    return output;
   }
 
   async function createVoice() {
@@ -370,9 +381,8 @@ export function HomePage({ bundle, setBundle, studio, setStudio }: HomePageProps
               setText={(nextText) => updateStudio({ text: nextText, phonemes: "" })}
               language={language}
               isHebrew={isHebrew}
-              diacriticsEnabled={diacriticsEnabled}
-              phonemesEnabled={phonemesEnabled}
-              setLayerEnabled={setLayerEnabled}
+              pronunciationEnabled={pronunciationEnabled}
+              setPronunciationEnabled={setPronunciationEnabled}
               inputSource={inputSource}
               synthesisInput={synthesisInput}
               diacritics={diacritics}

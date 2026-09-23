@@ -1,7 +1,7 @@
-import { Loader2, Play, Sparkles, Square, X } from "lucide-react";
+import { Loader2, Play, RotateCw, Square, X } from "lucide-react";
 import { useRef, useState, type KeyboardEvent } from "react";
 import { cn } from "../../lib/classNames";
-import type { EditorInputSource, EditorLayer } from "../../lib/types";
+import type { EditorInputSource } from "../../lib/types";
 import { Button, Card } from "../../components/ui";
 import { GenerationControls } from "./GenerationControls";
 
@@ -85,11 +85,13 @@ function groupHebrewWords(clusters: ReturnType<typeof hebrewLetterClusters>) {
 
 type EditorTab = "text" | "diacritics" | "phonemes";
 
-const sourceLabels: Record<EditorInputSource, string> = {
-  text: "Plain text",
-  diacritics: "Vocalized Hebrew",
-  phonemes: "IPA input",
-};
+/** The tiny uppercase label style the tabs use, shared by everything quiet in the editor chrome. */
+const chromeLabel = "text-[10px] font-bold uppercase tracking-[0.16em]";
+const groupLabel = "text-[10px] font-bold uppercase tracking-[0.16em] text-secondary/40";
+/** A compact key in the Niqqud and IPA palettes. */
+const keycap = "grid h-8 min-w-8 place-items-center rounded-md border px-2 text-primary transition-colors disabled:opacity-50";
+/** The full-bleed editing surface every tab shares. */
+const surface = "w-full resize-none bg-white p-8 text-start text-lg font-medium leading-relaxed text-primary outline-none placeholder:text-secondary/20";
 
 type EditorCardProps = {
   blueVoice: string;
@@ -102,10 +104,9 @@ type EditorCardProps = {
   setText: (text: string) => void;
   language: string;
   isHebrew: boolean;
-  /** Whether each optional layer is switched on (Diacritics is only ever on for Hebrew). */
-  diacriticsEnabled: boolean;
-  phonemesEnabled: boolean;
-  setLayerEnabled: (layer: EditorLayer, enabled: boolean) => void;
+  /** The one switch behind both pronunciation layers (Niqqud only exists for Hebrew). */
+  pronunciationEnabled: boolean;
+  setPronunciationEnabled: (enabled: boolean) => void;
   /** The layer Generate will send, and its content. */
   inputSource: EditorInputSource;
   synthesisInput: string;
@@ -114,10 +115,12 @@ type EditorCardProps = {
   diacriticsStale: boolean;
   setDiacritics: (text: string) => void;
   clearDiacritics: () => void;
-  addDiacritics: () => Promise<void>;
+  /** Resolves with the vocalized text. */
+  addDiacritics: () => Promise<string>;
   phonemes: string;
   setPhonemes: (phonemes: string) => void;
-  convertToPhonemes: () => Promise<void>;
+  /** Takes niqqud produced in the same step, before state has caught up with it. */
+  convertToPhonemes: (freshVocalized?: string) => Promise<void>;
   createVoice: () => void;
   /** Stops the generation in progress. */
   stopVoice: () => void;
@@ -130,9 +133,8 @@ export function EditorCard({
   setText,
   language,
   isHebrew,
-  diacriticsEnabled,
-  phonemesEnabled,
-  setLayerEnabled,
+  pronunciationEnabled,
+  setPronunciationEnabled,
   inputSource,
   synthesisInput,
   diacritics,
@@ -152,10 +154,11 @@ export function EditorCard({
   setBlueVoice,
   setSpeed,
 }: EditorCardProps) {
+  const diacriticsEnabled = pronunciationEnabled && isHebrew;
   const [selectedTab, setTab] = useState<EditorTab>("text");
-  // A layer's tab only exists while the layer is on (and Diacritics only for
+  // A layer's tab only exists while the switch is on (and Niqqud only for
   // Hebrew); fall back to the text when the selected one goes away.
-  const tab: EditorTab = (selectedTab === "diacritics" && !diacriticsEnabled) || (selectedTab === "phonemes" && !phonemesEnabled)
+  const tab: EditorTab = (selectedTab === "diacritics" && !diacriticsEnabled) || (selectedTab === "phonemes" && !pronunciationEnabled)
     ? "text"
     : selectedTab;
   const phonemeInput = useRef<HTMLTextAreaElement>(null);
@@ -185,15 +188,22 @@ export function EditorCard({
     });
   }
 
-  async function runConversion(kind: "diacritics" | "phonemes") {
-    setConverting(kind);
+  /**
+   * Fills the given layers from the text. Niqqud goes first, because IPA is
+   * read from the vocalized Hebrew when there is some.
+   */
+  async function runConversion(kinds: Array<"diacritics" | "phonemes">) {
     setEditorError("");
     try {
-      if (kind === "diacritics") {
+      let vocalized: string | undefined;
+      if (kinds.includes("diacritics")) {
+        setConverting("diacritics");
         setSelectedLetter(null);
-        await addDiacritics();
-      } else {
-        await convertToPhonemes();
+        vocalized = await addDiacritics();
+      }
+      if (kinds.includes("phonemes")) {
+        setConverting("phonemes");
+        await convertToPhonemes(vocalized);
       }
     } catch (error) {
       setEditorError(String(error));
@@ -206,16 +216,27 @@ export function EditorCard({
     setEditorError("");
     setTab(next);
   }
-  function toggleLayer(layer: EditorLayer, enabled: boolean) {
-    setLayerEnabled(layer, !enabled);
-    // Opening a layer shows it; closing the one on screen returns to the text.
-    if (!enabled) selectTab(layer);
-    else if (tab === layer) selectTab("text");
-    // A layer is there to correct the reading, so it opens already holding
-    // the model's reading of the text rather than an empty box. One that
-    // still has content (even stale diacritics, which say so) is left alone.
-    const empty = layer === "diacritics" ? !diacritics.trim() : !phonemes.trim();
-    if (!enabled && empty && text.trim()) void runConversion(layer);
+  function togglePronunciation() {
+    const enabled = !pronunciationEnabled;
+    setPronunciationEnabled(enabled);
+    if (!enabled) {
+      // Off returns to the plain text; the layers keep their contents.
+      selectTab("text");
+      return;
+    }
+    selectTab(isHebrew ? "diacritics" : "phonemes");
+    // The layers are there to correct the reading, so they open already
+    // holding the model's reading of the text rather than empty. One that
+    // still has content (even stale niqqud, which says so) is left alone,
+    // except that fresh niqqud clears the IPA, which then follows it.
+    if (!text.trim()) return;
+    const fillDiacritics = isHebrew && !diacritics.trim();
+    const fillPhonemes = fillDiacritics || !phonemes.trim();
+    const kinds = [
+      ...(fillDiacritics ? ["diacritics" as const] : []),
+      ...(fillPhonemes ? ["phonemes" as const] : []),
+    ];
+    if (kinds.length) void runConversion(kinds);
   }
   function changeDiacritic(mark: string, isVowel: boolean) {
     if (selectedLetter === null) return;
@@ -263,16 +284,35 @@ export function EditorCard({
   const tabs: Array<{ id: EditorTab; label: string }> = [
     { id: "text", label: "Text" },
     ...(diacriticsEnabled ? [{ id: "diacritics" as const, label: "Niqqud" }] : []),
-    ...(phonemesEnabled ? [{ id: "phonemes" as const, label: "IPA" }] : []),
+    ...(pronunciationEnabled ? [{ id: "phonemes" as const, label: "IPA" }] : []),
   ];
-  const layerToggles: Array<{ id: EditorLayer; label: string; enabled: boolean; hint: string }> = [
-    ...(isHebrew ? [{ id: "diacritics" as const, label: "Niqqud", enabled: diacriticsEnabled, hint: "the niqqud (vowel points)" }] : []),
-    { id: "phonemes", label: "IPA", enabled: phonemesEnabled, hint: "the IPA phonemes" },
-  ];
+  const switchLabel = isHebrew ? "Niqqud & IPA" : "IPA";
+  const locked = busy || converting !== null;
+
+  /** The slim line under a layer: one quiet hint on the left, small actions on the right. */
+  function layerToolbar(hint: string, onRefresh: () => void, onClear: (() => void) | null, refreshLabel: string, refreshing: boolean) {
+    return (
+      <div className="flex min-h-10 flex-wrap items-center justify-between gap-x-4 gap-y-1 px-8 pb-3">
+        <p className={cn("min-w-0 text-xs", editorError ? "text-red-600" : "text-secondary/50")}>{editorError || hint}</p>
+        <div className="flex shrink-0 items-center gap-1">
+          {onClear && (
+            <Button variant="ghost" onClick={onClear} disabled={locked} className="h-7 gap-1.5 rounded-md px-2.5 text-xs">
+              <X className="h-3.5 w-3.5" />
+              <span className="text-xs">Clear</span>
+            </Button>
+          )}
+          <Button variant="ghost" onClick={onRefresh} disabled={locked || !text.trim()} className="h-7 gap-1.5 rounded-md px-2.5 text-xs">
+            {refreshing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCw className="h-3.5 w-3.5" />}
+            <span className="text-xs">{refreshLabel}</span>
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <Card className="relative overflow-hidden p-0 shadow-xl border-none">
-      <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2 border-b border-border/10 bg-background/10 px-8 pt-5">
+      <div className="flex flex-wrap items-end justify-between gap-x-4 border-b border-border/10 bg-background/10 px-8 pt-5">
         <div role="tablist" aria-label="Editor layer" className="flex items-center gap-2">
           {tabs.map((item) => (
             <button
@@ -282,34 +322,30 @@ export function EditorCard({
               aria-selected={tab === item.id}
               onClick={() => selectTab(item.id)}
               title={inputSource === item.id ? "Generate uses this layer" : undefined}
-              className={cn("flex items-center gap-1.5 border-b-2 px-3 pb-3 text-[10px] font-bold uppercase tracking-[0.16em] transition-colors", tab === item.id ? "border-primary text-primary" : "border-transparent text-secondary/40 hover:text-primary")}
+              className={cn("flex items-center gap-1.5 border-b-2 px-3 pb-3", chromeLabel, "transition-colors", tab === item.id ? "border-primary text-primary" : "border-transparent text-secondary/40 hover:text-primary")}
             >
               {item.label}
               {inputSource === item.id && item.id !== "text" && <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden />}
             </button>
           ))}
         </div>
-        <div role="group" aria-label="Fix pronunciation" className="flex items-center gap-2 pb-2.5">
-          <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-secondary/60">Fix pronunciation</span>
-          {layerToggles.map((layer) => (
-            <button
-              key={layer.id}
-              type="button"
-              role="switch"
-              aria-checked={layer.enabled}
-              onClick={() => toggleLayer(layer.id, layer.enabled)}
-              disabled={busy || converting !== null}
-              title={layer.enabled ? `Turn off ${layer.label} (Generate goes back to the plain text)` : `Edit ${layer.hint} of your text; Generate then speaks your edited version`}
-              className={cn("inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] shadow-sm transition-colors disabled:opacity-50", layer.enabled ? "border-primary bg-white text-primary" : "border-border bg-white text-secondary hover:border-primary/60 hover:text-primary")}
-            >
-              <span aria-hidden className={cn("relative h-3.5 w-6 rounded-full transition-colors", layer.enabled ? "bg-primary" : "bg-secondary/30")}>
-                <span className={cn("absolute top-0.5 h-2.5 w-2.5 rounded-full bg-white transition-all", layer.enabled ? "left-3" : "left-0.5")} />
-              </span>
-              {layer.label}
-              {converting === layer.id && <Loader2 className="h-3 w-3 animate-spin" />}
-            </button>
-          ))}
-        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={pronunciationEnabled}
+          onClick={togglePronunciation}
+          disabled={locked}
+          title={pronunciationEnabled
+            ? `Hide ${switchLabel}; Generate goes back to the plain text`
+            : `Fix the pronunciation by editing the ${isHebrew ? "niqqud and IPA" : "IPA"} of your text`}
+          className={cn("group flex items-center gap-2 pb-3", chromeLabel, "transition-colors disabled:cursor-not-allowed disabled:opacity-50", pronunciationEnabled ? "text-primary" : "text-secondary/40 hover:text-primary")}
+        >
+          {converting && <Loader2 className="h-3 w-3 animate-spin" aria-hidden />}
+          {switchLabel}
+          <span aria-hidden className={cn("relative h-3.5 w-6 rounded-full transition-colors", pronunciationEnabled ? "bg-primary" : "bg-secondary/20 group-hover:bg-secondary/35")}>
+            <span className={cn("absolute top-0.5 h-2.5 w-2.5 rounded-full bg-white transition-all", pronunciationEnabled ? "left-3" : "left-0.5")} />
+          </span>
+        </button>
       </div>
       {tab === "text" ? (
         <textarea
@@ -322,69 +358,71 @@ export function EditorCard({
           lang={isHebrew ? "he" : language === "auto" ? undefined : language}
           onChange={(event) => setText(event.currentTarget.value)}
           disabled={busy}
-          className="min-h-[320px] w-full resize-none bg-white p-8 text-start text-lg font-medium leading-relaxed text-primary outline-none placeholder:text-secondary/20"
+          className={cn(surface, "min-h-[320px]")}
         />
       ) : tab === "diacritics" ? (
-        <div className="bg-white p-8">
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-semibold text-primary">Vocalized Hebrew</p>
-              <p className="text-xs text-secondary/55">RenikudPlus adds niqqud to your text. Edit it freely; the vocalized text is what gets spoken.</p>
-            </div>
-            <div className="flex items-center gap-2">
-              {diacritics && (
-                <Button variant="ghost" onClick={clearDiacritics} disabled={busy || converting !== null} className="h-9 gap-1.5 px-3 text-xs">
-                  <X className="h-3.5 w-3.5" />
-                  Clear
-                </Button>
-              )}
-              <Button variant={diacritics ? "outline" : "primary"} onClick={() => void runConversion("diacritics")} disabled={busy || converting !== null || !text.trim()} className="h-9 gap-1.5 px-3 text-xs">
-                {converting === "diacritics" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
-                {converting === "diacritics" ? "Adding…" : diacritics ? "Refresh from text" : "Add diacritics"}
-              </Button>
-            </div>
-          </div>
-          {diacriticsStale && (
-            <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-              The text changed after these diacritics were added, so Generate uses the plain text. Refresh to vocalize the new text.
-            </p>
-          )}
+        <div className="bg-white">
           <textarea
             value={diacritics}
-            placeholder="Press Add diacritics to vocalize the text…"
+            placeholder={converting === "diacritics" ? "Adding niqqud..." : "Add niqqud from your text to edit it here."}
             onChange={(event) => setDiacritics(event.currentTarget.value)}
             dir={direction ?? "rtl"}
             onKeyDown={changeDirection}
             lang="he"
             disabled={busy || !diacritics}
-            className="min-h-48 w-full resize-y rounded-lg border border-border/50 bg-background/30 p-4 text-lg leading-relaxed text-primary outline-none placeholder:text-sm placeholder:text-secondary/30 focus:border-primary/50"
+            className={cn(surface, "min-h-[200px] pb-4")}
           />
-          {editorError && <p className="mt-3 text-xs text-red-600">{editorError}</p>}
+          {layerToolbar(
+            diacriticsStale
+              ? "The text changed since this niqqud was added, so Generate reads the plain text. Refresh to catch up."
+              : "Edit freely. Generate speaks this vocalized text.",
+            () => void runConversion(["diacritics"]),
+            diacritics ? clearDiacritics : null,
+            diacritics ? "Refresh from text" : "Add from text",
+            converting === "diacritics",
+          )}
           {diacritics && (
-            <div className="mt-5 space-y-3">
-              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-secondary/40">Pick a letter to change its marks</p>
-              <div dir="rtl" className="flex flex-wrap items-center gap-3 rounded-lg border border-border/20 bg-background/20 p-3 leading-loose">
-                {diacriticWords.map((word, wordIndex) => (
-                  <div key={wordIndex} className="flex items-center rounded-lg border border-border/20 bg-white p-1 shadow-sm">
-                    {word.map((cluster, index) => "start" in cluster ? (
-                      <button key={`${cluster.start}-${index}`} type="button" onClick={() => setSelectedLetter(cluster.start)} title={cluster.value.includes(HATAMA) ? "Stressed" : undefined} className={cn("relative grid h-11 min-w-9 place-items-center rounded-md px-1.5 text-2xl transition-colors", selectedLetter === cluster.start ? "bg-primary text-white" : "text-primary hover:bg-primary/10")}>
-                        {cluster.value}
-                        {cluster.value.includes(HATAMA) && <span aria-hidden className={cn("absolute inset-x-2 bottom-1 h-0.5 rounded-full", selectedLetter === cluster.start ? "bg-white/70" : "bg-amber-500")} />}
-                      </button>
-                    ) : <span key={`symbol-${index}`} className="px-0.5 text-xl text-secondary/50">{cluster.value}</span>)}
-                  </div>
-                ))}
+            <div className="space-y-4 border-t border-border/10 bg-background/10 px-8 py-5">
+              <div>
+                <p className={cn("mb-2", groupLabel)}>{selectedCharacter ? "Letter" : "Pick a letter to change its marks"}</p>
+                <div dir="rtl" lang="he" className="flex flex-wrap gap-x-4 gap-y-1 text-xl leading-relaxed text-primary">
+                  {diacriticWords.map((word, wordIndex) => (
+                    <span key={wordIndex} className="inline-flex">
+                      {word.map((cluster, index) => "start" in cluster ? (
+                        <button
+                          key={`${cluster.start}-${index}`}
+                          type="button"
+                          onClick={() => setSelectedLetter(selectedLetter === cluster.start ? null : cluster.start)}
+                          title={cluster.value.includes(HATAMA) ? "Stressed" : undefined}
+                          aria-pressed={selectedLetter === cluster.start}
+                          className={cn("relative rounded px-px transition-colors", selectedLetter === cluster.start ? "bg-primary text-white" : "hover:bg-primary/5")}
+                        >
+                          {cluster.value}
+                          {cluster.value.includes(HATAMA) && <span aria-hidden className={cn("absolute inset-x-1 -bottom-0.5 h-px", selectedLetter === cluster.start ? "bg-white/70" : "bg-primary/40")} />}
+                        </button>
+                      ) : <span key={`symbol-${index}`} className="text-secondary/40">{cluster.value}</span>)}
+                    </span>
+                  ))}
+                </div>
               </div>
               {selectedCharacter && (
-                <div className="space-y-3 rounded-lg border border-border/20 bg-background/20 p-3">
-                  <p className="text-sm font-semibold text-primary">Editing <span dir="rtl" className="text-2xl">{selectedCluster}</span>{selectedMarks.has(HATAMA) && <span className="ms-2 text-xs font-normal text-amber-600">stressed</span>}</p>
+                <div className="flex flex-wrap gap-x-6 gap-y-3">
                   {diacriticGroups.map((group, groupIndex) => (
                     <div key={group.label}>
-                      <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-secondary/45">{group.label}</p>
-                      <div className="flex flex-wrap gap-2">
+                      <p className={cn("mb-1.5", groupLabel)}>{group.label}</p>
+                      <div className="flex flex-wrap gap-1">
                         {group.marks.map(([mark, name]) => (
-                          <button key={mark} type="button" title={selectedMarks.has(mark) ? `Remove ${name}` : name} aria-pressed={selectedMarks.has(mark)} onClick={() => changeDiacritic(mark, groupIndex === 0)} disabled={busy} className={cn("flex h-12 items-center gap-2 rounded-md border px-3 transition-colors hover:border-primary hover:bg-primary hover:text-white disabled:opacity-50", selectedMarks.has(mark) ? "border-primary bg-primary/10 text-primary" : "border-border/30 bg-white text-primary")}>
-                            <span className="text-xl">{selectedCharacter}{mark}</span><span className="text-[10px] opacity-55">{name}</span>
+                          <button
+                            key={mark}
+                            type="button"
+                            title={selectedMarks.has(mark) ? `Remove ${name}` : name}
+                            aria-label={name}
+                            aria-pressed={selectedMarks.has(mark)}
+                            onClick={() => changeDiacritic(mark, groupIndex === 0)}
+                            disabled={busy}
+                            className={cn(keycap, selectedMarks.has(mark) ? "border-primary bg-primary text-white" : "border-border/30 bg-white hover:border-primary/50")}
+                          >
+                            <span dir="rtl" lang="he" className="text-xl leading-none">{selectedCharacter}{mark}</span>
                           </button>
                         ))}
                       </div>
@@ -396,64 +434,47 @@ export function EditorCard({
           )}
         </div>
       ) : (
-        <div className="bg-white p-8">
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-semibold text-primary">Model IPA input</p>
-              <p className="text-xs text-secondary/55">
-                {diacriticsEnabled && diacritics && !diacriticsStale
-                  ? "Generated from your vocalized Hebrew. When present, this IPA is sent to BlueTTS as-is."
-                  : "IPA for the selected language. When present, it is sent to BlueTTS as-is instead of the text."}
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              {phonemes && (
-                <Button variant="ghost" onClick={() => setPhonemes("")} disabled={busy || converting !== null} className="h-9 gap-1.5 px-3 text-xs">
-                  <X className="h-3.5 w-3.5" />
-                  Clear
-                </Button>
-              )}
-              <Button variant={phonemes ? "outline" : "primary"} onClick={() => void runConversion("phonemes")} disabled={busy || converting !== null || !text.trim()} className="h-9 gap-1.5 px-3 text-xs">
-                {converting === "phonemes" && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                {converting === "phonemes" ? "Converting…" : phonemes ? "Refresh from text" : "Generate phonemes"}
-              </Button>
-            </div>
-          </div>
+        <div className="bg-white">
           <textarea
             ref={phonemeInput}
             value={phonemes}
-            placeholder="Press Generate phonemes, or type IPA yourself…"
+            placeholder={converting === "phonemes" ? "Converting to IPA..." : "Refresh from text, or type IPA yourself."}
             onChange={(event) => setPhonemes(event.currentTarget.value)}
+            dir="ltr"
             disabled={busy}
-            className="min-h-32 w-full resize-y rounded-lg border border-border/50 bg-background/30 p-4 font-mono text-lg leading-relaxed text-primary outline-none placeholder:font-sans placeholder:text-sm placeholder:text-secondary/30 focus:border-primary/50"
+            className={cn(surface, "min-h-[200px] pb-4")}
           />
-          {editorError && <p className="mt-3 text-xs text-red-600">{editorError}</p>}
+          {layerToolbar(
+            diacriticsEnabled && diacritics && !diacriticsStale
+              ? "Read from your niqqud. Generate sends this IPA as is."
+              : "Generate sends this IPA as is, instead of the text.",
+            () => void runConversion(["phonemes"]),
+            phonemes ? () => setPhonemes("") : null,
+            phonemes ? "Refresh from text" : "Convert text",
+            converting === "phonemes",
+          )}
           {isHebrew && (
-          <div className="mt-5">
-            <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.16em] text-secondary/40">Hebrew phonemes</p>
-            <div className="space-y-3 rounded-lg border border-border/20 bg-background/20 p-3">
+            <div className="flex flex-wrap gap-x-6 gap-y-3 border-t border-border/10 bg-background/10 px-8 py-5">
               {hebrewPhonemeGroups.map((group) => (
-                <div key={group.label}>
-                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-secondary/45">{group.label}</p>
-                  <div className="flex flex-wrap gap-2">
+                <div key={group.label} className="min-w-0">
+                  <p className={cn("mb-1.5", groupLabel)}>{group.label}</p>
+                  <div className="flex flex-wrap gap-1">
                     {group.items.map((phoneme) => (
                       <button
                         key={phoneme.symbol}
                         type="button"
-                        title={`${phoneme.symbol} — ${phoneme.name}`}
+                        title={`${phoneme.symbol}: ${phoneme.name}`}
                         onClick={() => insertPhoneme(phoneme.symbol)}
                         disabled={busy}
-                        className="flex h-12 items-center gap-2 rounded-md border border-border/30 bg-white px-3 font-mono text-xl text-primary transition-colors hover:border-primary hover:bg-primary hover:text-white disabled:opacity-50"
+                        className={cn(keycap, "border-border/30 bg-white hover:border-primary/50")}
                       >
-                        <span>{phoneme.symbol}</span>
-                        <span className="font-sans text-[10px] opacity-55">{phoneme.name}</span>
+                        <span className="text-base leading-none">{phoneme.symbol}</span>
                       </button>
                     ))}
                   </div>
                 </div>
               ))}
             </div>
-          </div>
           )}
         </div>
       )}
@@ -469,17 +490,6 @@ export function EditorCard({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4 text-[10px] font-bold uppercase tracking-[0.2em] text-secondary">
             <span className={cn("opacity-40 transition-colors", synthesisInput.length > 500 ? "text-amber-600 opacity-100" : "")}>{synthesisInput.length} Characters</span>
-            {(diacriticsEnabled || phonemesEnabled) && (
-              <button
-                type="button"
-                onClick={() => selectTab(inputSource)}
-                title="Generate speaks this layer"
-                className="inline-flex items-center gap-1.5 rounded-full border border-border/40 bg-white px-2.5 py-1 text-primary shadow-sm transition-colors hover:border-primary"
-              >
-                <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden />
-                {sourceLabels[inputSource]}
-              </button>
-            )}
           </div>
           {busy ? (
             // While a take is generating the same slot becomes Stop, so a long

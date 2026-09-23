@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
-import { Download, Pause, Play } from "lucide-react";
+import { ChevronRight, Download, Pause, Play } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Card } from "./ui";
 import {
@@ -423,29 +423,32 @@ export function WaveformPlayer({
 
       {downloadPath && (
       <div className="flex shrink-0 items-center gap-2 border-l border-border/10 pl-6">
-        <select
-          value={exportQuality}
-          onChange={(event) => {
-            const next = event.currentTarget.value as ExportQuality;
-            storeExportQuality(next);
-            setExportQuality(next);
-          }}
-          disabled={downloading}
-          aria-label="Saved file size"
-          title="Size of the saved file"
-          className="h-9 max-w-[220px] cursor-pointer rounded-lg border border-border/40 bg-white px-2 text-[11px] font-bold tracking-tight text-primary outline-none transition-all hover:border-border focus:border-primary disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {exportQualityOptions.map((option) => (
-            <option key={option.id} value={option.id}>
-              {option.label} · {option.format} · {option.perMinute}
-            </option>
-          ))}
-        </select>
+        <label className="relative block">
+          <span className="sr-only">Saved file size</span>
+          <select
+            value={exportQuality}
+            onChange={(event) => {
+              const next = event.currentTarget.value as ExportQuality;
+              storeExportQuality(next);
+              setExportQuality(next);
+            }}
+            disabled={downloading}
+            title={`Saved as ${exportQualityOption(exportQuality).format}, about ${exportQualityOption(exportQuality).perMinute.replace("~", "")}`}
+            className="h-10 cursor-pointer appearance-none rounded-lg border border-border/40 bg-white pl-3 pr-8 text-xs font-bold tracking-tight text-primary outline-none transition-all hover:border-border focus:border-primary focus:ring-4 focus:ring-primary/5 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {exportQualityOptions.map((option) => (
+              <option key={option.id} value={option.id} title={`${option.format}, ${option.perMinute}`}>
+                {option.label} · {option.extension.toUpperCase()}
+              </option>
+            ))}
+          </select>
+          <ChevronRight className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 rotate-90 opacity-30" />
+        </label>
         <Button
           variant="outline"
           onClick={downloadAudio}
           disabled={downloading}
-          className="h-9 w-9 p-0 rounded-full transition-transform hover:scale-110 active:scale-90"
+          className="h-10 w-10 p-0 rounded-full transition-transform hover:scale-110 active:scale-90"
           title={`Save audio (${exportQualityOption(exportQuality).format})`}
         >
           <Download className="h-4 w-4" />
