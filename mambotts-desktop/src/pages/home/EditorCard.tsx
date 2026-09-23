@@ -322,11 +322,9 @@ export function EditorCard({
               role="tab"
               aria-selected={tab === item.id}
               onClick={() => selectTab(item.id)}
-              title={inputSource === item.id ? "Generate uses this layer" : undefined}
               className={cn("flex items-center gap-1.5 border-b-2 px-3 pb-3", chromeLabel, "transition-colors", tab === item.id ? "border-primary text-primary" : "border-transparent text-secondary/40 hover:text-primary")}
             >
               {item.label}
-              {inputSource === item.id && item.id !== "text" && <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden />}
             </button>
           ))}
         </div>
@@ -376,7 +374,9 @@ export function EditorCard({
           {layerToolbar(
             diacriticsStale
               ? "The text changed since this niqqud was added, so Generate reads the plain text. Refresh to catch up."
-              : "Edit freely. Generate speaks this vocalized text.",
+              : inputSource === "phonemes"
+                ? "Generate reads the IPA tab. Editing here clears it, so Generate reads this niqqud instead."
+                : "Edit freely. Generate speaks this vocalized text.",
             () => void runConversion(["diacritics"]),
             diacritics ? clearDiacritics : null,
             diacritics ? "Refresh from text" : "Add from text",
