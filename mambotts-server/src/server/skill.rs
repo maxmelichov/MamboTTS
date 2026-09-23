@@ -43,6 +43,12 @@ curl -X POST {{base_url}}/v1/audio/speech \
   -H 'Content-Type: application/json' \
   -o speech.wav \
   -d '{"input":"שלום מממבו רמבו","language":"auto","voice":"Noa","response_format":"wav","stream":false}'
+
+# Same, as a 128 kbps MP3 (about a quarter of the WAV size; not for stream=true)
+curl -X POST {{base_url}}/v1/audio/speech \
+  -H 'Content-Type: application/json' \
+  -o speech.mp3 \
+  -d '{"input":"שלום מממבו רמבו","language":"auto","voice":"Noa","response_format":"mp3"}'
 ~~~
 
 Useful endpoints for the desktop Phoneme editor:

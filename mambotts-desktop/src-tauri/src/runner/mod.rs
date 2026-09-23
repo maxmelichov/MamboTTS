@@ -26,7 +26,7 @@ use client::{
     synthesize_request,
 };
 use errors::track_err;
-use file_ops::copy_audio_file_request;
+use file_ops::export_audio_file_request;
 use process::RunnerProcess;
 
 #[tauri::command]
@@ -169,13 +169,16 @@ pub fn sweep_legacy_chunk_files() {
     });
 }
 
+/// Save the finished take at the chosen size (see [`mambotts_audio::ExportQuality`]).
+/// Without a quality it is saved at the default, a 128 kbps MP3.
 #[tauri::command]
-pub async fn copy_audio_file(
+pub async fn export_audio_file(
     app: tauri::AppHandle,
     source_path: String,
     destination_path: String,
+    quality: Option<mambotts_audio::ExportQuality>,
 ) -> Result<(), String> {
-    copy_audio_file_request(app, source_path, destination_path).await
+    export_audio_file_request(app, source_path, destination_path, quality).await
 }
 
 fn ensure_runner(app: &tauri::AppHandle, state: &State<'_, RunnerState>) -> Result<String, String> {

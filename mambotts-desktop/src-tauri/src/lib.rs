@@ -39,7 +39,7 @@ pub fn run() {
             runner::get_phoneme_inventory,
             runner::synthesize,
             runner::cancel_synthesis,
-            runner::copy_audio_file,
+            runner::export_audio_file,
             voices::download_voice,
         ]);
 

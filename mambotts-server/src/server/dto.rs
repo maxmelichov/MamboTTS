@@ -85,6 +85,8 @@ pub struct SpeechBody {
     pub voice_reference: String,
     #[serde(default)]
     pub voice: String,
+    /// `wav` (the default) or `mp3` (128 kbps mono). Streamed responses are
+    /// always WAV chunks.
     #[serde(default)]
     pub response_format: String,
     #[serde(default)]

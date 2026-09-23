@@ -74,6 +74,8 @@ curl -sS http://127.0.0.1:8080/v1/audio/speech \
   --output output.wav
 ```
 
+Set `response_format` to `"mp3"` for a 128 kbps mono MP3 at about a quarter of the WAV size (non-streamed requests only; `"wav"` is the default).
+
 Use `language: "auto"` to detect Hebrew or English. Query `/v1/voices` rather than hardcoding a voice list. For streamed requests, the response body uses MamboTTS binary frames instead of a standalone WAV; desktop clients should decode and save the final frame.
 
 ## Available endpoints

@@ -1,0 +1,13 @@
+[package]
+name = "mambotts-audio"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+hound = "3.5.1"
+mp3lame-encoder = "0.2.5"
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1"

@@ -3,6 +3,14 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { Download, Pause, Play } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Card } from "./ui";
+import {
+  type ExportQuality,
+  exportQualityOption,
+  exportQualityOptions,
+  readExportQuality,
+  storeExportQuality,
+  withExtension,
+} from "../lib/exportQuality";
 import { motion } from "framer-motion";
 
 const END_EPSILON = 0.02;
@@ -71,6 +79,7 @@ export function WaveformPlayer({
   const [downloading, setDownloading] = useState(false);
   const [savedPath, setSavedPath] = useState("");
   const [downloadError, setDownloadError] = useState("");
+  const [exportQuality, setExportQuality] = useState<ExportQuality>(readExportQuality);
   const [playbackError, setPlaybackError] = useState("");
 
   completeRef.current = complete;
@@ -323,15 +332,19 @@ export function WaveformPlayer({
     setDownloading(true);
     setDownloadError("");
     try {
+      // The take on disk is always WAV; the file saved from it takes the
+      // format of the chosen size, and its name has to say so.
+      const option = exportQualityOption(exportQuality);
       const destinationPath = await save({
-        defaultPath: filename,
-        filters: [{ name: "WAV audio", extensions: ["wav"] }],
+        defaultPath: withExtension(filename, option.extension),
+        filters: [{ name: option.extension === "mp3" ? "MP3 audio" : "WAV audio", extensions: [option.extension] }],
       });
       if (!destinationPath) return;
 
-      await invoke("copy_audio_file", {
+      await invoke("export_audio_file", {
         sourcePath: downloadPath,
         destinationPath,
+        quality: exportQuality,
       });
       setSavedPath(destinationPath);
     } catch (err) {
@@ -410,12 +423,30 @@ export function WaveformPlayer({
 
       {downloadPath && (
       <div className="flex shrink-0 items-center gap-2 border-l border-border/10 pl-6">
+        <select
+          value={exportQuality}
+          onChange={(event) => {
+            const next = event.currentTarget.value as ExportQuality;
+            storeExportQuality(next);
+            setExportQuality(next);
+          }}
+          disabled={downloading}
+          aria-label="Saved file size"
+          title="Size of the saved file"
+          className="h-9 max-w-[220px] cursor-pointer rounded-lg border border-border/40 bg-white px-2 text-[11px] font-bold tracking-tight text-primary outline-none transition-all hover:border-border focus:border-primary disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {exportQualityOptions.map((option) => (
+            <option key={option.id} value={option.id}>
+              {option.label} · {option.format} · {option.perMinute}
+            </option>
+          ))}
+        </select>
         <Button
           variant="outline"
           onClick={downloadAudio}
           disabled={downloading}
           className="h-9 w-9 p-0 rounded-full transition-transform hover:scale-110 active:scale-90"
-          title="Save audio"
+          title={`Save audio (${exportQualityOption(exportQuality).format})`}
         >
           <Download className="h-4 w-4" />
         </Button>

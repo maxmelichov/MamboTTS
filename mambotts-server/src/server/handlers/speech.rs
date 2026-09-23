@@ -6,6 +6,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use futures_util::stream;
+use mambotts_audio::AudioFormat;
 
 use super::super::{
     dto::{
@@ -115,7 +116,7 @@ fn supports_voice_reference(server: &SharedServer) -> bool {
     path = "/v1/audio/speech",
     request_body = SpeechBody,
     responses(
-        (status = 200, content_type = "audio/wav",
+        (status = 200, content_type = "audio/wav", description = "audio/wav by default, audio/mpeg for response_format mp3",
          headers(("x-mambotts-generation-id" = String, description = "Streamed responses only: the id to pass to /v1/audio/speech/cancel"))),
         (status = 400),
         (status = 409, description = "The generation was cancelled"),
@@ -131,13 +132,12 @@ pub async fn speech(State(server): State<SharedServer>, Json(body): Json<SpeechB
             "request body must contain input",
         );
     }
-    if !body.response_format.is_empty() && body.response_format != "wav" {
-        return write_error(
-            StatusCode::BAD_REQUEST,
-            "invalid_request",
-            "only wav response_format is supported",
-        );
-    }
+    let format = match body.response_format.parse::<AudioFormat>() {
+        Ok(format) => format,
+        Err(err) => {
+            return write_error(StatusCode::BAD_REQUEST, "invalid_request", err.to_string());
+        }
+    };
     if !body.voice_reference.is_empty() && !supports_voice_reference(&server) {
         return write_error(
             StatusCode::BAD_REQUEST,
@@ -147,6 +147,15 @@ pub async fn speech(State(server): State<SharedServer>, Json(body): Json<SpeechB
         );
     }
     if body.stream {
+        // The chunk protocol carries WAV frames the desktop plays as they
+        // arrive; a compressed file only makes sense once the take is whole.
+        if format != AudioFormat::Wav {
+            return write_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                "stream=true always returns wav; drop stream to get another response_format",
+            );
+        }
         return streaming_wav_response(server, body);
     }
     if body.input_is_phonemes {
@@ -178,11 +187,11 @@ pub async fn speech(State(server): State<SharedServer>, Json(body): Json<SpeechB
                 speed,
                 &mut |_, _| cancel.check(),
             )?;
-            wav_bytes(&audio, sample_rate)
+            mambotts_audio::encode(&audio, sample_rate, format)
         })
         .await;
     match result {
-        Ok(data) => wav_response(data),
+        Ok(data) => audio_response(data, format),
         Err(err) => engine_error(err),
     }
 }
@@ -392,29 +401,22 @@ fn frame(kind: u8, payload: Vec<u8>) -> Bytes {
 }
 
 fn wav_bytes(samples: &[f32], sample_rate: u32) -> anyhow::Result<Vec<u8>> {
-    let mut cursor = std::io::Cursor::new(Vec::new());
-    let spec = hound::WavSpec {
-        channels: 1,
-        sample_rate,
-        bits_per_sample: 16,
-        sample_format: hound::SampleFormat::Int,
-    };
-    let mut writer = hound::WavWriter::new(&mut cursor, spec)?;
-    for &sample in samples {
-        writer.write_sample((sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)?;
-    }
-    writer.finalize()?;
-    Ok(cursor.into_inner())
+    mambotts_audio::encode_wav(samples, sample_rate)
 }
 
-fn wav_response(data: Vec<u8>) -> Response {
+fn audio_response(data: Vec<u8>, format: AudioFormat) -> Response {
     let mut response = Bytes::from(data).into_response();
-    response
-        .headers_mut()
-        .insert(header::CONTENT_TYPE, HeaderValue::from_static("audio/wav"));
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static(format.content_type()),
+    );
+    let disposition = match format {
+        AudioFormat::Wav => "attachment; filename=\"speech.wav\"",
+        AudioFormat::Mp3 { .. } => "attachment; filename=\"speech.mp3\"",
+    };
     response.headers_mut().insert(
         header::CONTENT_DISPOSITION,
-        HeaderValue::from_static("attachment; filename=\"speech.wav\""),
+        HeaderValue::from_static(disposition),
     );
     response
 }
