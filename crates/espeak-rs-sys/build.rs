@@ -30,10 +30,25 @@ fn get_cargo_target_dir() -> Result<std::path::PathBuf, Box<dyn std::error::Erro
     Ok(target_dir.to_path_buf())
 }
 
+// Build scripts run on the host, so `cfg!(windows)` and `cfg!(target_os = ...)`
+// describe the build machine, not the binary being built. Cross compiling (for
+// example macOS to Windows MSVC through cargo-xwin) needs the target instead.
+fn target_os() -> String {
+    env::var("CARGO_CFG_TARGET_OS").unwrap_or_default()
+}
+
+fn target_is_windows() -> bool {
+    target_os() == "windows"
+}
+
+fn target_is_macos() -> bool {
+    target_os() == "macos"
+}
+
 fn extract_lib_names(out_dir: &Path, build_shared_libs: bool) -> Vec<String> {
-    let lib_pattern = if cfg!(windows) {
+    let lib_pattern = if target_is_windows() {
         "*.lib"
-    } else if cfg!(target_os = "macos") {
+    } else if target_is_macos() {
         if build_shared_libs {
             "*.dylib"
         } else {
@@ -74,9 +89,9 @@ fn extract_lib_names(out_dir: &Path, build_shared_libs: bool) -> Vec<String> {
 }
 
 fn extract_lib_assets(out_dir: &Path) -> Vec<PathBuf> {
-    let shared_lib_pattern = if cfg!(windows) {
+    let shared_lib_pattern = if target_is_windows() {
         "*.dll"
-    } else if cfg!(target_os = "macos") {
+    } else if target_is_macos() {
         "*.dylib"
     } else {
         "*.so"
@@ -191,11 +206,11 @@ fn main() {
         if build_shared_libs { "ON" } else { "OFF" },
     );
 
-    if cfg!(windows) {
+    if target_is_windows() {
         config.static_crt(static_crt);
     }
 
-    if cfg!(target_os = "macos") {
+    if target_is_macos() {
         config.define("USE_LIBPCAUDIO", "OFF");
     }
 
@@ -228,7 +243,7 @@ fn main() {
     );
     println!("cargo:rustc-link-search={}", bindings_dir.display());
 
-    if cfg!(windows) {
+    if target_is_windows() {
         println!(
             "cargo:rustc-link-search={}",
             out_dir.join("build/src/speechPlayer/Release").display()
@@ -240,7 +255,7 @@ fn main() {
     }
 
     // macOS
-    if cfg!(target_os = "macos") {
+    if target_is_macos() {
         println!("cargo:rustc-link-lib=framework=Foundation");
         println!("cargo:rustc-link-lib=c++");
     }
@@ -261,12 +276,12 @@ fn main() {
     }
 
     // Windows debug
-    if cfg!(all(debug_assertions, windows)) {
+    if cfg!(debug_assertions) && target_is_windows() {
         println!("cargo:rustc-link-lib=dylib=msvcrtd");
     }
 
     // Linux
-    if cfg!(target_os = "linux") {
+    if target_os() == "linux" {
         println!("cargo:rustc-link-lib=dylib=stdc++");
     }
 
@@ -356,7 +371,7 @@ fn espeak_source_dir(out_dir: &Path) -> PathBuf {
 }
 
 fn darwin_sysroot_args() -> Vec<String> {
-    if !cfg!(target_os = "macos") {
+    if !target_is_macos() {
         return Vec::new();
     }
     if let Ok(sdkroot) = env::var("SDKROOT") {
