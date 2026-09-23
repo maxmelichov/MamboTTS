@@ -126,8 +126,9 @@ pub async fn diacritize_request(
         .map_err(|err| format!("failed to send diacritize request: {err}"))?;
     let body = json_response(response).await?;
     serde_json::from_value::<DiacritizeResponse>(body)
-        .map(|response| response.text)
-        .map_err(|err| format!("invalid diacritize response: {err}"))
+        .map_err(|err| format!("invalid diacritize response: {err}"))?
+        .into_text()
+        .ok_or_else(|| "invalid diacritize response: no text".to_string())
 }
 
 pub async fn get_phoneme_inventory_request(

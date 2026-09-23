@@ -211,6 +211,11 @@ export function EditorCard({
     // Opening a layer shows it; closing the one on screen returns to the text.
     if (!enabled) selectTab(layer);
     else if (tab === layer) selectTab("text");
+    // A layer is there to correct the reading, so it opens already holding
+    // the model's reading of the text rather than an empty box. One that
+    // still has content (even stale diacritics, which say so) is left alone.
+    const empty = layer === "diacritics" ? !diacritics.trim() : !phonemes.trim();
+    if (!enabled && empty && text.trim()) void runConversion(layer);
   }
   function changeDiacritic(mark: string, isVowel: boolean) {
     if (selectedLetter === null) return;
@@ -257,12 +262,12 @@ export function EditorCard({
 
   const tabs: Array<{ id: EditorTab; label: string }> = [
     { id: "text", label: "Text" },
-    ...(diacriticsEnabled ? [{ id: "diacritics" as const, label: "Diacritics" }] : []),
-    ...(phonemesEnabled ? [{ id: "phonemes" as const, label: "Phonemes" }] : []),
+    ...(diacriticsEnabled ? [{ id: "diacritics" as const, label: "Niqqud" }] : []),
+    ...(phonemesEnabled ? [{ id: "phonemes" as const, label: "IPA" }] : []),
   ];
   const layerToggles: Array<{ id: EditorLayer; label: string; enabled: boolean; hint: string }> = [
-    ...(isHebrew ? [{ id: "diacritics" as const, label: "Diacritics", enabled: diacriticsEnabled, hint: "niqqud" }] : []),
-    { id: "phonemes", label: "Phonemes", enabled: phonemesEnabled, hint: "IPA" },
+    ...(isHebrew ? [{ id: "diacritics" as const, label: "Niqqud", enabled: diacriticsEnabled, hint: "the niqqud (vowel points)" }] : []),
+    { id: "phonemes", label: "IPA", enabled: phonemesEnabled, hint: "the IPA phonemes" },
   ];
 
   return (
@@ -284,7 +289,8 @@ export function EditorCard({
             </button>
           ))}
         </div>
-        <div role="group" aria-label="Optional layers" className="flex items-center gap-2 pb-2.5">
+        <div role="group" aria-label="Fix pronunciation" className="flex items-center gap-2 pb-2.5">
+          <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-secondary/60">Fix pronunciation</span>
           {layerToggles.map((layer) => (
             <button
               key={layer.id}
@@ -292,14 +298,15 @@ export function EditorCard({
               role="switch"
               aria-checked={layer.enabled}
               onClick={() => toggleLayer(layer.id, layer.enabled)}
-              disabled={busy}
-              title={layer.enabled ? `Turn off ${layer.label} (Generate stops using it)` : `Turn on ${layer.label} to edit ${layer.hint} before generating`}
-              className={cn("inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] transition-colors disabled:opacity-50", layer.enabled ? "border-primary/40 bg-white text-primary shadow-sm" : "border-border/40 text-secondary/50 hover:border-primary/40 hover:text-primary")}
+              disabled={busy || converting !== null}
+              title={layer.enabled ? `Turn off ${layer.label} (Generate goes back to the plain text)` : `Edit ${layer.hint} of your text; Generate then speaks your edited version`}
+              className={cn("inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] shadow-sm transition-colors disabled:opacity-50", layer.enabled ? "border-primary bg-white text-primary" : "border-border bg-white text-secondary hover:border-primary/60 hover:text-primary")}
             >
-              <span aria-hidden className={cn("relative h-3 w-5 rounded-full transition-colors", layer.enabled ? "bg-primary" : "bg-secondary/20")}>
-                <span className={cn("absolute top-0.5 h-2 w-2 rounded-full bg-white transition-all", layer.enabled ? "left-2.5" : "left-0.5")} />
+              <span aria-hidden className={cn("relative h-3.5 w-6 rounded-full transition-colors", layer.enabled ? "bg-primary" : "bg-secondary/30")}>
+                <span className={cn("absolute top-0.5 h-2.5 w-2.5 rounded-full bg-white transition-all", layer.enabled ? "left-3" : "left-0.5")} />
               </span>
               {layer.label}
+              {converting === layer.id && <Loader2 className="h-3 w-3 animate-spin" />}
             </button>
           ))}
         </div>

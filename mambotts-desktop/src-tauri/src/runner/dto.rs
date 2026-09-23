@@ -79,12 +79,48 @@ pub struct PhonemizeResponse {
     pub phonemes: String,
 }
 
+/// The pointed text from `/v1/diacritize`. Older servers named the field
+/// `phonemes` (it shared the phonemize response); newer ones call it `text`.
+/// Either is accepted, so the app works against both.
 #[derive(Debug, Deserialize)]
 pub struct DiacritizeResponse {
-    pub text: String,
+    #[serde(default)]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub phonemes: Option<String>,
+}
+
+impl DiacritizeResponse {
+    pub fn into_text(self) -> Option<String> {
+        self.text.or(self.phonemes)
+    }
 }
 
 #[derive(Debug, Deserialize)]
 pub struct PhonemeInventoryResponse {
     pub phonemes: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DiacritizeResponse;
+
+    fn read(body: serde_json::Value) -> Option<String> {
+        serde_json::from_value::<DiacritizeResponse>(body)
+            .unwrap()
+            .into_text()
+    }
+
+    #[test]
+    fn diacritize_text_is_read_under_either_name() {
+        assert_eq!(
+            read(serde_json::json!({"text": "שָׁלוֹם"})).as_deref(),
+            Some("שָׁלוֹם")
+        );
+        assert_eq!(
+            read(serde_json::json!({"phonemes": "שָׁלוֹם"})).as_deref(),
+            Some("שָׁלוֹם")
+        );
+        assert_eq!(read(serde_json::json!({})), None);
+    }
 }
