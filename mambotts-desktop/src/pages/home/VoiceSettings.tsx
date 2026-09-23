@@ -72,11 +72,16 @@ export function VoiceSettings({
             ["Source", speaker, setSpeaker],
             ["Target", targetSpeaker, setTargetSpeaker],
           ].map(([label, value, setValue]) => (
-            <label key={label as string} className="space-y-1 text-[10px] font-bold uppercase tracking-wider text-secondary/45">
-              {label as string}
-              <select value={value as number} onChange={(event) => (setValue as (value: number) => void)(Number(event.currentTarget.value))} disabled={busy} className="h-10 w-full rounded-lg border border-border/30 bg-white px-2 text-xs font-semibold normal-case tracking-normal text-primary">
-                <option value={0}>Unknown</option><option value={1}>Male</option><option value={2}>Female</option>
-              </select>
+            <label key={label as string} className="block space-y-1.5 text-[10px] font-bold uppercase tracking-wider text-secondary/45">
+              <span className="block">{label as string}</span>
+              {/* Styled like the Language select above; without appearance-none
+                  macOS draws its own grey gradient box with stepper arrows. */}
+              <span className="relative block">
+                <select value={value as number} onChange={(event) => (setValue as (value: number) => void)(Number(event.currentTarget.value))} disabled={busy} className="h-12 w-full appearance-none rounded-xl border border-border/30 bg-white pl-4 pr-9 text-xs font-bold normal-case tracking-tight text-primary outline-none transition-all focus:border-primary focus:ring-4 focus:ring-primary/5 disabled:cursor-not-allowed disabled:opacity-50">
+                  <option value={0}>Unknown</option><option value={1}>Male</option><option value={2}>Female</option>
+                </select>
+                <ChevronRight className="pointer-events-none absolute right-4 top-1/2 h-3.5 w-3.5 -translate-y-1/2 rotate-90 opacity-30" />
+              </span>
             </label>
           ))}
         </div>

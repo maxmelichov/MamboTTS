@@ -3,6 +3,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { ChevronRight, Download, Pause, Play } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Card } from "./ui";
+import { sharedAudioContext } from "../lib/audioContext";
 import {
   type ExportQuality,
   exportQualityOption,
@@ -89,7 +90,7 @@ export function WaveformPlayer({
   if (autoPlayOnce) autoPlayPendingRef.current = true;
 
   const getContext = useCallback(() => {
-    if (!contextRef.current) contextRef.current = new AudioContext();
+    contextRef.current = sharedAudioContext();
     return contextRef.current;
   }, []);
 
@@ -271,7 +272,7 @@ export function WaveformPlayer({
     playingRef.current = false;
     cancelAnimationFrame(rafRef.current);
     stopNodes();
-    void contextRef.current?.close();
+    // The context is shared and was unlocked by a click; keep it for the next take.
     contextRef.current = null;
   }, [stopNodes]);
 

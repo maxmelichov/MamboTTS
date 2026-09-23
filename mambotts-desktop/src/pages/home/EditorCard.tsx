@@ -4,6 +4,7 @@ import { cn } from "../../lib/classNames";
 import type { EditorInputSource } from "../../lib/types";
 import { Button, Card } from "../../components/ui";
 import { GenerationControls } from "./GenerationControls";
+import { unlockAudio } from "../../lib/audioContext";
 
 const hebrewPhonemeGroups = [
   { label: "Stress", items: [{ symbol: "ˈ", name: "Stress" }] },
@@ -505,7 +506,7 @@ export function EditorCard({
               </span>
             </Button>
           ) : (
-            <Button onClick={createVoice} disabled={!synthesisInput.trim()} className="h-12 px-8 text-sm shadow-xl shadow-primary/5 transition-transform hover:scale-[1.01]">
+            <Button onClick={() => { unlockAudio(); createVoice(); }} disabled={!synthesisInput.trim()} className="h-12 px-8 text-sm shadow-xl shadow-primary/5 transition-transform hover:scale-[1.01]">
               <span className="flex items-center gap-2">
                 <Play className="h-3.5 w-3.5 fill-current" />
                 Generate
