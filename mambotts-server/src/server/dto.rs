@@ -152,7 +152,27 @@ pub struct PhonemizeResponse {
     pub phonemes: String,
 }
 
+/// Pointed Hebrew, not phonemes, so it goes out under `text`.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct DiacritizeResponse {
+    pub text: String,
+}
+
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PhonemeInventoryResponse {
     pub phonemes: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diacritize_answers_with_text_not_phonemes() {
+        let body = serde_json::to_value(DiacritizeResponse {
+            text: "שָׁלוֹם".to_owned(),
+        })
+        .unwrap();
+        assert_eq!(body, serde_json::json!({ "text": "שָׁלוֹם" }));
+    }
 }

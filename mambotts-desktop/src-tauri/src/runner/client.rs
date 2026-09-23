@@ -10,8 +10,8 @@ use crate::{analytics, runner::errors::track_runner_err};
 use super::{
     cancel::{SYNTHESIS_CANCELLED, SynthesisRegistry},
     dto::{
-        LanguagesResponse, LoadModelRequest, PhonemeInventoryResponse, PhonemizeRequest,
-        PhonemizeResponse, SpeechRequest, SpeechResult, VoicesResponse,
+        DiacritizeResponse, LanguagesResponse, LoadModelRequest, PhonemeInventoryResponse,
+        PhonemizeRequest, PhonemizeResponse, SpeechRequest, SpeechResult, VoicesResponse,
     },
     errors::{get_json, json_response, response_error},
     process::RunnerState,
@@ -125,8 +125,8 @@ pub async fn diacritize_request(
         .await
         .map_err(|err| format!("failed to send diacritize request: {err}"))?;
     let body = json_response(response).await?;
-    serde_json::from_value::<PhonemizeResponse>(body)
-        .map(|response| response.phonemes)
+    serde_json::from_value::<DiacritizeResponse>(body)
+        .map(|response| response.text)
         .map_err(|err| format!("invalid diacritize response: {err}"))
 }
 

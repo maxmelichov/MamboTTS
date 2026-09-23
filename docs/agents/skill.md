@@ -99,4 +99,4 @@ POST   /v1/audio/speech
 - If a language or voice is rejected, query the loaded runtime metadata first.
 - Do not send `voice_reference` to BlueTTS; it is unsupported.
 - The sidecar requires ONNX Runtime shared libraries distributed with the desktop build.
-- `POST /v1/diacritize` with `{"input":"..."}` returns `{"phonemes":"<Hebrew with niqqud>"}` from RenikudPlus: the text re-pointed from the model's own reading, with the stressed syllable marked by the hatama (U+05AB) because niqqud has no stress mark of its own. `/v1/phonemize` and speech read those points back as hard constraints, so the pointed text is spoken the way it is pointed. Add `"stress": false` for plain niqqud with no stress mark.
+- `POST /v1/diacritize` with `{"input":"..."}` returns `{"text":"<Hebrew with niqqud>"}` from RenikudPlus: the text re-pointed from the model's own reading, with the stressed syllable marked by the hatama (U+05AB) because niqqud has no stress mark of its own. `/v1/phonemize` and speech read those points back as hard constraints, so the pointed text is spoken the way it is pointed. Add `"stress": false` for plain niqqud with no stress mark.

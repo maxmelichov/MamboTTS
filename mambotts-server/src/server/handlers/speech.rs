@@ -9,8 +9,8 @@ use futures_util::stream;
 
 use super::super::{
     dto::{
-        CancelBody, CancelResponse, DiacritizeBody, PhonemeInventoryResponse, PhonemizeBody,
-        PhonemizeResponse, SpeechBody,
+        CancelBody, CancelResponse, DiacritizeBody, DiacritizeResponse, PhonemeInventoryResponse,
+        PhonemizeBody, PhonemizeResponse, SpeechBody,
     },
     errors::write_error,
     state::{Cancelled, EngineError, SharedServer},
@@ -96,7 +96,7 @@ pub async fn diacritize(
         .with_engine(move |ctx| ctx.diacritize(&input, stress))
         .await
     {
-        Ok(text) => Json(PhonemizeResponse { phonemes: text }).into_response(),
+        Ok(text) => Json(DiacritizeResponse { text }).into_response(),
         Err(err) => engine_error(err),
     }
 }

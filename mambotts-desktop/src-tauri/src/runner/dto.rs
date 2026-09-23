@@ -80,6 +80,11 @@ pub struct PhonemizeResponse {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct DiacritizeResponse {
+    pub text: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct PhonemeInventoryResponse {
     pub phonemes: Vec<String>,
 }
