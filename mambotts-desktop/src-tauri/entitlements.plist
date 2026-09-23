@@ -4,5 +4,10 @@
 <dict>
     <key>com.apple.security.network.client</key>
     <true/>
+    <!-- The sidecar loads libonnxruntime, which Microsoft signed with its own
+         team ID. Under the hardened runtime, library validation refuses a
+         library from another team, so the server would die at launch. -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
 </dict>
 </plist>
