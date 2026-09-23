@@ -24,6 +24,21 @@ fn literal_spans() -> &'static Regex {
     SPANS.get_or_init(|| Regex::new(r"<[^>]*>").expect("valid regex"))
 }
 
+/// Two short numbers joined by a hyphen or en dash are a range ("5-10"), which
+/// the expander would otherwise run together into one number ("חמש עשר",
+/// fifteen). Longer digit groups (phone numbers) and a third group (dates such
+/// as 22-09-2026) are left alone.
+fn number_ranges() -> &'static Regex {
+    static RANGES: OnceLock<Regex> = OnceLock::new();
+    RANGES.get_or_init(|| {
+        Regex::new(r"(^|[^\d\-–./:])(\d{1,4})\s*[-–]\s*(\d{1,4})($|[^\d\-–./:])").expect("valid regex")
+    })
+}
+
+fn expand_ranges(text: &str) -> String {
+    number_ranges().replace_all(text, "${1}${2} עד ${3}${4}").into_owned()
+}
+
 /// Read digits in Hebrew text as Hebrew words, leaving markup literals alone.
 ///
 /// Whitespace is kept as written — the chunker splits on the paragraph breaks
@@ -32,19 +47,29 @@ pub fn normalize_hebrew_numbers(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut cursor = 0;
     for literal in literal_spans().find_iter(text) {
-        out.push_str(&normalize_numbers_keep_spacing(
+        out.push_str(&normalize_numbers_keep_spacing(&expand_ranges(
             &text[cursor..literal.start()],
-        ));
+        )));
         out.push_str(literal.as_str());
         cursor = literal.end();
     }
-    out.push_str(&normalize_numbers_keep_spacing(&text[cursor..]));
+    out.push_str(&normalize_numbers_keep_spacing(&expand_ranges(&text[cursor..])));
     out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_a_range_as_a_range() {
+        assert_eq!(expand_ranges("5-10 דקות"), "5 עד 10 דקות");
+        assert_eq!(expand_ranges("בין 1948–1967"), "בין 1948 עד 1967");
+        assert_eq!(expand_ranges("050-1234567"), "050-1234567");
+        assert_eq!(expand_ranges("22-09-2026"), "22-09-2026");
+        assert_eq!(expand_ranges("כ-150 דונם"), "כ-150 דונם");
+        assert!(!normalize_hebrew_numbers("5-10 דקות").contains("חמש עשר"));
+    }
 
     #[test]
     fn reads_a_year_as_a_year() {
