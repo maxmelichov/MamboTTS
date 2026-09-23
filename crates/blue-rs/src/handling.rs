@@ -263,6 +263,11 @@ fn expand_letter_labels(text: &str) -> String {
                 _ => ends_word(end + 1),
             };
             if starts_word && geresh && ends_word {
+                let name = if character == 'ה' && is_divine_name(&chars, index, end) {
+                    DIVINE_NAME
+                } else {
+                    name
+                };
                 output.push_str(name);
                 index = end + 1;
                 continue;
@@ -272,6 +277,176 @@ fn expand_letter_labels(text: &str) -> String {
         index += 1;
     }
     output
+}
+
+/// How a lone ה׳ reads when it is the divine name, pointed so RenikudPlus
+/// says "hashem" rather than guessing.
+const DIVINE_NAME: &str = "הַשֵּׁם";
+
+/// Words after which a lone ה׳ is a label or an ordinal (כיתה ה׳, סעיף ה׳)
+/// and not the divine name. Words that also pair with the name (בית ה׳,
+/// שער ה׳, ספר ה׳) are left out on purpose.
+const LABEL_WORDS: &[&str] = &[
+    "כיתה",
+    "כתה",
+    "סעיף",
+    "סעיפים",
+    "תת",
+    "יום",
+    "חלק",
+    "תשובה",
+    "אפשרות",
+    "פרק",
+    "שלב",
+    "עמוד",
+    "דף",
+    "שורה",
+    "טור",
+    "קומה",
+    "בניין",
+    "מבנה",
+    "אגף",
+    "גוש",
+    "חלקה",
+    "רמה",
+    "דרגה",
+    "סוג",
+    "מס",
+    "מספר",
+    "סימן",
+    "פסקה",
+    "שאלה",
+    "נספח",
+    "טבלה",
+    "איור",
+    "תרשים",
+    "כרך",
+    "מהדורה",
+    "שנה",
+    "שנת",
+    "שכבה",
+    "קבוצה",
+    "מחלקה",
+    "דירה",
+    "חדר",
+    "אולם",
+    "תחנה",
+    "רציף",
+    "עמדה",
+    "משימה",
+    "תרגיל",
+    "מבחן",
+    "בחינה",
+    "מועד",
+    "שיעור",
+    "רבעון",
+    "סמסטר",
+    "תקנה",
+    "מקרה",
+    "תנאי",
+    "אות",
+    "ערך",
+    "פריט",
+    "רשימה",
+    "כלל",
+    "מסלול",
+    "שדה",
+    "מקצה",
+    "סבב",
+    "מחזור",
+];
+
+/// Months after a lone ה׳ make it a date (ה׳ באייר), read as the letter.
+const MONTHS: &[&str] = &[
+    "תשרי",
+    "חשון",
+    "חשוון",
+    "מרחשון",
+    "מרחשוון",
+    "כסלו",
+    "כסליו",
+    "טבת",
+    "שבט",
+    "אדר",
+    "ניסן",
+    "אייר",
+    "איר",
+    "סיון",
+    "סיוון",
+    "תמוז",
+    "אב",
+    "אלול",
+];
+
+/// Whether the lone ה׳ at `index` (geresh at `end`) is the divine name. It is
+/// a label after a label word, before a month, or next to another lone
+/// letter with a geresh (א׳ ב׳ ג׳ ד׳ ה׳); anywhere else a bare ה׳ is
+/// overwhelmingly the name (ברוך ה׳, בעזרת ה׳, ה׳ יתברך).
+fn is_divine_name(chars: &[char], index: usize, end: usize) -> bool {
+    let is_quote = |c: char| matches!(c, '"' | '״' | '\'' | '׳' | '’');
+    let mut before = index;
+    if before > 0 && is_quote(chars[before - 1]) {
+        before -= 1;
+    }
+    let mut after = end + 1;
+    if chars.get(after).copied().is_some_and(is_quote) {
+        after += 1;
+    }
+    let previous = token_before(chars, before);
+    let next = token_after(chars, after);
+    if [&previous, &next].iter().any(|token| is_lone_letter(token)) {
+        return false;
+    }
+    let previous: String = previous.chars().filter(|&c| !is_nikud(c)).collect();
+    let previous = previous.trim_end_matches(['׳', '\'', '’']);
+    let label = |word: &str| LABEL_WORDS.contains(&word);
+    if label(previous)
+        || previous
+            .strip_prefix(['ו', 'ה', 'ב', 'ל', 'מ', 'ש'])
+            .is_some_and(label)
+    {
+        return false;
+    }
+    let next: String = next.chars().filter(|&c| !is_nikud(c)).collect();
+    let next = next.trim_end_matches([',', '.', ';', ':', '!', '?']);
+    !next
+        .strip_prefix('ב')
+        .or_else(|| next.strip_prefix("ל"))
+        .is_some_and(|month| MONTHS.contains(&month))
+}
+
+/// The whitespace-delimited token that ends right before `at`.
+fn token_before(chars: &[char], at: usize) -> String {
+    let mut end = at;
+    while end > 0 && chars[end - 1].is_whitespace() {
+        end -= 1;
+    }
+    let mut start = end;
+    while start > 0 && !chars[start - 1].is_whitespace() {
+        start -= 1;
+    }
+    chars[start..end].iter().collect()
+}
+
+/// The whitespace-delimited token that starts at or after `at`.
+fn token_after(chars: &[char], at: usize) -> String {
+    let mut start = at.min(chars.len());
+    while start < chars.len() && chars[start].is_whitespace() {
+        start += 1;
+    }
+    let mut end = start;
+    while end < chars.len() && !chars[end].is_whitespace() {
+        end += 1;
+    }
+    chars[start..end].iter().collect()
+}
+
+/// A lone letter with a geresh, as a list item (א׳, "ב׳", ג׳,).
+fn is_lone_letter(token: &str) -> bool {
+    let token = token.trim_end_matches([',', '.', ';', ':', '!', '?']);
+    let token = token.trim_matches(['"', '״']);
+    let letters: Vec<char> = token.chars().filter(|&c| !is_nikud(c)).collect();
+    matches!(letters.as_slice(), [letter, '׳' | '\'' | '’'] if is_hebrew_letter(*letter))
 }
 
 fn letter_name(letter: char) -> Option<&'static str> {
@@ -917,6 +1092,37 @@ mod tests {
         }
         assert_eq!(prepare_text_for_synthesis("ג׳אז", "he"), "ג׳אז");
         assert_eq!(prepare_text_for_synthesis("צ׳יפס", "he"), "צ׳יפס");
+    }
+
+    #[test]
+    fn lone_he_with_geresh_is_the_divine_name_unless_it_labels_something() {
+        for quote in ["׳", "'", "’"] {
+            for (text, expected) in [
+                ("ברוך ה{q}", "ברוך הַשֵּׁם"),
+                ("ברוך ה{q}.", "ברוך הַשֵּׁם."),
+                ("בעזרת ה{q} נצליח", "בעזרת הַשֵּׁם נצליח"),
+                ("ה{q} יתברך", "הַשֵּׁם יתברך"),
+                ("אמן ה{q}", "אמן הַשֵּׁם"),
+                ("כיתה ה{q}", "כיתה הֵא"),
+                ("סעיף ה{q}", "סעיף הֵא"),
+                ("יום ה{q}", "יום הֵא"),
+                ("וחלק ה{q}", "וחלק הֵא"),
+                ("תשובה ה{q}.", "תשובה הֵא."),
+                ("אפשרות ה{q}", "אפשרות הֵא"),
+                ("פרק ה{q}", "פרק הֵא"),
+                ("שלב ה{q}", "שלב הֵא"),
+                ("מס{q} ה{q}", "מס{q} הֵא"),
+                ("ה{q} באייר", "הֵא באייר"),
+                ("א{q} ב{q} ג{q} ד{q} ה{q}", "אָלֶף בֵּת גִּימֶל דָּלֶת הֵא"),
+                ("ד{q}, ה{q}", "דָּלֶת, הֵא"),
+                ("ה{q} ו{q}", "הֵא וָו"),
+            ] {
+                let text = text.replace("{q}", quote);
+                let expected = expected.replace("{q}", quote);
+                assert_eq!(expand_letter_labels(&text), expected, "{text}");
+            }
+        }
+        assert_eq!(prepare_text_for_synthesis("ברוך ה׳", "he"), "ברוך הַשֵּׁם");
         assert_eq!(
             prepare_text_for_synthesis("דגניה ב׳ היא קיבוץ.", "he"),
             "דגניה בֵּת היא קיבוץ."
