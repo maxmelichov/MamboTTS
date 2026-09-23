@@ -227,32 +227,76 @@ fn mark_slow_segment(text: impl AsRef<str>) -> String {
 }
 
 fn expand_letter_labels(text: &str) -> String {
-    // Restrict expansion to answer/section labels so loanword geresh stays intact.
-    // Niqqud may sit on any letter, so it is allowed after each one.
-    let pointed = |word: &str| -> String {
-        word.chars()
-            .map(|letter| format!(r"{letter}[\u{{0591}}-\u{{05C7}}]*"))
-            .collect()
-    };
-    let words = ["תשובה", "אפשרות", "סעיף"].map(pointed).join("|");
-    let labels = Regex::new(&format!(
-        r"((?:{words})\s+)([אבגדהו])[\u{{0591}}-\u{{05C7}}]*[׳'’](\s|[.,:;!?]|$)"
-    ))
-    .expect("valid letter label regex");
-    labels
-        .replace_all(text, |caps: &Captures| {
-            let name = match &caps[2] {
-                "א" => "אָלֶף",
-                "ב" => "בֵּת",
-                "ג" => "גִּימֶל",
-                "ד" => "דָּלֶת",
-                "ה" => "הֵא",
-                "ו" => "וָו",
-                _ => unreachable!(),
+    // A lone letter with a geresh is a letter name or an ordinal (דגניה ב׳,
+    // כיתה ג׳, סעיף א׳). A letter right after the geresh makes it a loanword
+    // instead (ג׳אז, צ׳יפס), which stays intact. Niqqud may sit on the letter.
+    let chars: Vec<char> = text.chars().collect();
+    let is_quote = |c: char| matches!(c, '׳' | '\'' | '’' | '"' | '״');
+    let is_word = |c: char| c.is_alphanumeric() || is_nikud(c);
+    let mut output = String::with_capacity(text.len());
+    let mut index = 0;
+    while index < chars.len() {
+        let character = chars[index];
+        if let Some(name) = letter_name(character) {
+            // An opening quote may precede the letter, but not a geresh or
+            // gershayim that belongs to the word before it.
+            let starts_word = match index.checked_sub(1).map(|i| chars[i]) {
+                None => true,
+                Some(c) if is_quote(c) => index
+                    .checked_sub(2)
+                    .is_none_or(|i| chars[i].is_whitespace()),
+                Some(c) => !is_word(c),
             };
-            format!("{}{name}{}", &caps[1], &caps[3])
-        })
-        .into_owned()
+            let mut end = index + 1;
+            while chars.get(end).copied().is_some_and(is_nikud) {
+                end += 1;
+            }
+            let geresh = matches!(chars.get(end), Some('׳' | '\'' | '’'));
+            // A closing quote may follow, but a second quote mark inside a
+            // word (ט''ו) is gershayim typed twice, not a label.
+            let ends_word = |at: usize| chars.get(at).is_none_or(|&c| !is_word(c));
+            let ends_word = match chars.get(end + 1) {
+                Some(&c) if is_quote(c) => ends_word(end + 2),
+                _ => ends_word(end + 1),
+            };
+            if starts_word && geresh && ends_word {
+                output.push_str(name);
+                index = end + 1;
+                continue;
+            }
+        }
+        output.push(character);
+        index += 1;
+    }
+    output
+}
+
+fn letter_name(letter: char) -> Option<&'static str> {
+    Some(match letter {
+        'א' => "אָלֶף",
+        'ב' => "בֵּת",
+        'ג' => "גִּימֶל",
+        'ד' => "דָּלֶת",
+        'ה' => "הֵא",
+        'ו' => "וָו",
+        'ז' => "זַיִן",
+        'ח' => "חֵית",
+        'ט' => "טֵית",
+        'י' => "יוּד",
+        'כ' => "כַּף",
+        'ל' => "לָמֶד",
+        'מ' => "מֵם",
+        'נ' => "נוּן",
+        'ס' => "סָמֶךְ",
+        'ע' => "עַיִן",
+        'פ' => "פֵּא",
+        'צ' => "צָדִי",
+        'ק' => "קוֹף",
+        'ר' => "רֵישׁ",
+        'ש' => "שִׁין",
+        'ת' => "תָּו",
+        _ => return None,
+    })
 }
 
 fn expand_geresh_loanwords(text: &str) -> String {
@@ -805,6 +849,33 @@ mod tests {
         }
         assert!(!prepare_text_for_synthesis("בשעה 12:30", "he").contains('.'));
         assert_eq!(prepare_text_for_synthesis("ג׳אז", "he"), "ג׳אז");
+    }
+
+    #[test]
+    fn lone_letters_with_geresh_read_as_letter_names() {
+        for (text, expected) in [
+            ("דגניה ב׳ היא קיבוץ", "דגניה בֵּת היא קיבוץ"),
+            ("דגניה ב׳, היא", "דגניה בֵּת, היא"),
+            ("כיתה ג׳.", "כיתה גִּימֶל."),
+            ("יום ב' וחלק ד’", "יום בֵּת וחלק דָּלֶת"),
+            ("א׳ ב׳ ג׳", "אָלֶף בֵּת גִּימֶל"),
+            ("פרק ת׳", "פרק תָּו"),
+            ("\"ק׳\"", "\"קוֹף\""),
+        ] {
+            assert_eq!(expand_letter_labels(text), expected, "{text}");
+        }
+        // A letter after the geresh makes it a loanword, and a letter before
+        // the lone letter makes it part of a longer word.
+        for text in ["ג׳אז", "צ׳יפס", "ז׳קט", "ת׳ירטי", "מנג׳ר", "צה״ל", "ט''ו"]
+        {
+            assert_eq!(expand_letter_labels(text), text);
+        }
+        assert_eq!(prepare_text_for_synthesis("ג׳אז", "he"), "ג׳אז");
+        assert_eq!(prepare_text_for_synthesis("צ׳יפס", "he"), "צ׳יפס");
+        assert_eq!(
+            prepare_text_for_synthesis("דגניה ב׳ היא קיבוץ.", "he"),
+            "דגניה בֵּת היא קיבוץ."
+        );
     }
 
     #[test]
