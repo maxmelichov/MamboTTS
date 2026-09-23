@@ -130,7 +130,11 @@ function Resolve-Version {
         $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases?per_page=30" `
             -Headers @{ 'Accept' = 'application/vnd.github+json'; 'User-Agent' = 'mambotts-installer' } `
             -TimeoutSec 20
-        $tag = ($releases | Where-Object { $_.tag_name -like "$TagPrefix*" } | Select-Object -First 1).tag_name
+        # Skip a release whose Windows build has not been uploaded yet, so a
+        # release published from another platform first never breaks this install.
+        $tag = ($releases | Where-Object {
+                $_.tag_name -like "$TagPrefix*" -and ($_.assets | Where-Object { $_.name -like '*_x64-setup.exe' })
+            } | Select-Object -First 1).tag_name
         if ($tag) {
             $resolved = $tag -replace "^$TagPrefix", '' -replace '^v', ''
             Write-Detail "Newest release is $tag."
