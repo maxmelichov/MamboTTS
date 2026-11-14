@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Regenerate mambotts-desktop/icon-src/*.svg from the brand mark PNG.
+"""OBSOLETE: do not run. The mark is now the outlined "Mt" letters, hand-authored
+in mambotts-desktop/icon-src/*.svg; this tracer was written for the old raster
+artwork and would overwrite those sources with a bad trace.
+
+Original purpose: regenerate mambotts-desktop/icon-src/*.svg from the brand mark PNG.
 
     uv run scripts/trace-mark.py
 

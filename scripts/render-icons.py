@@ -10,10 +10,9 @@ bigger one.
 
     uv run scripts/render-icons.py
 
-The drawings in icon-src are traced from the brand mark in
-mambotts-desktop/src/assets/mambotts-logo.png - see scripts/trace-mark.py, which
-regenerates them. The artwork is the owner's; the tiers only decide how much of
-it survives at a given size.
+The drawings in icon-src are the source of truth: the "Mt" letters in Space
+Grotesk Bold, outlined to paths, on the yellow tile. The 16 px tiers carry a
+single M because two letters do not fit there.
 
 Outputs (all under mambotts-desktop/src-tauri/icons unless noted):
   * the Windows/Linux PNG set and the Windows Store Square*/StoreLogo PNGs

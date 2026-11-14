@@ -8,34 +8,33 @@ Tauri 2 + React + TypeScript shell around the local MamboTTS server.
 
 ## App icons
 
-The brand mark is `src/assets/mambotts-logo.png`: a rounded yellow tile, a chunky
-dark-brown "MT" inside a cream keyline, a cyan sparkle and an orange dot. That
-PNG is the design; everything else is derived from it.
+The brand mark is a rounded yellow tile (`#FCD423`) carrying "Mt" in Space
+Grotesk Bold, dark brown (`#2E2300`). The letters are outlined to paths, so no
+font is needed to render them. The SVGs in `icon-src/` are the source of truth.
 
-`icon-src/` holds one SVG per level of detail, because Windows shows the icon at
-16-32 px far more often than at 256 px and a single big drawing scaled down to
-16 px is a blob. The tiers only decide how much of the mark survives:
+`icon-src/` holds one SVG per pixel tier, because Windows shows the icon at
+16-32 px far more often than at 256 px. The tiers decide the margin and how
+many letters fit:
 
 | Source | Used for | Detail |
 | --- | --- | --- |
-| `icon-16.svg` | up to 20 px | tile and MT only, at 1.08x so it fills the room the rest leaves |
-| `icon-24.svg` | 21-28 px | same: the sparkle is ~3 px here and the dot ~1.5 px |
-| `icon-32.svg` | 29-40 px | plus the sparkle and dot; the keyline is 0.9 px, so it stays off |
-| `icon-48.svg` | 41-80 px | the full mark - 1.3 px is the floor for the cream keyline |
-| `icon-128.svg` | 81-199 px | the full mark |
-| `icon-256.svg` | 200 px and up | the full mark |
+| `icon-16.svg` | up to 20 px | tile and a single M; two letters do not fit |
+| `icon-24.svg` | 21-28 px | tile and Mt |
+| `icon-32.svg` | 29-40 px | tile and Mt |
+| `icon-48.svg` | 41-80 px | tile and Mt |
+| `icon-128.svg` | 81-199 px | tile and Mt |
+| `icon-256.svg` | 200 px and up | tile and Mt |
 | `icon-mac-16/32.svg`, `app-icon.svg` | `icon.icns` | the same tile; macOS needs no separate shape |
 | `nsis-header.svg`, `nsis-sidebar.svg` | NSIS wizard | exported as 24-bit BMPs at 150x57 and 164x314 |
 
-Retrace the SVGs after the mark itself changes, then render the shipped assets:
+After editing an `icon-src/*.svg`, render the shipped assets:
 
 ```console
-uv run scripts/trace-mark.py
 uv run scripts/render-icons.py
 ```
 
-Editing an `icon-src/*.svg` by hand works too - just skip the first command, or
-it will overwrite your edit.
+`scripts/trace-mark.py` belongs to the old raster artwork and is obsolete; do
+not run it, it would overwrite these sources.
 
 Do not run `pnpm tauri icon`. It downscales one image for every size, which is
 the problem this directory exists to solve, and it writes every `icon.ico` frame
