@@ -1,0 +1,32 @@
+[package]
+name = "bluetts-engine"
+version = "0.1.0"
+edition = "2021"
+description = "BlueTTS's vector estimator as hand-written WGSL kernels on wgpu (the same engine the BlueTTS site runs on WebGPU): Metal on macOS, Vulkan or DX12 on Windows, Vulkan on Linux."
+license = "MIT"
+publish = false
+
+# Ported from LightBlue-site, branch bluev3, engine-rs/. The release profile
+# lives in the workspace root; the wasm build (wasm-pack, cdylib) is the site's.
+
+[dependencies]
+bytemuck = "1"
+
+# In the browser: wgpu's WebGPU backend only (WGSL goes straight to the browser, no naga).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wgpu = { version = "30", default-features = false, features = ["webgpu", "wgsl", "std"] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+pollster = "0.4"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+wgpu = { version = "30", default-features = false, features = ["metal", "wgsl", "std"] }
+
+[target.'cfg(windows)'.dependencies]
+wgpu = { version = "30", default-features = false, features = ["dx12", "vulkan", "wgsl", "std"] }
+
+[target.'cfg(all(unix, not(target_os = "macos"), not(target_arch = "wasm32")))'.dependencies]
+wgpu = { version = "30", default-features = false, features = ["vulkan", "wgsl", "std"] }

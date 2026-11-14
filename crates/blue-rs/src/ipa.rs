@@ -68,7 +68,8 @@ fn is_python_space(character: char) -> bool {
 
 fn language_tag() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(&format!("</?[{WORD}]+>")).expect("valid tag regex"))
+    // The site's `LANG_TAG_RE`, `/<\/?\w+>/g`: JavaScript's `\w` is ASCII.
+    RE.get_or_init(|| Regex::new("</?[A-Za-z0-9_]+>").expect("valid tag regex"))
 }
 
 /// Marks that already end a chunk, so no period is added after them.

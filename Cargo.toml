@@ -3,6 +3,7 @@ members = [
     "mambotts-desktop/src-tauri",
     "mambotts-server",
     "crates/blue-rs",
+    "crates/bluetts-engine",
     "crates/renikud-plus-rs",
     "crates/mambotts-registry",
     "crates/mambotts-audio",

@@ -5,12 +5,17 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1"
+# The site front end's lookaround and backreference regexes, kept as written.
+fancy-regex = "0.14"
+# The vector estimator on the GPU (ve_gpu.rs): the BlueTTS site's Rust engine.
+bluetts-engine = { path = "../bluetts-engine" }
 # The Hebrew text normaliser of the BlueV3 release (he_normalize).
 heb-tts-normalizer = "=0.2.0"
 ndarray = "0.17"
 # The release's G2P for English, German, Spanish, Italian and Russian, at the
 # commit its training labels were made with (MANIFEST.json, polyg2p_commit).
 polyg2p = { git = "https://github.com/maxmelichov/polyg2p", rev = "cbb613499adcda2d3039861c7d347c902e60fbd0" }
+pollster = "0.4"
 ort = { version = "=2.0.0-rc.11", features = ["ndarray"] }
 rand = "0.9"
 rand_distr = "0.5"

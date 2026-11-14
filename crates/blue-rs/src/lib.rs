@@ -1,10 +1,15 @@
 //! BlueV3 (v3.0.0) inference: text or phonemes in, 44.1 kHz audio out.
 //!
-//! The engine runs a BlueV3 release bundle (`notmax123/BlueV3-onnx`) the way
-//! the release's own runtime does: ids wrapped in language tags, classifier
+//! The flow around the graphs is the BlueTTS site's (`js/onnx-web-worker.js`
+//! `synthesize`, `chunkFront`, `chunkBack`; `js/bluetts-text.js`), step for
+//! step: the text prepared as the site prepares it, G2P over the whole text
+//! (Russian a sentence at a time), the phonemes cut into chunks of at most
+//! 300 ids a sentence each, ids wrapped in language tags, the predicted
+//! duration (blended toward a fixed pace only for inline `<xx>` spans)
+//! divided by the speed in float32, the latent length and mask as the site
+//! rounds them, numpy's `default_rng(42)` noise for every chunk, classifier
 //! free guidance inside the vector estimator, the vocoder fed the normalised
-//! latent as it is, the full decoded length of every chunk and a peak limit
-//! of 0.95 on what leaves. The front end is in [`phonemize`].
+//! latent, a peak limit of 0.95 per chunk, 0.1 s between chunks and no trim.
 
 /// A regex compiled once per process, on first use.
 macro_rules! regex {
@@ -18,33 +23,37 @@ mod chunking;
 pub mod handling;
 pub mod hebrew_numbers;
 mod ipa;
+pub mod numpy_rng;
 pub mod phonemize;
 mod text;
+pub mod ve_gpu;
 
 use std::{fs, path::Path};
 
 use anyhow::{Context, Result, anyhow, bail};
-use ndarray::{Array, Array1, Array3};
+use ndarray::{Array1, Array3};
 use ort::{session::Session, value::Tensor};
-use rand::SeedableRng;
-use rand_distr::{Distribution, StandardNormal};
 use serde_json::Value;
 
-use crate::{chunking::append_silence, text::Tokenizer};
 use crate::{
-    handling::{prepare_text_for_synthesis, split_prepared_by_reference_codes},
-    phonemize::{Language, Phonemizer},
+    chunking::{pack_chunks, silence_samples},
+    handling::{has_inline_lang, prepare_text},
+    phonemize::{Language, Phonemizer, strip_lang_tags},
+    text::Tokenizer,
 };
 
 const DEFAULT_SAMPLE_RATE: usize = 44_100;
 const DEFAULT_BASE_CHUNK_SIZE: usize = 512;
 const DEFAULT_CHUNK_COMPRESS_FACTOR: usize = 6;
 const DEFAULT_LATENT_DIM: usize = 24;
-const REFERENCE_CODE_SPEED_SCALE: f32 = 0.90;
-const REFERENCE_CODE_SILENCE: f32 = 0.12;
-/// Raw characters a sentence is cut to when its phonemes overflow the token
-/// budget, before the cut pieces are measured again.
-const OVERLONG_SENTENCE_CHARS: usize = 160;
+/// The noise seed of every chunk: the site (and blue_onnx) start each
+/// chunk's flow from a fresh `np.random.default_rng(42)`.
+pub const SEED: u64 = 42;
+/// blue_onnx's mixed-language pace blend: applied when the prepared text has
+/// inline `<xx>…</xx>` spans, 0 otherwise.
+const DEFAULT_MIXED_PACE_BLEND: f64 = 0.25;
+/// The fixed pace (seconds a token) that blend pulls toward.
+const DURATION_PACE_DPT_REF: f64 = 0.0625;
 
 #[derive(Clone, Debug)]
 pub struct SynthesisOptions {
@@ -105,6 +114,63 @@ pub struct BlueTts {
     geometry: ModelGeometry,
     release: ReleasePoint,
     vocoder_input: String,
+    last_chunks: Vec<ChunkInfo>,
+    /// The site's Rust engine for the flow (wgpu: Metal, Vulkan or DX12).
+    /// `None` without a usable GPU, with `MAMBOTTS_VE_BACKEND=ort`, or after
+    /// it failed once; the ONNX Runtime graph runs the flow then.
+    gpu: Option<ve_gpu::GpuVectorEstimator>,
+}
+
+/// Open the GPU flow engine unless disabled; any failure means ONNX Runtime.
+fn open_gpu_flow(path: &Path) -> Option<ve_gpu::GpuVectorEstimator> {
+    if std::env::var("MAMBOTTS_VE_BACKEND").is_ok_and(|value| value.eq_ignore_ascii_case("ort")) {
+        return None;
+    }
+    match ve_gpu::GpuVectorEstimator::open(path) {
+        Ok(Some(engine)) => {
+            eprintln!("BlueV3 flow on the GPU engine ({})", engine.adapter());
+            Some(engine)
+        }
+        Ok(None) => {
+            eprintln!("BlueV3 flow on ONNX Runtime: no GPU adapter");
+            None
+        }
+        Err(err) => {
+            eprintln!("BlueV3 flow on ONNX Runtime: the GPU engine did not open: {err:#}");
+            None
+        }
+    }
+}
+
+/// What one chunk of the last run was: its phonemes, ids, durations and
+/// latent length (the site's per-chunk `info`).
+#[derive(Clone, Debug)]
+pub struct ChunkInfo {
+    pub phonemes: String,
+    pub tokens: usize,
+    /// The duration predictor's seconds.
+    pub raw_duration: f32,
+    /// Seconds after the pace blend and the speed.
+    pub duration: f32,
+    /// Latent frames (`tLat`).
+    pub frames: usize,
+    /// Frames under the latent mask (`tMask`); the noise is zero past it.
+    pub mask_frames: usize,
+    /// Samples the vocoder returned for the chunk.
+    pub samples: usize,
+}
+
+/// The site's front end over one request's text, before any graph runs.
+#[derive(Clone, Debug)]
+pub struct TextPlan {
+    /// `prepareText`'s output.
+    pub prepared: String,
+    /// The G2P units (the whole text, or for Russian a sentence each), phonemized.
+    pub phonemes: Vec<String>,
+    /// The chunks, each at most the release's token budget.
+    pub chunks: Vec<String>,
+    /// The pace blend every chunk gets (0.25 with inline spans, else 0).
+    pub pace_blend: f64,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -131,11 +197,11 @@ impl Default for ModelGeometry {
 #[derive(Clone, Copy, Debug)]
 struct ReleasePoint {
     /// Seconds of silence between two chunks.
-    join_silence: f32,
+    join_silence: f64,
     /// Ids one chunk may hold, language tags included.
     max_chunk_tokens: usize,
     /// A chunk louder than this is scaled down to it; quieter is left alone.
-    peak_limit: f32,
+    peak_limit: f64,
 }
 
 impl Default for ReleasePoint {
@@ -176,6 +242,7 @@ impl BlueTts {
             .map(|input| input.name().to_owned())
             .unwrap_or_else(|| "latent".to_owned());
         let (geometry, release) = load_config(dir.join("tts.json"))?;
+        let gpu = open_gpu_flow(&dir.join("vector_estimator.onnx"));
 
         Ok(Self {
             dp: load_session(dir.join("duration_predictor_style.onnx"))?,
@@ -186,6 +253,8 @@ impl BlueTts {
             geometry,
             release,
             vocoder_input,
+            last_chunks: Vec::new(),
+            gpu,
         })
     }
 
@@ -198,13 +267,14 @@ impl BlueTts {
         self.tokenizer.supported_characters()
     }
 
+    /// Phoneme-level synthesis, seeded as the site seeds it ([`SEED`]).
     pub fn create(
         &mut self,
         phonemes: &str,
         style: &VoiceStyle,
         opts: SynthesisOptions,
     ) -> Result<Vec<f32>> {
-        self.create_seeded(phonemes, style, opts, rand::random())
+        self.create_seeded(phonemes, style, opts, SEED)
     }
 
     /// Run phoneme-level synthesis with an explicit latent seed.
@@ -232,69 +302,82 @@ impl BlueTts {
     where
         F: FnMut(&[f32]) -> Result<()>,
     {
-        self.create_seeded_streaming(phonemes, style, opts, rand::random(), on_chunk)
+        self.create_seeded_streaming(phonemes, style, opts, SEED, on_chunk)
     }
 
+    /// Phonemes a caller wrote: any routing tags dropped (the chunk is
+    /// tagged with the request's language), then cut into chunks as the text
+    /// path cuts its phonemes. No pace blend, as the site's phoneme path.
     fn create_seeded_streaming<F>(
         &mut self,
         phonemes: &str,
         style: &VoiceStyle,
         opts: SynthesisOptions,
         seed: u64,
-        mut on_chunk: F,
+        on_chunk: F,
     ) -> Result<Vec<f32>>
     where
         F: FnMut(&[f32]) -> Result<()>,
     {
         let opts = canonical_options(opts)?;
-        let chunks = self.phoneme_chunks(phonemes, &opts.lang)?;
-        let mut ledger = ChunkLedger::default();
-        ledger.expect(chunks.len());
-        let mut audio = Vec::new();
-        for (idx, chunk) in chunks.iter().enumerate() {
-            let mut piece = Vec::new();
-            if idx != 0 {
-                append_silence(&mut piece, self.sample_rate(), self.release.join_silence);
-            }
-            let spoken =
-                self.synthesize_chunk(chunk, style, &opts, seed.wrapping_add(idx as u64))?;
-            ledger.spoken_chunk(spoken.requested_samples, spoken.samples.len());
-            piece.extend(spoken.samples);
-            on_chunk(&piece)?;
-            audio.extend(piece);
-        }
-        ledger.verify(self.sample_rate())?;
-        Ok(audio)
+        let phonemes = strip_lang_tags(phonemes);
+        let chunks = pack_chunks([phonemes.as_str()], &opts.lang, self.release.max_chunk_tokens);
+        self.speak_chunks(&chunks, style, &opts, 0.0, seed, on_chunk)
     }
 
-    /// Phonemes a caller wrote, one sentence a chunk (a fragment of a few
-    /// words joins the sentence after it, as on the text path), each inside
-    /// the token budget. A chunk with nothing to say (punctuation alone) is
-    /// dropped rather than spoken as noise.
-    fn phoneme_chunks(&self, phonemes: &str, lang: &str) -> Result<Vec<String>> {
-        let mut chunks = Vec::new();
-        let sentences =
-            chunking::join_phoneme_fragments(chunking::split_phoneme_sentences(phonemes));
-        for sentence in sentences {
-            if !chunking::is_speakable(&sentence) {
-                continue;
-            }
-            if self.tokenizer.token_count(&sentence, lang)? <= self.release.max_chunk_tokens {
-                chunks.push(sentence);
-                continue;
-            }
-            // Every character is at most one id and the tags and final mark
-            // add fewer than twenty, so pieces this long always fit.
-            let budget = self.release.max_chunk_tokens.saturating_sub(20).max(1);
-            chunks.extend(chunking::split_phonemes(&sentence, Some(budget)));
+    /// The site's front end over `text`: `prepareText`, G2P over the whole
+    /// prepared text (Russian a sentence at a time), the phonemes cut into
+    /// chunks, and the pace blend the request gets.
+    pub fn plan_text(
+        &self,
+        phonemizer: &mut Phonemizer,
+        text: &str,
+        lang: &str,
+    ) -> Result<TextPlan> {
+        let language = Language::try_from(lang)?;
+        let prepared = prepare_text(text, language.code());
+        // Decided on the text as prepared, as blue_onnx decides it.
+        let pace_blend = if has_inline_lang(&prepared) {
+            DEFAULT_MIXED_PACE_BLEND
+        } else {
+            0.0
+        };
+        let phonemes = phonemizer.phonemize_units(&prepared, language)?;
+        if phonemes.iter().all(String::is_empty) && prepared.chars().any(char::is_alphabetic) {
+            // Letters that came back as nothing are a G2P failure, not
+            // silence: say so instead of returning an empty recording.
+            bail!(
+                "no phonemes were produced for this text, so it cannot be spoken: {:?}",
+                prepared
+            );
         }
-        Ok(chunks)
+        let chunks = pack_chunks(
+            phonemes.iter().map(String::as_str),
+            language.code(),
+            self.release.max_chunk_tokens,
+        );
+        Ok(TextPlan {
+            prepared,
+            phonemes,
+            chunks,
+            pace_blend,
+        })
+    }
+
+    /// The ids a chunk of phonemes is fed to the graphs as.
+    pub fn token_ids(&self, phonemes: &str, lang: &str) -> Result<Vec<i64>> {
+        let (ids, _) = self.tokenizer.encode_batch(&[phonemes], &[lang])?;
+        Ok(ids.iter().copied().collect())
+    }
+
+    /// What each chunk of the last run was.
+    pub fn last_chunks(&self) -> &[ChunkInfo] {
+        &self.last_chunks
     }
 
     /// Prepare, phonemize, and synthesize raw multilingual text.
     ///
-    /// `create` remains available for callers that already have IPA. Each call
-    /// uses a fresh random latent seed.
+    /// `create` remains available for callers that already have IPA.
     pub fn synthesize_text(
         &mut self,
         phonemizer: &mut Phonemizer,
@@ -308,128 +391,76 @@ impl BlueTts {
     /// Prepare, phonemize, and synthesize raw text one playable chunk at a time.
     ///
     /// The callback is invoked as soon as each chunk has been synthesized,
-    /// before the next chunk starts. A chunk is final when it is made: the
-    /// returned samples are exactly the chunks the callback saw, joined.
-    ///
-    /// One sentence is one chunk. The release packs sentences up to its token
-    /// budget, and the model then runs them together with almost no pause
-    /// (seven Hebrew sentences: 1.6 s of pauses in 37 s). Given one sentence,
-    /// it ends it the way it ends an utterance, and the join silence follows.
+    /// before the next chunk starts, with the join silence before it
+    /// included. A chunk is final when it is made: the returned samples are
+    /// exactly the chunks the callback saw, joined. An error from the
+    /// callback stops the run, which is how a caller cancels.
     pub fn synthesize_text_streaming<F>(
         &mut self,
         phonemizer: &mut Phonemizer,
         text: &str,
         style: &VoiceStyle,
         opts: SynthesisOptions,
-        mut on_chunk: F,
+        on_chunk: F,
     ) -> Result<Vec<f32>>
     where
         F: FnMut(&[f32]) -> Result<()>,
     {
         let opts = canonical_options(opts)?;
-        let language = Language::try_from(opts.lang.as_str())?;
-        let prepared = prepare_text_for_synthesis(text, language.code());
-        let segments = split_prepared_by_reference_codes(&prepared);
-        let mut output = Vec::new();
-        let mut previous_was_reference = false;
-        let mut ledger = ChunkLedger::default();
-        let base_seed = rand::random::<u64>();
-
-        for (segment_index, segment) in segments.iter().enumerate() {
-            if segment.text.is_empty() {
-                continue;
-            }
-            let mut segment_opts = opts.clone();
-            if segment.is_reference_code {
-                segment_opts.speed *= REFERENCE_CODE_SPEED_SCALE;
-            }
-            // Chunk the raw text (not the phonemes) and phonemize each chunk.
-            let mut pending: std::collections::VecDeque<String> =
-                chunking::split_sentence_chunks(&segment.text).into();
-            ledger.expect(pending.len());
-            let mut chunk_index = 0u64;
-
-            while let Some(raw_chunk) = pending.pop_front() {
-                // Punctuation alone has nothing to say, whatever the G2P
-                // makes of it: the model would read it as a second of noise.
-                if !chunking::is_speakable(&raw_chunk) {
-                    ledger.silent_chunk();
-                    continue;
-                }
-                let chunk = phonemizer.g2p(&raw_chunk, language)?;
-                if chunk.is_empty() {
-                    // A chunk of nothing but punctuation or whitespace has no
-                    // speech in it and is fine to skip. A chunk that had
-                    // letters and came back empty is a phonemizer failure,
-                    // and skipping it was how a document could lose most of
-                    // its text with no error and a "success" at the end.
-                    if raw_chunk.chars().any(char::is_alphabetic) {
-                        anyhow::bail!(
-                            "no phonemes were produced for this text, so it cannot be spoken: {:?}",
-                            raw_chunk.trim()
-                        );
-                    }
-                    ledger.silent_chunk();
-                    continue;
-                }
-                // The budget is in ids after G2P and tagging, so a sentence
-                // that overflows it is cut smaller and read again.
-                if self.tokenizer.token_count(&chunk, language.code())?
-                    > self.release.max_chunk_tokens
-                {
-                    let limit = OVERLONG_SENTENCE_CHARS.min(raw_chunk.chars().count() * 2 / 3);
-                    let parts = chunking::hard_split_words(&raw_chunk, limit.max(16));
-                    if parts.len() > 1 {
-                        ledger.expect(parts.len() - 1);
-                        for part in parts.into_iter().rev() {
-                            pending.push_front(part);
-                        }
-                        continue;
-                    }
-                }
-                let spoken = self.synthesize_chunk(
-                    &chunk,
-                    style,
-                    &segment_opts,
-                    base_seed
-                        .wrapping_add((segment_index as u64) << 32)
-                        .wrapping_add(chunk_index),
-                )?;
-                chunk_index += 1;
-                ledger.spoken_chunk(spoken.requested_samples, spoken.samples.len());
-                let mut audio = spoken.samples;
-                if !output.is_empty() {
-                    let gap = if segment.is_reference_code || previous_was_reference {
-                        REFERENCE_CODE_SILENCE
-                    } else {
-                        self.release.join_silence
-                    };
-                    let mut playable = Vec::new();
-                    append_silence(&mut playable, self.sample_rate(), gap);
-                    playable.append(&mut audio);
-                    audio = playable;
-                }
-                on_chunk(&audio)?;
-                output.extend_from_slice(&audio);
-                previous_was_reference = segment.is_reference_code;
-            }
-        }
-        ledger.verify(self.sample_rate())?;
-        Ok(output)
+        let plan = self.plan_text(phonemizer, text, &opts.lang)?;
+        self.speak_chunks(&plan.chunks, style, &opts, plan.pace_blend, SEED, on_chunk)
     }
 
+    /// Every chunk through the graphs, in order, each after the join
+    /// silence (none before the first), handed to `on_chunk` as it is made.
+    fn speak_chunks<F>(
+        &mut self,
+        chunks: &[String],
+        style: &VoiceStyle,
+        opts: &SynthesisOptions,
+        pace_blend: f64,
+        seed: u64,
+        mut on_chunk: F,
+    ) -> Result<Vec<f32>>
+    where
+        F: FnMut(&[f32]) -> Result<()>,
+    {
+        self.last_chunks.clear();
+        let mut ledger = ChunkLedger::default();
+        ledger.expect(chunks.len());
+        let gap = silence_samples(self.sample_rate(), self.release.join_silence);
+        let mut audio = Vec::new();
+        for (idx, chunk) in chunks.iter().enumerate() {
+            let mut piece = Vec::new();
+            if idx != 0 {
+                piece.resize(gap, 0.0);
+            }
+            let spoken = self.synthesize_chunk(chunk, style, opts, pace_blend, seed)?;
+            ledger.spoken_chunk(spoken.requested_samples, spoken.samples.len());
+            piece.extend(spoken.samples);
+            on_chunk(&piece)?;
+            audio.extend(piece);
+        }
+        ledger.verify(self.sample_rate())?;
+        Ok(audio)
+    }
+
+    /// `inferChunk`: `chunkFront` (ids, duration, text encoder, noise), the
+    /// flow, `chunkBack` (vocoder), then `limitPeak`.
     fn synthesize_chunk(
         &mut self,
         phonemes: &str,
         style: &VoiceStyle,
         opts: &SynthesisOptions,
+        pace_blend: f64,
         seed: u64,
     ) -> Result<ChunkAudio> {
         let (text_ids, text_mask) = self.tokenizer.encode_batch(&[phonemes], &[&opts.lang])?;
+        let n_text = text_ids.len();
 
         // Scoped so the session outputs, which borrow self, are released
         // before the vocoder call needs self again.
-        let predicted_duration = {
+        let raw_duration = {
             let dur = self.dp.run(ort::inputs! {
                 "text_ids" => Tensor::from_array(text_ids.clone())?,
                 "style_dp" => Tensor::from_array(style.dp.clone())?,
@@ -440,11 +471,10 @@ impl BlueTts {
                 .copied()
                 .context("duration output was empty")?
         };
-        if !predicted_duration.is_finite() || predicted_duration <= 0.0 {
-            bail!("the duration predictor returned {predicted_duration} s for this text");
+        if !raw_duration.is_finite() {
+            bail!("the duration predictor returned {raw_duration} s for this text");
         }
-        // The predicted duration as it is: the release blends no reference pace.
-        let duration = predicted_duration / opts.speed.max(1e-6);
+        let duration = chunk_duration(raw_duration, n_text, pace_blend, opts.speed);
 
         let text_emb = {
             let out = self.text_encoder.run(ort::inputs! {
@@ -456,12 +486,42 @@ impl BlueTts {
         };
 
         let requested_samples = requested_sample_count(duration, self.geometry.sample_rate);
-        let (mut xt, latent_mask) = sample_noisy_latent(duration, self.geometry, seed);
+        let latent = sample_noisy_latent(duration, self.geometry, seed);
+        let (frames, mask_frames) = (latent.frames, latent.mask_frames);
+        let mut xt = latent.noise;
+        let latent_mask = latent.mask;
         let total_step = Array1::from_vec(vec![opts.total_step as f32]);
         let cfg_scale = Array1::from_vec(vec![opts.cfg_scale]);
 
+        // The site's engine runs the whole flow in one go; the same latent
+        // as the graph's to ~1e-5. If it fails, ONNX Runtime takes over for
+        // this chunk and every later one.
+        let mut gpu_done = false;
+        if let Some(engine) = self.gpu.as_mut() {
+            let flat = |array: &ndarray::Array3<f32>| -> Vec<f32> { array.iter().copied().collect() };
+            match engine.flow(
+                &flat(&text_emb),
+                &flat(&text_mask),
+                &flat(&style.ttl),
+                &flat(&latent_mask),
+                &flat(&xt),
+                opts.total_step,
+                opts.cfg_scale,
+            ) {
+                Ok(latent) => {
+                    xt = ndarray::Array3::from_shape_vec(xt.raw_dim(), latent)
+                        .context("GPU flow returned a latent of the wrong size")?;
+                    gpu_done = true;
+                }
+                Err(err) => {
+                    eprintln!("GPU flow failed, using ONNX Runtime from now on: {err:#}");
+                    self.gpu = None;
+                }
+            }
+        }
+
         // One Euler step a run, with both guidance branches inside the graph.
-        for step in 0..opts.total_step {
+        for step in (0..opts.total_step).filter(|_| !gpu_done) {
             let current_step = Array1::from_vec(vec![step as f32]);
             let out = self.vector_estimator.run(ort::inputs! {
                 "noisy_latent" => Tensor::from_array(xt)?,
@@ -485,11 +545,33 @@ impl BlueTts {
         // The full decoded length of the chunk: the release trims no edge.
         let mut samples: Vec<f32> = wav.iter().copied().collect();
         limit_peak(&mut samples, self.release.peak_limit);
+        self.last_chunks.push(ChunkInfo {
+            phonemes: phonemes.to_owned(),
+            tokens: n_text,
+            raw_duration,
+            duration,
+            frames,
+            mask_frames,
+            samples: samples.len(),
+        });
         Ok(ChunkAudio {
             samples,
             requested_samples,
         })
     }
+}
+
+/// `blend_duration_pace` and the speed, as the site computes them: seconds
+/// a token pulled part of the way toward a fixed pace (float64, then
+/// float32), then divided by the speed in float32.
+fn chunk_duration(raw: f32, tokens: usize, pace_blend: f64, speed: f32) -> f32 {
+    let mut duration = raw;
+    if pace_blend > 0.0 {
+        let b = pace_blend.clamp(0.0, 1.0);
+        let n = tokens as f64;
+        duration = (((1.0 - b) * (f64::from(raw) / n) + b * DURATION_PACE_DPT_REF) * n) as f32;
+    }
+    duration / speed.max(1e-6)
 }
 
 /// `opts` with its language code made canonical (`ge` is `de`, `EN` is
@@ -536,44 +618,64 @@ fn requested_sample_count(duration: f32, sample_rate: usize) -> usize {
     (duration * sample_rate as f32).max(1.0).ceil() as usize
 }
 
-/// Noise for `ceil(duration * rate / frame)` latent frames and a mask of ones
-/// over them, as the release samples it.
-fn sample_noisy_latent(
-    duration: f32,
-    geometry: ModelGeometry,
-    seed: u64,
-) -> (Array3<f32>, Array3<f32>) {
-    let wav_len = requested_sample_count(duration, geometry.sample_rate);
-    let chunk = geometry.base_chunk_size * geometry.chunk_compress_factor;
-    let latent_len = wav_len.div_ceil(chunk).max(1);
-
-    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
-    let normal = StandardNormal;
-    let xt = Array::from_shape_fn(
-        (
-            1,
-            geometry.latent_dim * geometry.chunk_compress_factor,
-            latent_len,
-        ),
-        |_| normal.sample(&mut rng),
-    );
-    (xt, Array3::ones((1, 1, latent_len)))
+/// The flow's starting point for one chunk.
+struct NoisyLatent {
+    /// `[1, latent_dim * compress, frames]`, zero past `mask_frames`.
+    noise: Array3<f32>,
+    /// `[1, 1, frames]`: one over the first `mask_frames` frames.
+    mask: Array3<f32>,
+    frames: usize,
+    mask_frames: usize,
 }
 
-/// blue_onnx's `limit_peak`: one gain for the whole chunk, attenuation only.
-/// Audio whose peak is above `limit` is scaled so the peak is `limit`; quieter
-/// audio is untouched, so nothing is boosted, compressed or clipped.
-fn limit_peak(audio: &mut [f32], limit: f32) {
-    let peak = audio
-        .iter()
-        .filter(|sample| sample.is_finite())
-        .map(|sample| sample.abs())
-        .fold(0.0f32, f32::max);
-    if peak > limit && limit > 0.0 {
-        let gain = limit / peak;
-        for sample in audio {
-            *sample *= gain;
+/// `sample_noisy_latent` as the site computes it: the width from
+/// `int(seconds * sr)` in float64 (`latent_frames_for_duration`), the mask
+/// from `duration * sr` in float32, as the two numpy expressions compute
+/// them; the noise from `default_rng(seed)`, zeroed past the mask.
+fn sample_noisy_latent(duration: f32, geometry: ModelGeometry, seed: u64) -> NoisyLatent {
+    let rate = geometry.sample_rate as f64;
+    let frame = (geometry.base_chunk_size * geometry.chunk_compress_factor) as f64;
+    let frames = ((f64::from(duration) * rate).trunc() + frame - 1.0) / frame;
+    let frames = frames.floor().max(1.0) as usize;
+    let mask_frames = (f64::from((duration * geometry.sample_rate as f32).trunc()) + frame - 1.0) / frame;
+    let mask_frames = (mask_frames.floor().max(0.0) as usize).min(frames);
+    let channels = geometry.latent_dim * geometry.chunk_compress_factor;
+
+    let mut noise = numpy_rng::standard_normal_f32(seed, channels * frames);
+    if mask_frames < frames {
+        for row in noise.chunks_mut(frames) {
+            row[mask_frames..].fill(0.0);
         }
+    }
+    let mask = (0..frames)
+        .map(|t| if t < mask_frames { 1.0 } else { 0.0 })
+        .collect();
+    NoisyLatent {
+        noise: Array3::from_shape_vec((1, channels, frames), noise).expect("noise shape"),
+        mask: Array3::from_shape_vec((1, 1, frames), mask).expect("mask shape"),
+        frames,
+        mask_frames,
+    }
+}
+
+/// blue_onnx's `limit_peak(audio, 0.95)`, per chunk, as the site computes it:
+/// one gain (float64 `limit / peak`, then float32) when the peak is above the
+/// limit, attenuation only; quieter audio is untouched.
+fn limit_peak(audio: &mut [f32], limit: f64) {
+    let mut peak = 0.0f32;
+    for sample in audio.iter() {
+        let a = sample.abs();
+        if a > peak {
+            peak = a;
+        }
+    }
+    let peak = f64::from(peak);
+    if peak <= limit || peak < 1e-9 {
+        return;
+    }
+    let gain = (limit / peak) as f32;
+    for sample in audio {
+        *sample *= gain;
     }
 }
 
@@ -588,8 +690,6 @@ fn limit_peak(audio: &mut [f32], limit: f32) {
 struct ChunkLedger {
     expected: usize,
     spoken: usize,
-    /// Chunks with nothing to say in them (punctuation or whitespace only).
-    silent: usize,
     requested_samples: usize,
     produced_samples: usize,
 }
@@ -597,10 +697,6 @@ struct ChunkLedger {
 impl ChunkLedger {
     fn expect(&mut self, chunks: usize) {
         self.expected += chunks;
-    }
-
-    fn silent_chunk(&mut self) {
-        self.silent += 1;
     }
 
     fn spoken_chunk(&mut self, requested_samples: usize, produced_samples: usize) {
@@ -611,12 +707,11 @@ impl ChunkLedger {
 
     /// Fail loudly when the recording cannot account for the text.
     fn verify(&self, sample_rate: u32) -> Result<()> {
-        if self.spoken + self.silent != self.expected {
+        if self.spoken != self.expected {
             bail!(
-                "synthesis lost text: {} of {} chunks were spoken and {} had nothing to say",
+                "synthesis lost text: {} of {} chunks were spoken",
                 self.spoken,
-                self.expected,
-                self.silent
+                self.expected
             );
         }
         // A chunk decodes to whole latent frames, so the recording is never
@@ -659,13 +754,13 @@ fn load_config(path: impl AsRef<Path>) -> Result<(ModelGeometry, ReleasePoint)> 
     let inference = &json["blue_release"]["inference"];
     let mut release = ReleasePoint::default();
     if let Some(value) = inference["join_silence_s"].as_f64() {
-        release.join_silence = value as f32;
+        release.join_silence = value;
     }
     if let Some(value) = inference["max_chunk_tokens"].as_u64() {
         release.max_chunk_tokens = value as usize;
     }
     if let Some(value) = inference["peak_limit"].as_f64() {
-        release.peak_limit = value as f32;
+        release.peak_limit = value;
     }
     Ok((geometry, release))
 }
@@ -734,42 +829,83 @@ mod tests {
 
     #[test]
     #[ignore = "requires MAMBOTTS_BLUE_MODEL_DIR pointing to an installed BlueV3 bundle"]
-    fn punctuation_alone_is_silence_not_noise() {
+    fn two_runs_are_bit_identical() {
         let (mut tts, mut phonemizer, style) = bundle();
         let english = || SynthesisOptions {
             lang: "en".to_owned(),
+            speed: 0.95,
             ..SynthesisOptions::default()
         };
-        for text in ["...", " ?! ", "…"] {
-            let audio = tts
-                .synthesize_text(&mut phonemizer, text, &style, english())
-                .unwrap();
-            assert!(audio.is_empty(), "{text:?} gave {} samples", audio.len());
-            let audio = tts.create(text, &style, english()).unwrap();
-            assert!(audio.is_empty(), "{text:?} gave {} samples", audio.len());
-        }
-        let audio = tts
-            .synthesize_text(&mut phonemizer, "Hello there. ...", &style, english())
+        let text = "Hi. This is the first sentence of the test. And here is a second one!";
+        let first = tts
+            .synthesize_text(&mut phonemizer, text, &style, english())
             .unwrap();
-        assert!(!audio.is_empty());
+        let info = tts.last_chunks().to_vec();
+        let second = tts
+            .synthesize_text(&mut phonemizer, text, &style, english())
+            .unwrap();
+        assert_eq!(first, second);
+        // "Hi." is a fragment and joins the sentence after it.
+        assert_eq!(info.len(), 2, "{info:?}");
+        let gap = silence_samples(tts.sample_rate(), 0.1);
+        assert_eq!(gap, 4410);
+        assert_eq!(first.len(), info[0].samples + gap + info[1].samples);
+        for chunk in &info {
+            assert_eq!(chunk.samples, chunk.frames * 3072);
+            assert_eq!(chunk.mask_frames, chunk.frames);
+        }
+        // Phoneme input is seeded the same way.
+        let phonemes = phonemizer.g2p(text, Language::English).unwrap();
+        let a = tts.create(&phonemes, &style, english()).unwrap();
+        let b = tts.create(&phonemes, &style, english()).unwrap();
+        assert_eq!(a, b);
+        assert_eq!(a, first, "the phoneme path speaks the text path's chunks");
+    }
+
+    #[test]
+    #[ignore = "requires MAMBOTTS_BLUE_MODEL_DIR pointing to an installed BlueV3 bundle"]
+    fn punctuation_alone_is_read_as_the_site_reads_it() {
+        let (tts, mut phonemizer, _) = bundle();
+        // The site hands polyg2p nothing for a piece with no letters: the
+        // marks are the chunk.
+        let plan = tts.plan_text(&mut phonemizer, "...", "en").unwrap();
+        assert_eq!(plan.chunks, vec!["..."]);
+        let plan = tts
+            .plan_text(&mut phonemizer, "Hello there. ...", "en")
+            .unwrap();
+        assert_eq!(plan.chunks.len(), 1, "{:?}", plan.chunks);
+        assert!(tts.plan_text(&mut phonemizer, "  ", "en").unwrap().chunks.is_empty());
     }
 
     #[test]
     fn seeded_latents_are_reproducible() {
         let geometry = ModelGeometry::default();
-        let (first, first_mask) = sample_noisy_latent(1.0, geometry, 42);
-        let (second, second_mask) = sample_noisy_latent(1.0, geometry, 42);
-        assert_eq!(first, second);
-        assert_eq!(first_mask, second_mask);
+        let first = sample_noisy_latent(1.0, geometry, 42);
+        let second = sample_noisy_latent(1.0, geometry, 42);
+        assert_eq!(first.noise, second.noise);
+        assert_eq!(first.mask, second.mask);
     }
 
     #[test]
     fn the_latent_covers_the_duration_in_whole_frames() {
-        // T = ceil(duration * 44100 / 3072), 144 channels, a mask of ones.
-        let (latent, mask) = sample_noisy_latent(3.62, ModelGeometry::default(), 7);
-        assert_eq!(latent.dim(), (1, 144, 52));
-        assert_eq!(mask.dim(), (1, 1, 52));
-        assert!(mask.iter().all(|value| *value == 1.0));
+        // T = floor((int(duration * 44100) + 3071) / 3072), 144 channels.
+        let latent = sample_noisy_latent(3.62, ModelGeometry::default(), 7);
+        assert_eq!(latent.noise.dim(), (1, 144, 52));
+        assert_eq!(latent.mask.dim(), (1, 1, 52));
+        assert_eq!(latent.mask_frames, 52);
+        assert!(latent.mask.iter().all(|value| *value == 1.0));
+        // The noise is numpy's default_rng(seed) stream in C order.
+        let latent = sample_noisy_latent(1.0, ModelGeometry::default(), 42);
+        assert_eq!(latent.frames, 15);
+        assert_eq!(latent.noise[[0, 0, 0]], 0.304_717_1_f32);
+        assert_eq!(latent.noise[[0, 0, 1]], -1.039_984_1_f32);
+    }
+
+    #[test]
+    fn the_duration_is_blended_only_when_asked_and_divided_in_float32() {
+        assert_eq!(chunk_duration(2.0, 40, 0.0, 0.9), 2.0f32 / 0.9f32);
+        // 0.75 * 2.0 + 0.25 * 0.0625 * 40 = 2.125
+        assert_eq!(chunk_duration(2.0, 40, 0.25, 1.0), 2.125);
     }
 
     #[test]
@@ -793,7 +929,7 @@ mod tests {
         ledger.expect(3);
         ledger.spoken_chunk(44_100, 46_080);
         ledger.spoken_chunk(44_100, 46_080);
-        ledger.silent_chunk();
+        ledger.spoken_chunk(44_100, 46_080);
         assert!(ledger.verify(44_100).is_ok());
     }
 

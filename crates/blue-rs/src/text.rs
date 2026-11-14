@@ -72,12 +72,6 @@ impl Tokenizer {
         self.lang_tag.is_some()
     }
 
-    /// Ids one chunk of phonemes becomes, tags included: the unit the
-    /// release's chunk budget is counted in.
-    pub(crate) fn token_count(&self, phonemes: &str, lang: &str) -> Result<usize> {
-        Ok(self.encode_one(phonemes, lang)?.len())
-    }
-
     pub(crate) fn supported_characters(&self) -> Vec<char> {
         let mut characters: Vec<_> = self.char_to_id.keys().copied().collect();
         characters.sort_unstable();

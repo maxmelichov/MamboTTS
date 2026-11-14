@@ -1,1235 +1,796 @@
-//! Model-independent handling for difficult Hebrew TTS input.
+//! Text preparation before G2P, exactly as the BlueTTS site does it
+//! (`js/bluetts-text.js`, `prepareText`):
 //!
-//! Niqqud the writer typed is kept through normalization; RenikudPlus reads it
-//! directly during G2P.
+//! - English, German, Spanish and Italian go to polyg2p as written (trimmed):
+//!   it reads numbers, dates, money and abbreviations itself, and the model's
+//!   labels were made from its reading of raw text.
+//! - Hebrew goes through heb-tts-normalizer 0.2.0 at its defaults, and
+//!   nothing else.
+//! - Russian, which has no release front end, keeps the site's number reading
+//!   (`prepareTextForSynthesis`, a port of blue_onnx `text_norm.py`) without
+//!   its slow-span markers.
+//!
+//! The regexes keep the site's JavaScript semantics: `\d` and `\w` are ASCII,
+//! `\s` is JavaScript's whitespace set, and Python's `\w` is spelled
+//! `[\p{L}\p{N}_]` where the site spells it so.
 
+use std::borrow::Cow;
 use std::sync::OnceLock;
 
-use regex::Captures;
-
-use crate::hebrew_numbers::normalize_hebrew_numbers;
-
-/// Internal boundaries for segments that need slower, clearer synthesis.
-pub const REF_CODE_MARK_OPEN: char = '【';
-pub const REF_CODE_MARK_CLOSE: char = '】';
-
-/// Text that is ready for G2P, split by its requested synthesis pacing.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PreparedSegment {
-    pub text: String,
-    pub is_reference_code: bool,
+/// A `fancy_regex` (lookaround, backreferences) compiled once per process.
+macro_rules! fregex {
+    ($pattern:expr) => {{
+        static RE: std::sync::OnceLock<fancy_regex::Regex> = std::sync::OnceLock::new();
+        RE.get_or_init(|| fancy_regex::Regex::new(&$pattern).expect("valid regex"))
+    }};
 }
 
-/// Strip Hebrew niqqud / cantillation while keeping letters and geresh.
-pub fn strip_nikud(text: &str) -> String {
-    text.chars()
-        .filter(|character| !is_nikud(*character))
-        .collect()
+/// JavaScript's `\s`: WhiteSpace and LineTerminator (U+FEFF in, U+0085 out).
+pub(crate) const JS_S: &str = r"[\t\n\x0B\x0C\r \x{a0}\x{1680}\x{2000}-\x{200a}\x{2028}\x{2029}\x{202f}\x{205f}\x{3000}\x{feff}]";
+/// JavaScript's `\S`.
+const JS_NS: &str = r"[^\t\n\x0B\x0C\r \x{a0}\x{1680}\x{2000}-\x{200a}\x{2028}\x{2029}\x{202f}\x{205f}\x{3000}\x{feff}]";
+/// Python's `\w` on `str`, as the site spells it.
+const PY_W: &str = r"\p{L}\p{N}_";
+
+/// JavaScript's `String.prototype.trim` whitespace.
+pub(crate) fn is_js_space(c: char) -> bool {
+    matches!(
+        c,
+        '\t' | '\n'
+            | '\u{b}'
+            | '\u{c}'
+            | '\r'
+            | ' '
+            | '\u{a0}'
+            | '\u{1680}'
+            | '\u{2000}'..='\u{200a}'
+            | '\u{2028}'
+            | '\u{2029}'
+            | '\u{202f}'
+            | '\u{205f}'
+            | '\u{3000}'
+            | '\u{feff}'
+    )
 }
 
-/// True when `text` contains any Hebrew niqqud / cantillation mark.
-pub fn contains_nikud(text: &str) -> bool {
-    text.chars().any(is_nikud)
+/// `s.trim()` in JavaScript.
+pub(crate) fn js_trim(s: &str) -> &str {
+    s.trim_matches(is_js_space)
 }
 
-/// Remove internal slow-segment markers before displaying prepared text.
-pub fn strip_reference_code_markers(text: &str) -> String {
-    text.replace([REF_CODE_MARK_OPEN, REF_CODE_MARK_CLOSE], "")
-}
-
-/// Split prepared text into ordinary and slow reference-code segments.
-///
-/// Punctuation-only fragments are retained with the preceding segment, matching
-/// the Python pipeline's protection against a stray final phoneme.
-pub fn split_prepared_by_reference_codes(text: &str) -> Vec<PreparedSegment> {
-    let mut segments = Vec::new();
-    let mut ordinary = String::new();
-    let mut slow = String::new();
-    let mut in_slow = false;
-
-    let push = |text: &mut String, is_reference_code, out: &mut Vec<PreparedSegment>| {
-        let value = text.trim();
-        if !value.is_empty() {
-            out.push(PreparedSegment {
-                text: value.to_owned(),
-                is_reference_code,
-            });
-        }
-        text.clear();
-    };
-
-    for character in text.chars() {
-        match character {
-            REF_CODE_MARK_OPEN if !in_slow => {
-                push(&mut ordinary, false, &mut segments);
-                in_slow = true;
-            }
-            REF_CODE_MARK_CLOSE if in_slow => {
-                push(&mut slow, true, &mut segments);
-                in_slow = false;
-            }
-            _ if in_slow => slow.push(character),
-            _ => ordinary.push(character),
-        }
-    }
-    if in_slow {
-        ordinary.push(REF_CODE_MARK_OPEN);
-        ordinary.push_str(&slow);
-    }
-    push(&mut ordinary, false, &mut segments);
-
-    let mut merged: Vec<PreparedSegment> = Vec::new();
-    for segment in segments {
-        if segment
-            .text
-            .chars()
-            .all(|c| matches!(c, '.' | '!' | '?' | ',' | ';' | ':' | '…'))
-            && !merged.is_empty()
-        {
-            merged
-                .last_mut()
-                .expect("not empty")
-                .text
-                .push_str(&segment.text);
-        } else {
-            merged.push(segment);
-        }
-    }
-    if merged.is_empty() {
-        merged.push(PreparedSegment {
-            text: strip_reference_code_markers(text).trim().to_owned(),
-            is_reference_code: false,
-        });
-    }
-    merged
-}
-
-/// Normalize structured text while preserving ordinary Hebrew words **and**
-/// their niqqud.
-pub fn normalize_for_speech(text: &str) -> String {
-    let heading = regex!(r"(?m)^\s{0,3}#{1,6}\s+");
-    let list = regex!(r"(?m)(^|\n)\s*(\d{1,2})[.)]\s+");
-    let email = regex!(r"(?i)[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}");
-    let phone = regex!(r"(?:\*\d{2,}|0\d{1,2}-\d{6,8})");
-    let date = regex!(r"([0-3]?\d)[/.]([01]?\d)[/.](\d{2}|\d{4})");
-    let time = regex!(r"([01]?\d|2[0-3]):([0-5]\d)");
-    let identifier = regex!(r"[A-Za-z]+(?:[-_/]?[A-Za-z0-9]+)+");
-
-    let mut text = heading.replace_all(text, "").into_owned();
-    text = text
-        .replace(['–', '—', '‑'], "-")
-        .replace(['[', ']', '{', '}'], " ")
-        .replace(['(', ')'], ",");
-    text = normalize_hebrew_punctuation(&text);
-    text = list
-        .replace_all(&text, |caps: &Captures| {
-            format!(
-                "{}{}. ",
-                &caps[1],
-                list_number(caps[2].parse().unwrap_or(0))
-            )
-        })
-        .into_owned();
-    text = email
-        .replace_all(&text, |caps: &Captures| expand_email(&caps[0]))
-        .into_owned();
-    text = phone
-        .replace_all(&text, |caps: &Captures| expand_phone(&caps[0]))
-        .into_owned();
-    text = date
-        .replace_all(&text, |caps: &Captures| expand_date(caps))
-        .into_owned();
-    text = time
-        .replace_all(&text, |caps: &Captures| expand_time(caps))
-        .into_owned();
-    text = identifier
-        .replace_all(&text, |caps: &Captures| expand_identifier(&caps[0]))
-        .into_owned();
-    normalize_punctuation(&text)
-}
-
-/// Prepare text for the G2P of its language, as the BlueV3 front end does.
-///
-/// English, German, Spanish, Italian and Russian go to polyg2p as written: it
-/// reads numbers, dates, money and abbreviations itself, and the model's
-/// labels were made from its reading of raw text. Only helper markup comes
-/// out here.
-///
-/// Hebrew is normalised to spoken Hebrew first, a paragraph at a time so a
-/// blank line still separates chunks. This intentionally keeps `<en>…</en>`
-/// spans and `【…】` pacing spans in the output; the G2P and synthesis layers
-/// consume those markers later.
-///
-/// Markup that is not an inline language tag (`<b>`, `<br/>`) is never
-/// spoken, in any language.
-pub fn prepare_text_for_synthesis(text: &str, lang: &str) -> String {
-    let lang = canonical_lang(lang);
-    let text = strip_synthesis_tags(&strip_helper_markup(text));
-    if lang != "he" {
-        return text.trim().to_owned();
-    }
-    // List numbers while line starts are still there to tell a list from a
-    // number that ends a sentence; the normaliser would drop a leading "1."
-    // as Markdown instead of reading it.
-    let text = expand_list_markers(&text, &lang);
-    regex!(r"\n\s*\n")
-        .split(&text)
-        .map(prepare_hebrew_paragraph)
-        .filter(|paragraph| !paragraph.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n\n")
-}
-
-fn prepare_hebrew_paragraph(text: &str) -> String {
-    let lang = "he";
-    let mut text = normalize_common_text(text);
-    // Letter labels first: a label is written out with its vowel points so
-    // the G2P cannot read it as a word.
-    text = expand_letter_labels(&text);
-    // English runs and inline language spans keep their digits for their
-    // own G2P: nothing below reads them as Hebrew.
-    let (masked, spans) = mask_foreign_runs(&text);
-    // Then the normaliser, while the text still has the gershayim it reads
-    // abbreviations and units by.
-    text = hebrew_normalize(&masked);
-    text = normalize_hebrew_punctuation(&text);
-    text = expand_geresh_loanwords(&text);
-    text = expand_dialogue_quotes(&text);
-    text = expand_prefixes_before_latin(&text);
-    text = expand_lamed_before_latin(&text);
-    text = expand_alphanumeric_codes(&text, lang);
-    text = expand_plus_sign(&text, lang);
-    text = expand_phone_numbers(&text);
-    text = expand_times(&text);
-    text = expand_dates(&text);
-    // What is left of digit:digit after the normaliser and the times is a
-    // ratio (3:1), read before the digits become words.
-    text = expand_ratios(&text, lang);
-    // Hebrew number words depend on gender, on the noun that follows and
-    // on whether the digits are a year, an ordinal or a range, so Hebrew
-    // gets its own pass and leaves nothing for the generic ones below.
-    text = normalize_hebrew_numbers(&text);
-    text = expand_percent_symbols(&text, lang);
-    text = expand_numbers(&text, lang);
-    text = colon_pauses(&text);
-    unmask_foreign_runs(&strip_silent_separator_tokens(&text), &spans)
-}
-
-/// MamboTTS reads a colon that ends a phrase (`תשובה ב׳: …`) as a sentence
-/// pause. A colon inside a token (a URL, `a:b`) is not a pause.
-fn colon_pauses(text: &str) -> String {
-    regex!(r"\s*:+(\s|$)").replace_all(text, ". ").into_owned()
-}
-
-/// Placeholder delimiters for text the Hebrew passes must not touch: marks
-/// the normaliser passes through as they are (it mangles private-use ones).
-const MASK_OPEN: char = '⟦';
-const MASK_CLOSE: char = '⟧';
-/// Digits of a placeholder's index, runic `ᚠ` for 0 to `ᚩ` for 9.
-const MASK_DIGIT: u32 = 0x16a0;
-
-fn mask(spans: &mut Vec<String>, value: String) -> String {
-    let index = spans.len();
-    spans.push(value);
-    let digits: String = index
-        .to_string()
-        .chars()
-        .filter_map(|d| char::from_u32(MASK_DIGIT + d.to_digit(10)?))
-        .collect();
-    format!("{MASK_OPEN}{digits}{MASK_CLOSE}")
-}
-
-fn unmask_foreign_runs(text: &str, spans: &[String]) -> String {
-    if spans.is_empty() {
-        return text.to_owned();
-    }
-    regex!("⟦([\u{16a0}-\u{16a9}]+)⟧")
-        .replace_all(text, |caps: &Captures| {
-            let index: String = caps[1]
-                .chars()
-                .filter_map(|c| char::from_digit(c as u32 - MASK_DIGIT, 10))
-                .collect();
-            index
-                .parse::<usize>()
-                .ok()
-                .and_then(|index| spans.get(index).cloned())
-                .unwrap_or_default()
-        })
+/// `text.replace(/\s+/g, ' ')` in JavaScript.
+pub(crate) fn js_collapse_spaces(text: &str) -> String {
+    regex!(&format!("{JS_S}+"))
+        .replace_all(text, " ")
         .into_owned()
 }
 
-/// Hide from the Hebrew passes what is not Hebrew to read: inline spans in
-/// another language (`<en>…</en>`), stray language tags, and runs of English
-/// (two or more Latin words with no Hebrew letter between them, or the whole
-/// text when it has no Hebrew at all). A run is wrapped as `<en>` a sentence
-/// at a time, so its numbers are read by the English G2P, and a number next
-/// to Hebrew stays Hebrew.
-fn mask_foreign_runs(text: &str) -> (String, Vec<String>) {
-    let mut spans = Vec::new();
-    let text = regex!(r"(?is)<(en|en-us|es|de|ge|it|ru)>.*?</(?:en|en-us|es|de|ge|it|ru)>")
-        .replace_all(text, |caps: &Captures| mask(&mut spans, caps[0].to_owned()))
-        .into_owned();
-    let text = regex!(r"(?i)</?(?:he|en|en-us|es|de|ge|it|ru)>")
-        .replace_all(&text, |caps: &Captures| {
-            mask(&mut spans, caps[0].to_owned())
-        })
-        .into_owned();
-    let no_hebrew = !text.chars().any(is_hebrew_letter);
-    let latin_words = |run: &str| {
-        run.split_whitespace()
-            .filter(|word| word.chars().any(is_latin_letter))
-            .count()
-    };
-    let text = regex!("[^\u{0590}-\u{05ff}⟦⟧\u{16a0}-\u{16a9}]+")
-        .replace_all(&text, |caps: &Captures| {
-            let run = &caps[0];
-            let words = latin_words(run);
-            if words == 0 || (words < 2 && !no_hebrew) {
-                return run.to_owned();
-            }
-            // From the first Latin letter to the last letter or digit, and
-            // the sentence marks right after it.
-            let Some(start) = run.find(is_latin_letter) else {
-                return run.to_owned();
-            };
-            let mut end = run.rfind(char::is_alphanumeric).map_or(run.len(), |i| {
-                i + run[i..].chars().next().map_or(1, char::len_utf8)
-            });
-            end += run[end..]
-                .find(|c: char| !matches!(c, '.' | '!' | '?' | '…'))
-                .unwrap_or(run.len() - end);
-            if end <= start {
-                return run.to_owned();
-            }
-            let wrapped = crate::chunking::split_sentences_text(&run[start..end])
-                .iter()
-                .map(|sentence| format!("<en>{sentence}</en>"))
-                .collect::<Vec<_>>()
-                .join(" ");
-            format!(
-                "{}{}{}",
-                &run[..start],
-                mask(&mut spans, wrapped),
-                &run[end..]
-            )
-        })
-        .into_owned();
-    (text, spans)
+/// `canonicalLang`: `ge` is `de`, `en-us` is `en`, `ru-ru` is `ru`, lowercase.
+pub fn canonical_lang(lang: &str) -> String {
+    let lower = lang.to_lowercase();
+    match lower.as_str() {
+        "ge" => "de".to_owned(),
+        "en-us" => "en".to_owned(),
+        "ru-ru" => "ru".to_owned(),
+        _ => lower,
+    }
 }
 
-fn is_latin_letter(character: char) -> bool {
-    character.is_ascii_alphabetic()
-        || (('\u{c0}'..='\u{24f}').contains(&character) && character.is_alphabetic())
+/// `prepareText(text, lang, heNormalize)`: the text a language's G2P reads.
+pub fn prepare_text(text: &str, lang: &str) -> String {
+    match canonical_lang(lang).as_str() {
+        "ru" => {
+            let text = prepare_text_for_synthesis_ru(text).replace(['【', '】'], " ");
+            js_trim(&regex!(r"[ \t]+").replace_all(&text, " ")).to_owned()
+        }
+        "he" => js_trim(&hebrew_normalize(text)).to_owned(),
+        _ => js_trim(text).to_owned(),
+    }
 }
 
-/// Remove XML-like markup that is not an inline language tag, so tag names
-/// are never spoken (the reference's `_strip_synthesis_tags`).
-fn strip_synthesis_tags(text: &str) -> String {
-    let stripped = regex!(r"</?([A-Za-z][A-Za-z0-9_:-]*)(\s[^<>]*)?/?>").replace_all(
-        text,
-        |caps: &Captures| {
-            let whole = &caps[0];
-            let language = matches!(
-                caps[1].to_ascii_lowercase().as_str(),
-                "en" | "en-us" | "he" | "es" | "de" | "ge" | "it" | "ru"
-            );
-            if language && caps.get(2).is_none() && !whole.ends_with("/>") {
-                whole.to_owned()
-            } else {
-                " ".to_owned()
-            }
-        },
-    );
-    // Only the spaces a removed tag left behind; line breaks stay.
-    regex!(r"[^\S\n]{2,}")
-        .replace_all(&stripped, " ")
-        .into_owned()
-}
-
-/// The release's Hebrew text normaliser (heb-tts-normalizer at its default
-/// reading style: 12-hour clock, day-month-year dates): numbers by gender,
-/// ordinals, dates, times, currency, percent, units and abbreviations become
-/// spoken Hebrew. What it leaves is read by the expanders that follow.
+/// heb-tts-normalizer 0.2.0 at its default reading style, the site's
+/// `heNormalize` (its wasm build of the same crate).
 fn hebrew_normalize(text: &str) -> String {
     static CONFIG: OnceLock<heb_tts_normalizer::Config> = OnceLock::new();
     heb_tts_normalizer::normalize(text, CONFIG.get_or_init(Default::default))
 }
 
-fn canonical_lang(lang: &str) -> String {
-    match lang.to_ascii_lowercase().as_str() {
-        "en-us" => "en".to_owned(),
-        "ge" => "de".to_owned(),
-        value => value.to_owned(),
-    }
+/// One `<xx>…</xx>` inline span (`/<(\w+)>([\s\S]*?)<\/\1>/g`): the whole
+/// match, the tag name and the content, as byte ranges.
+pub(crate) struct InlineSpan {
+    pub start: usize,
+    pub end: usize,
+    pub name: String,
+    pub content: (usize, usize),
 }
 
-fn strip_helper_markup(text: &str) -> String {
-    let block = regex!(r"(?is)<lang_list\b[^>]*>.*?</lang_list>");
-    let tag = regex!(r"(?i)</?lang_list\b[^>]*>");
-    tag.replace_all(&block.replace_all(text, " "), " ")
-        .into_owned()
-}
-
-fn normalize_common_text(text: &str) -> String {
-    let heading = regex!(r"(?m)(^|\s)#{1,6}\s*");
-    let mut text = heading.replace_all(text, "$1").into_owned();
-    text = text
-        .replace(['(', '[', '{'], ", ")
-        .replace([')', ']', '}'], ", ");
-    text = normalize_punctuation(&text);
-    regex!(r"(?i)\banymore\b")
-        .replace_all(&text, |caps: &Captures| {
-            if caps[0].starts_with('A') {
-                "Any more"
-            } else {
-                "any more"
+pub(crate) fn inline_lang_spans(text: &str) -> Vec<InlineSpan> {
+    fregex!(r"<([A-Za-z0-9_]+)>([\s\S]*?)</\1>")
+        .captures_iter(text)
+        .filter_map(Result::ok)
+        .map(|caps| {
+            let all = caps.get(0).expect("whole match");
+            let content = caps.get(2).expect("content");
+            InlineSpan {
+                start: all.start(),
+                end: all.end(),
+                name: caps[1].to_owned(),
+                content: (content.start(), content.end()),
             }
         })
-        .into_owned()
+        .collect()
 }
 
-fn mark_slow_segment(text: impl AsRef<str>) -> String {
-    format!("{REF_CODE_MARK_OPEN}{}{REF_CODE_MARK_CLOSE}", text.as_ref())
+/// `hasInlineLang`: the text has an inline `<xx>…</xx>` span, which turns on
+/// blue_onnx's mixed-language pace blend.
+pub fn has_inline_lang(text: &str) -> bool {
+    !inline_lang_spans(text).is_empty()
 }
 
-fn expand_letter_labels(text: &str) -> String {
-    // A lone letter with a geresh is a letter name or an ordinal (דגניה ב׳,
-    // כיתה ג׳, סעיף א׳). A letter right after the geresh makes it a loanword
-    // instead (ג׳אז, צ׳יפס), which stays intact. Niqqud may sit on the letter.
-    let chars: Vec<char> = text.chars().collect();
-    let is_quote = |c: char| matches!(c, '׳' | '\'' | '’' | '"' | '״');
-    let is_word = |c: char| c.is_alphanumeric() || is_nikud(c);
-    let mut output = String::with_capacity(text.len());
-    let mut index = 0;
-    while index < chars.len() {
-        let character = chars[index];
-        if let Some(name) = letter_name(character) {
-            // An opening quote may precede the letter, but not a geresh or
-            // gershayim that belongs to the word before it.
-            let starts_word = match index.checked_sub(1).map(|i| chars[i]) {
-                None => true,
-                Some(c) if is_quote(c) => index
-                    .checked_sub(2)
-                    .is_none_or(|i| chars[i].is_whitespace()),
-                Some(c) => !is_word(c),
-            };
-            let mut end = index + 1;
-            while chars.get(end).copied().is_some_and(is_nikud) {
-                end += 1;
-            }
-            let geresh = matches!(chars.get(end), Some('׳' | '\'' | '’'));
-            // A closing quote may follow, but a second quote mark inside a
-            // word (ט''ו) is gershayim typed twice, not a label.
-            let ends_word = |at: usize| chars.get(at).is_none_or(|&c| !is_word(c));
-            let ends_word = match chars.get(end + 1) {
-                Some(&c) if is_quote(c) => ends_word(end + 2),
-                _ => ends_word(end + 1),
-            };
-            if starts_word && geresh && ends_word {
-                let name = if character == 'ה' && is_divine_name(&chars, index, end) {
-                    DIVINE_NAME
-                } else {
-                    name
-                };
-                output.push_str(name);
-                index = end + 1;
-                continue;
-            }
-        }
-        output.push(character);
-        index += 1;
+// ── prepareTextForSynthesis (text_norm.py), for Russian ─────────────────────
+
+const PERCENT_WORD_RU: &str = "процентов";
+const PERCENT_WORD_EN: &str = "percent";
+const RATIO_WORD_RU: &str = "к";
+const RATIO_WORD_EN: &str = "to";
+const PLUS_WORD_RU: &str = "плюс";
+
+/// `EMOJI_RE` of the site.
+pub(crate) fn emoji_re() -> &'static regex::Regex {
+    regex!(concat!(
+        "[\u{1f600}-\u{1f64f}\u{1f300}-\u{1f5ff}\u{1f680}-\u{1f6ff}\u{1f700}-\u{1f77f}",
+        "\u{1f780}-\u{1f7ff}\u{1f800}-\u{1f8ff}\u{1f900}-\u{1f9ff}\u{1fa00}-\u{1fa6f}",
+        "\u{1fa70}-\u{1faff}\u{2600}-\u{26ff}\u{2700}-\u{27bf}\u{1f1e6}-\u{1f1ff}]+",
+    ))
+}
+
+/// `stripEmoji`: pictographs out, whitespace collapsed, trimmed.
+pub(crate) fn strip_emoji(text: &str) -> String {
+    let text = emoji_re().replace_all(text, " ");
+    js_trim(&js_collapse_spaces(&text)).to_owned()
+}
+
+/// `replace_all` with a `fancy_regex`, a match at a time.
+fn freplace_all<F>(re: &fancy_regex::Regex, text: &str, mut f: F) -> String
+where
+    F: FnMut(&fancy_regex::Captures) -> String,
+{
+    let mut out = String::with_capacity(text.len());
+    let mut last = 0;
+    for caps in re.captures_iter(text).filter_map(Result::ok) {
+        let m = caps.get(0).expect("whole match");
+        out.push_str(&text[last..m.start()]);
+        out.push_str(&f(&caps));
+        last = m.end();
     }
-    output
+    out.push_str(&text[last..]);
+    out
 }
 
-/// How a lone ה׳ reads when it is the divine name, pointed so RenikudPlus
-/// says "hashem" rather than guessing.
-const DIVINE_NAME: &str = "הַשֵּׁם";
-
-/// Words after which a lone ה׳ is a label or an ordinal (כיתה ה׳, סעיף ה׳)
-/// and not the divine name. Words that also pair with the name (בית ה׳,
-/// שער ה׳, ספר ה׳) are left out on purpose.
-const LABEL_WORDS: &[&str] = &[
-    "כיתה",
-    "כתה",
-    "סעיף",
-    "סעיפים",
-    "תת",
-    "יום",
-    "חלק",
-    "תשובה",
-    "אפשרות",
-    "פרק",
-    "שלב",
-    "עמוד",
-    "דף",
-    "שורה",
-    "טור",
-    "קומה",
-    "בניין",
-    "מבנה",
-    "אגף",
-    "גוש",
-    "חלקה",
-    "רמה",
-    "דרגה",
-    "סוג",
-    "מס",
-    "מספר",
-    "סימן",
-    "פסקה",
-    "שאלה",
-    "נספח",
-    "טבלה",
-    "איור",
-    "תרשים",
-    "כרך",
-    "מהדורה",
-    "שנה",
-    "שנת",
-    "שכבה",
-    "קבוצה",
-    "מחלקה",
-    "דירה",
-    "חדר",
-    "אולם",
-    "תחנה",
-    "רציף",
-    "עמדה",
-    "משימה",
-    "תרגיל",
-    "מבחן",
-    "בחינה",
-    "מועד",
-    "שיעור",
-    "רבעון",
-    "סמסטר",
-    "תקנה",
-    "מקרה",
-    "תנאי",
-    "אות",
-    "ערך",
-    "פריט",
-    "רשימה",
-    "כלל",
-    "מסלול",
-    "שדה",
-    "מקצה",
-    "סבב",
-    "מחזור",
-];
-
-/// Months after a lone ה׳ make it a date (ה׳ באייר), read as the letter.
-const MONTHS: &[&str] = &[
-    "תשרי",
-    "חשון",
-    "חשוון",
-    "מרחשון",
-    "מרחשוון",
-    "כסלו",
-    "כסליו",
-    "טבת",
-    "שבט",
-    "אדר",
-    "ניסן",
-    "אייר",
-    "איר",
-    "סיון",
-    "סיוון",
-    "תמוז",
-    "אב",
-    "אלול",
-];
-
-/// Whether the lone ה׳ at `index` (geresh at `end`) is the divine name. It is
-/// a label after a label word, before a month, or next to another lone
-/// letter with a geresh (א׳ ב׳ ג׳ ד׳ ה׳); anywhere else a bare ה׳ is
-/// overwhelmingly the name (ברוך ה׳, בעזרת ה׳, ה׳ יתברך).
-fn is_divine_name(chars: &[char], index: usize, end: usize) -> bool {
-    let is_quote = |c: char| matches!(c, '"' | '״' | '\'' | '׳' | '’');
-    let mut before = index;
-    if before > 0 && is_quote(chars[before - 1]) {
-        before -= 1;
+/// The first match only (a JavaScript regex without the `g` flag).
+fn freplace_first(re: &fancy_regex::Regex, text: &str, with: &str) -> String {
+    match re.find(text) {
+        Ok(Some(m)) => format!("{}{with}{}", &text[..m.start()], &text[m.end()..]),
+        _ => text.to_owned(),
     }
-    let mut after = end + 1;
-    if chars.get(after).copied().is_some_and(is_quote) {
-        after += 1;
+}
+
+/// `text.split(re)` with `re` one capture group around the whole pattern:
+/// the pieces between matches and the matches, in order, with a flag that
+/// says which is which.
+fn split_keep<'a>(re: &regex::Regex, text: &'a str) -> Vec<(&'a str, bool)> {
+    let mut parts = Vec::new();
+    let mut last = 0;
+    for m in re.find_iter(text) {
+        parts.push((&text[last..m.start()], false));
+        parts.push((m.as_str(), true));
+        last = m.end();
     }
-    let previous = token_before(chars, before);
-    let next = token_after(chars, after);
-    if [&previous, &next].iter().any(|token| is_lone_letter(token)) {
-        return false;
-    }
-    let previous: String = previous.chars().filter(|&c| !is_nikud(c)).collect();
-    let previous = previous.trim_end_matches(['׳', '\'', '’']);
-    let label = |word: &str| LABEL_WORDS.contains(&word);
-    if label(previous)
-        || previous
-            .strip_prefix(['ו', 'ה', 'ב', 'ל', 'מ', 'ש'])
-            .is_some_and(label)
-    {
-        return false;
-    }
-    let next: String = next.chars().filter(|&c| !is_nikud(c)).collect();
-    let next = next.trim_end_matches([',', '.', ';', ':', '!', '?']);
-    !next
-        .strip_prefix('ב')
-        .or_else(|| next.strip_prefix("ל"))
-        .is_some_and(|month| MONTHS.contains(&month))
+    parts.push((&text[last..], false));
+    parts
 }
 
-/// The whitespace-delimited token that ends right before `at`.
-fn token_before(chars: &[char], at: usize) -> String {
-    let mut end = at;
-    while end > 0 && chars[end - 1].is_whitespace() {
-        end -= 1;
-    }
-    let mut start = end;
-    while start > 0 && !chars[start - 1].is_whitespace() {
-        start -= 1;
-    }
-    chars[start..end].iter().collect()
+fn mark_slow_segment(inner: &str) -> String {
+    format!("【{inner}】")
 }
 
-/// The whitespace-delimited token that starts at or after `at`.
-fn token_after(chars: &[char], at: usize) -> String {
-    let mut start = at.min(chars.len());
-    while start < chars.len() && chars[start].is_whitespace() {
-        start += 1;
-    }
-    let mut end = start;
-    while end < chars.len() && !chars[end].is_whitespace() {
-        end += 1;
-    }
-    chars[start..end].iter().collect()
-}
-
-/// A lone letter with a geresh, as a list item (א׳, "ב׳", ג׳,).
-fn is_lone_letter(token: &str) -> bool {
-    let token = token.trim_end_matches([',', '.', ';', ':', '!', '?']);
-    let token = token.trim_matches(['"', '״']);
-    let letters: Vec<char> = token.chars().filter(|&c| !is_nikud(c)).collect();
-    matches!(letters.as_slice(), [letter, '׳' | '\'' | '’'] if is_hebrew_letter(*letter))
-}
-
-fn letter_name(letter: char) -> Option<&'static str> {
-    Some(match letter {
-        'א' => "אָלֶף",
-        'ב' => "בֵּת",
-        'ג' => "גִּימֶל",
-        'ד' => "דָּלֶת",
-        'ה' => "הֵא",
-        'ו' => "וָו",
-        'ז' => "זַיִן",
-        'ח' => "חֵית",
-        'ט' => "טֵית",
-        'י' => "יוּד",
-        'כ' => "כַּף",
-        'ל' => "לָמֶד",
-        'מ' => "מֵם",
-        'נ' => "נוּן",
-        'ס' => "סָמֶךְ",
-        'ע' => "עַיִן",
-        'פ' => "פֵּא",
-        'צ' => "צָדִי",
-        'ק' => "קוֹף",
-        'ר' => "רֵישׁ",
-        'ש' => "שִׁין",
-        'ת' => "תָּו",
-        _ => return None,
-    })
-}
-
-fn expand_geresh_loanwords(text: &str) -> String {
-    text.replace("ג'מיני", "<en>Gemini</en>")
-        .replace("ג׳מיני", "<en>Gemini</en>")
-        .replace("מנג'ר", "<en>Manager</en>")
-        .replace("מנג׳ר", "<en>Manager</en>")
-}
-
-fn expand_dialogue_quotes(text: &str) -> String {
-    let terminal = regex!(r#"(?u)(\S)\s*["“„”]\s*$"#);
-    let opening = regex!(r#"(?u)\s*:?\s*["“„”]\s*"#);
-    let closing = regex!(r#"(?u)(\S)\s*["“„”]"#);
-    let text = terminal.replace_all(text, "$1.").into_owned();
-    let text = opening.replace_all(&text, ", ").into_owned();
-    closing.replace_all(&text, "$1, ").into_owned()
-}
-
-/// Prefix letters hyphenated onto a Latin word (ה-PDF, מה-PDF, ל-Google),
-/// pointed so the model reads the prefix and not a word spelled the same
-/// (מה as "ma"). The Latin word already carries the article in speech, so
-/// ב, ל and כ take the definite patah the way they are said aloud.
-fn expand_prefixes_before_latin(text: &str) -> String {
-    let prefix = regex!(
-        r"(^|[^\p{L}\p{M}\p{N}])((?:[\u{05d0}-\u{05ea}][\u{0591}-\u{05C7}]*){1,2})[-\u{2010}\u{2011}\u{2013}\u{05be}]?([A-Za-z])"
-    );
-    prefix
-        .replace_all(text, |caps: &Captures| {
-            let pointed = match strip_nikud(&caps[2]).as_str() {
-                "ה" => "הַ",
-                "ב" => "בַּ",
-                "ל" => "לַ",
-                "כ" => "כַּ",
-                "מ" => "מִ",
-                "ו" => "וְ",
-                "ש" => "שֶׁ",
-                // The mapiq keeps the final ה sounded: bare, it reads "mea".
-                "מה" => "מֵהַּ",
-                "וה" => "וְהַ",
-                "שה" => "שֶׁהַ",
-                "וב" => "וּבַ",
-                "ול" => "וְלַ",
-                "ומ" => "וּמִ",
-                "וש" => "וְשֶׁ",
-                "שב" => "שֶׁבַּ",
-                _ => return caps[0].to_owned(),
-            };
-            format!("{}{pointed} {}", &caps[1], &caps[3])
-        })
-        .into_owned()
-}
-
-fn expand_lamed_before_latin(text: &str) -> String {
-    // A pointed ל was already read as a prefix by expand_prefixes_before_latin.
-    regex!(r"(?u)(^|[^\u{0590}-\u{05ff}])ל\s*[-\u{2013}\u{2014}\u{2011}]?\s*([A-Za-z0-9])")
-        .replace_all(text, "$1אל $2")
-        .into_owned()
-}
-
-fn expand_alphanumeric_codes(text: &str, lang: &str) -> String {
-    let token = regex!(r"(?i)[a-z0-9]+(?:[-_/][a-z0-9]+)*");
-    token
-        .replace_all(text, |caps: &Captures| {
-            let value = &caps[0];
-            let letters = value.chars().filter(|c| c.is_ascii_alphabetic()).count();
-            let digits = value.chars().filter(|c| c.is_ascii_digit()).count();
-            if letters == 0 || digits == 0 || (letters < 2 && digits < 2) {
-                return value.to_owned();
-            }
-            let letter_block = value
-                .chars()
-                .filter(|c| c.is_ascii_alphabetic())
-                .map(|c| c.to_ascii_uppercase().to_string())
-                .collect::<Vec<_>>()
-                .join(" ");
-            let digits = value
-                .split(['-', '_', '/'])
-                .filter_map(|part| {
-                    let digits: String = part.chars().filter(|c| c.is_ascii_digit()).collect();
-                    (!digits.is_empty()).then(|| spell_digits_lang(&digits, lang))
-                })
-                .collect::<Vec<_>>()
-                .join(" , ");
-            let letters = if letter_block.is_empty() {
-                String::new()
-            } else {
-                format!("<en>{letter_block}</en>")
-            };
-            mark_slow_segment(format!("{} {} .", letters, digits).trim())
-        })
-        .into_owned()
-}
-
-/// A list number at the start of a line, before Hebrew text (`1. אמר`), as
-/// the reference's `_LIST_MARKER_RE` reads one. A number that ends a
-/// sentence (`הוא בן 21. הוא`) is left to the normaliser.
-fn expand_list_markers(text: &str, lang: &str) -> String {
-    regex!("(?m)^([ \t]*)(\\d{1,2})\\.[ \t]+([\u{0590}-\u{05ff}\"'(<״“])")
-        .replace_all(text, |caps: &Captures| {
-            let n: u8 = caps[2].parse().unwrap_or_default();
-            let word = if lang == "he" {
-                list_number(n)
-            } else {
-                number_to_words(u16::from(n), lang)
-            };
-            format!("{}{}. {}", &caps[1], word, &caps[3])
-        })
-        .into_owned()
-}
-
-fn expand_plus_sign(text: &str, lang: &str) -> String {
-    let word = match lang {
-        "he" => "פלוס",
-        "es" => "más",
-        "it" => "più",
-        _ => "plus",
-    };
-    regex!(r"\s+\+\s+")
-        .replace_all(text, format!(" {word} "))
-        .into_owned()
-}
-
-fn expand_phone_numbers(text: &str) -> String {
-    let phone = regex!(r"(?x)(?:\*\d{2,}|0\d{0,2}-\d{6,8})");
-    phone
-        .replace_all(text, |caps: &Captures| {
-            let raw = &caps[0];
-            let prefix = if raw.starts_with('*') {
-                "כוכבית "
-            } else {
-                ""
-            };
-            mark_slow_segment(format!("{prefix}{}", spell_digits(raw)))
-        })
-        .into_owned()
-}
-
-fn expand_times(text: &str) -> String {
-    let time = regex!(r"([01]?\d|2[0-3]):([0-5]\d)");
-    time.replace_all(text, |caps: &Captures| {
-        let hour = caps[1].parse::<u16>().unwrap_or_default();
-        let minute = caps[2].parse::<u16>().unwrap_or_default();
-        let spoken = if minute == 0 {
-            number_to_words(hour, "he")
-        } else {
-            format!(
-                "{} ו{}",
-                number_to_words(hour, "he"),
-                number_to_words(minute, "he")
-            )
-        };
-        mark_slow_segment(spoken)
-    })
-    .into_owned()
-}
-
-fn expand_dates(text: &str) -> String {
-    let date = regex!(r"([0-3]?\d)[/.]([01]?\d)[/.](\d{2}|\d{4})");
-    date.replace_all(text, |caps: &Captures| {
-        let day = caps[1].parse::<u16>().unwrap_or_default();
-        let month = caps[2].parse::<usize>().unwrap_or_default();
-        let mut year = caps[3].parse::<u16>().unwrap_or_default();
-        if caps[3].len() == 2 {
-            year += if year < 70 { 2000 } else { 1900 };
-        }
-        let ordinals = [
-            "",
-            "לראשון",
-            "לשני",
-            "לשלישי",
-            "לרביעי",
-            "לחמישי",
-            "לשישי",
-            "לשביעי",
-            "לשמיני",
-            "לתשיעי",
-            "לעשירי",
-            "לאחד עשר",
-            "לשנים עשר",
-        ];
-        if !(1..=31).contains(&day) || month == 0 || month >= ordinals.len() {
-            caps[0].to_owned()
-        } else {
-            mark_slow_segment(format!(
-                "{} {} {}",
-                number_to_words(day, "he"),
-                ordinals[month],
-                number_to_words(year, "he")
-            ))
-        }
-    })
-    .into_owned()
-}
-
-fn expand_percent_symbols(text: &str, lang: &str) -> String {
-    let word = match lang {
-        "he" => "אחוז",
-        "es" => "por ciento",
-        "de" => "Prozent",
-        "it" => "per cento",
-        _ => "percent",
-    };
-    regex!(r"(\d+(?:[.,]\d+)?)\s*%")
-        .replace_all(text, format!("$1 {word}"))
-        .into_owned()
-}
-
-fn expand_ratios(text: &str, lang: &str) -> String {
-    let word = match lang {
-        "he" => "ל",
-        "de" => "zu",
-        _ => "to",
-    };
-    regex!(r"(\d+)\s*:\s*(\d+)")
-        .replace_all(text, format!("$1 {word} $2"))
-        .into_owned()
-}
-
-fn expand_numbers(text: &str, lang: &str) -> String {
-    let numbers = regex!(r"\d+(?:[.,]\d+)?");
-    numbers
-        .replace_all(text, |caps: &Captures| {
-            let raw = &caps[0];
-            if raw.contains(['.', ',']) {
-                let separator = if lang == "he" {
-                    " נקודה "
-                } else {
-                    " point "
-                };
-                raw.replace(['.', ','], separator)
-                    .split_whitespace()
-                    .map(|piece| {
-                        piece
-                            .parse::<u16>()
-                            .ok()
-                            .map_or_else(|| piece.to_owned(), |n| number_to_words(n, lang))
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            } else {
-                raw.parse::<u16>()
-                    .map(|n| number_to_words(n, lang))
-                    .unwrap_or_else(|_| spell_digits_lang(raw, lang))
-            }
-        })
-        .into_owned()
-}
-
-fn strip_silent_separator_tokens(text: &str) -> String {
-    let text = regex!(r"(?u)([\u{0590}-\u{05ff}])[-–—‑]+([A-Za-z0-9])")
-        .replace_all(text, "$1 $2")
-        .into_owned();
-    let text = regex!(r"(?u)([A-Za-z0-9])[-–—‑]+([\u{0590}-\u{05ff}])")
-        .replace_all(&text, "$1 $2")
-        .into_owned();
-    // A dash with space on both sides is a pause between phrases.
-    let text = regex!(r"([^\s,.;:!?])\s+[-–—‑]+\s+")
-        .replace_all(&text, "$1, ")
-        .into_owned();
-    let text = regex!(r"\s*[-–—‑]+\s*")
-        .replace_all(&text, " ")
-        .into_owned();
-    let text = regex!(r"\s*:+\s*").replace_all(&text, " ").into_owned();
-    regex!(r"\s+").replace_all(&text, " ").trim().to_owned()
-}
-
-fn is_nikud(character: char) -> bool {
-    // Hebrew points + cantillation, including the hatama (ole) and meteg.
-    ('\u{0591}'..='\u{05c7}').contains(&character)
-}
-
-fn normalize_hebrew_punctuation(text: &str) -> String {
-    let chars: Vec<char> = text.chars().collect();
-    let mut output = String::with_capacity(text.len());
-    for (index, character) in chars.iter().copied().enumerate() {
-        // Niqqud sits between a letter and its geresh or gershayim.
-        let previous = chars[..index].iter().rev().copied().find(|&c| !is_nikud(c));
-        let next = chars.get(index + 1).copied();
-        if matches!(character, '"' | '״')
-            && previous.is_some_and(is_hebrew_letter)
-            && next.is_some_and(is_hebrew_letter)
-        {
-            continue;
-        }
-        if character == '\''
-            && matches!(previous, Some('ג' | 'צ' | 'ז'))
-            && next.is_some_and(is_hebrew_letter)
-        {
-            output.push('׳');
-            continue;
-        }
-        // A hyphen or maqaf between Hebrew words joins a compound (בית-ספר,
-        // תל-אביב) whose parts are still said as separate words. Only a prefix
-        // hyphenated onto its word (ו-ירושלים) is one word.
-        if matches!(character, '-' | '\u{05be}')
-            && previous.is_some_and(is_hebrew_letter)
-            && next.is_some_and(is_hebrew_letter)
-        {
-            if !is_hyphenated_prefix(&chars[..index]) {
-                output.push(' ');
-            }
-            continue;
-        }
-        output.push(character);
-    }
-    output
-}
-
-/// Whether the word that `before` ends with is a bare prefix (ו, ה, ב, ל,
-/// כ, מ, ש, or a cluster such as וה or שה) rather than a word of its own.
-fn is_hyphenated_prefix(before: &[char]) -> bool {
-    let start = before
-        .iter()
-        .rposition(|&c| !is_hebrew_letter(c) && !is_nikud(c))
-        .map_or(0, |i| i + 1);
-    let word: String = before[start..].iter().filter(|&&c| !is_nikud(c)).collect();
-    matches!(
-        word.as_str(),
-        "ו" | "ה"
-            | "ב"
-            | "ל"
-            | "כ"
-            | "מ"
-            | "ש"
-            | "וה"
-            | "שה"
-            | "וב"
-            | "ול"
-            | "ומ"
-            | "וש"
-            | "וכ"
-    )
-}
-
-fn normalize_punctuation(text: &str) -> String {
-    let text = text.replace('…', ",");
-    let dots = regex!(r"\.{2,}");
-    let bangs = regex!(r"!{2,}");
-    let questions = regex!(r"\?{2,}");
-    let commas = regex!(r",{2,}");
-    let whitespace = regex!(r"\s+");
-    let text = dots.replace_all(&text, ",");
-    let text = bangs.replace_all(&text, "!");
-    let text = questions.replace_all(&text, "?");
-    let text = commas.replace_all(&text, ",");
-    whitespace.replace_all(&text, " ").trim().to_owned()
-}
-
-fn expand_email(email: &str) -> String {
-    let (local, domain) = email.split_once('@').expect("email regex contains @");
-    let local = local.replace(['.', '_'], " dot ").replace('-', " dash ");
-    let domain = domain
-        .split('.')
-        .map(|part| {
-            if part.len() <= 2 && part.chars().all(|c| c.is_ascii_alphabetic()) {
-                part.chars()
-                    .map(|c| c.to_string())
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            } else {
-                part.to_owned()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" dot ");
-    format!("{local} at {domain}")
-}
-
-fn expand_phone(phone: &str) -> String {
-    let prefix = if phone.starts_with('*') {
-        "כוכבית "
+fn maybe_slow(inner: String, inside_en: bool) -> String {
+    if inside_en {
+        inner
     } else {
-        ""
-    };
-    format!("{prefix}{}.", spell_digits(phone))
-}
-
-fn expand_time(caps: &Captures) -> String {
-    format!(
-        "שעה {} ו{}",
-        spell_digits(&format!("{:0>2}", &caps[1])),
-        spell_digits(&caps[2])
-    )
-}
-
-fn expand_date(caps: &Captures) -> String {
-    let day = caps[1].parse::<u8>().unwrap_or(0);
-    let month = caps[2].parse::<u8>().unwrap_or(0);
-    let Some(month_name) = month_name(month) else {
-        return caps[0].to_owned();
-    };
-    if !(1..=31).contains(&day) {
-        return caps[0].to_owned();
+        mark_slow_segment(&inner)
     }
-    format!(
-        "{} ב{month_name} {}",
-        spell_digits(&caps[1]),
-        spell_digits(&caps[3])
-    )
 }
 
-fn expand_identifier(token: &str) -> String {
-    let letters: Vec<_> = token
-        .chars()
-        .filter(|character| character.is_ascii_alphabetic())
-        .map(|character| character.to_ascii_uppercase())
-        .collect();
-    if letters.is_empty() || !token.chars().any(|character| character.is_ascii_digit()) {
-        return token.to_owned();
-    }
-    let digit_groups = token
-        .split(['-', '_', '/'])
-        .filter(|part| part.chars().any(|character| character.is_ascii_digit()))
-        .map(spell_digits)
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>();
-    let letters = letters
+/// `_map_en_spans`: `f(segment, lang, inside_en)` over the parts of `text`,
+/// `<en>…</en>` spans with their own language.
+fn map_en_spans<F>(text: &str, lang: &str, mut f: F) -> String
+where
+    F: FnMut(&str, &str, bool) -> String,
+{
+    split_keep(regex!(r"(?i)<en>[\s\S]*?</en>"), text)
         .into_iter()
-        .map(|letter| letter.to_string())
-        .collect::<Vec<_>>()
-        .join(" ");
-    format!("{letters} {}.", digit_groups.join(", "))
+        .map(|(part, is_en)| {
+            if is_en {
+                format!("<en>{}</en>", f(&part[4..part.len() - 5], "en", true))
+            } else {
+                f(part, lang, false)
+            }
+        })
+        .collect()
 }
 
-fn spell_digits(text: &str) -> String {
-    spell_digits_lang(text, "he")
+/// num2words for the languages the Russian path reaches: Russian
+/// cardinals; `None` where the site's num2words would give a spelling this
+/// port does not carry (English inside an `<en>` span of Russian text) or
+/// none at all.
+fn spoken_number(value: f64, lang: &str, is_float: bool) -> Option<String> {
+    if !value.is_finite() || !(0.0..1e15).contains(&value) {
+        return None;
+    }
+    match lang {
+        "ru" => ru_cardinal(value, is_float),
+        _ => None,
+    }
 }
 
-fn spell_digits_lang(text: &str, lang: &str) -> String {
-    let words = match lang {
-        "he" => [
-            "אפס",
-            "אחת",
-            "שתיים",
-            "שלוש",
-            "ארבע",
-            "חמש",
-            "שש",
-            "שבע",
-            "שמונה",
-            "תשע",
-        ],
-        _ => [
-            "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
-        ],
-    };
-    text.chars()
-        .filter_map(|digit| digit.to_digit(10).map(|digit| words[digit as usize]))
+fn spoken_digits(digits: &str, lang: &str) -> String {
+    digits
+        .chars()
+        .filter(char::is_ascii_digit)
+        .filter_map(|d| spoken_number(f64::from(d.to_digit(10).unwrap_or(0)), lang, false))
+        .filter(|w| !w.is_empty())
         .collect::<Vec<_>>()
         .join(" ")
 }
 
-fn number_to_words(number: u16, lang: &str) -> String {
-    if lang != "he" {
-        return match number {
-            0 => "zero".to_owned(),
-            1 => "one".to_owned(),
-            2 => "two".to_owned(),
-            3 => "three".to_owned(),
-            4 => "four".to_owned(),
-            5 => "five".to_owned(),
-            6 => "six".to_owned(),
-            7 => "seven".to_owned(),
-            8 => "eight".to_owned(),
-            9 => "nine".to_owned(),
-            10 => "ten".to_owned(),
-            11 => "eleven".to_owned(),
-            12 => "twelve".to_owned(),
-            13 => "thirteen".to_owned(),
-            14 => "fourteen".to_owned(),
-            15 => "fifteen".to_owned(),
-            16 => "sixteen".to_owned(),
-            17 => "seventeen".to_owned(),
-            18 => "eighteen".to_owned(),
-            19 => "nineteen".to_owned(),
-            20 => "twenty".to_owned(),
-            _ => spell_digits_lang(&number.to_string(), lang),
-        };
-    }
-    let units = [
-        "אפס",
-        "אחת",
-        "שתיים",
-        "שלוש",
-        "ארבע",
-        "חמש",
-        "שש",
-        "שבע",
-        "שמונה",
-        "תשע",
-        "עשר",
-        "אחת עשרה",
-        "שתים עשרה",
-        "שלוש עשרה",
-        "ארבע עשרה",
-        "חמש עשרה",
-        "שש עשרה",
-        "שבע עשרה",
-        "שמונה עשרה",
-        "תשע עשרה",
-    ];
-    if number < 20 {
-        return units[number as usize].to_owned();
-    }
-    let tens = [
-        "",
-        "",
-        "עשרים",
-        "שלושים",
-        "ארבעים",
-        "חמישים",
-        "שישים",
-        "שבעים",
-        "שמונים",
-        "תשעים",
-    ];
-    if number < 100 {
-        let ten = number / 10;
-        let remainder = number % 10;
-        return if remainder == 0 {
-            tens[ten as usize].to_owned()
-        } else {
-            format!("{} ו{}", tens[ten as usize], units[remainder as usize])
-        };
-    }
-    if number < 1_000 {
-        let hundred = number / 100;
-        let remainder = number % 100;
-        let head = match hundred {
-            1 => "מאה".to_owned(),
-            2 => "מאתיים".to_owned(),
-            n => format!("{} מאות", number_to_words(n, "he")),
-        };
-        return if remainder == 0 {
-            head
-        } else {
-            format!("{head} {}", number_to_words(remainder, "he"))
-        };
-    }
-    if number < 10_000 {
-        let thousand = number / 1_000;
-        let remainder = number % 1_000;
-        let head = if thousand == 1 {
-            "אלף".to_owned()
-        } else {
-            format!("{} אלף", number_to_words(thousand, "he"))
-        };
-        return if remainder == 0 {
-            head
-        } else {
-            format!("{head} {}", number_to_words(remainder, "he"))
-        };
-    }
-    spell_digits_lang(&number.to_string(), "he")
+fn normalize_repeated_punctuation(text: &str) -> String {
+    let text = text.replace('…', ",");
+    let text = freplace_all(fregex!(r"(?<![0-9])\.{2,}(?![0-9])"), &text, |_| ",".into());
+    let text = regex!(r"!+").replace_all(&text, "!").into_owned();
+    let text = regex!(r"\?+").replace_all(&text, "?").into_owned();
+    let text = regex!(&format!(r",(?:{JS_S}*,)+"))
+        .replace_all(&text, ",")
+        .into_owned();
+    let text = freplace_all(
+        fregex!(format!(r"{JS_S}*[,;:]+{JS_S}*(?=[.!?])")),
+        &text,
+        |_| String::new(),
+    );
+    freplace_all(
+        fregex!(format!(r"(?<=[.!?]){JS_S}*[,;:]+{JS_S}*")),
+        &text,
+        |_| " ".into(),
+    )
 }
 
-fn list_number(number: u8) -> String {
-    match number {
-        1 => "אחד".to_owned(),
-        2 => "שתיים".to_owned(),
-        3 => "שלוש".to_owned(),
-        4 => "ארבע".to_owned(),
-        5 => "חמש".to_owned(),
-        6 => "שש".to_owned(),
-        7 => "שבע".to_owned(),
-        8 => "שמונה".to_owned(),
-        9 => "תשע".to_owned(),
-        10 => "עשר".to_owned(),
-        _ => number_to_words(u16::from(number), "he"),
-    }
+fn normalize_common_text(text: &str) -> String {
+    let text = regex!(&format!(r"(^|{JS_S})#{{1,6}}{JS_S}*"))
+        .replace_all(text, "$1")
+        .into_owned();
+    let text = regex!(&format!(r"{JS_S}*[(\[{{]{JS_S}*"))
+        .replace_all(&text, ", ")
+        .into_owned();
+    let text = regex!(&format!(r"{JS_S}*[)\]}}]{JS_S}*"))
+        .replace_all(&text, ", ")
+        .into_owned();
+    let text = normalize_repeated_punctuation(&text);
+    freplace_all(
+        fregex!(format!(r"(?i)(?<![{PY_W}])anymore(?![{PY_W}])")),
+        &text,
+        |caps| {
+            let first = caps[0].chars().next().unwrap_or('a');
+            if first.to_lowercase().next() != Some(first) {
+                "Any more".into()
+            } else {
+                "any more".into()
+            }
+        },
+    )
 }
 
-fn month_name(month: u8) -> Option<&'static str> {
-    Some(match month {
-        1 => "ינואר",
-        2 => "פברואר",
-        3 => "מרץ",
-        4 => "אפריל",
-        5 => "מאי",
-        6 => "יוני",
-        7 => "יולי",
-        8 => "אוגוסט",
-        9 => "ספטמבר",
-        10 => "אוקטובר",
-        11 => "נובמבר",
-        12 => "דצמבר",
-        _ => return None,
+fn expand_dialogue_quotes(text: &str) -> String {
+    let text = freplace_first(
+        fregex!(format!(r#"(?<={JS_NS}){JS_S}*["“„”]{JS_S}*$"#)),
+        text,
+        ".",
+    );
+    let text = freplace_all(
+        fregex!(format!(r#"{JS_S}*:?{JS_S}*["“„”]{JS_S}*(?={JS_NS})"#)),
+        &text,
+        |_| ", ".into(),
+    );
+    freplace_all(
+        fregex!(format!(r#"(?<={JS_NS}){JS_S}*["“„”]"#)),
+        &text,
+        |_| ", ".into(),
+    )
+}
+
+/// `emailToSpokenEnglish`.
+pub(crate) fn email_to_spoken_english(email: &str) -> String {
+    let (local, domain) = email.split_once('@').unwrap_or((email, ""));
+    let local = regex!(r"[._]+").replace_all(local, " dot ");
+    let local = regex!(r"-+").replace_all(&local, " dash ");
+    let local = regex!(r"\++").replace_all(&local, " plus ");
+    let spell = |label: &str| -> String {
+        let n = label.encode_utf16().count();
+        if n > 0 && n <= 2 && regex!(r"^\p{L}+$").is_match(label) {
+            label
+                .chars()
+                .map(String::from)
+                .collect::<Vec<_>>()
+                .join(" ")
+        } else {
+            label.to_owned()
+        }
+    };
+    let parts: Vec<String> = domain
+        .split('.')
+        .filter(|p| !p.is_empty())
+        .map(spell)
+        .collect();
+    let spoken = format!("{local} at {}", parts.join(" dot "));
+    js_trim(&js_collapse_spaces(&spoken)).to_owned()
+}
+
+fn expand_emails(text: &str, lang: &str) -> String {
+    map_en_spans(text, lang, |seg, _, inside_en| {
+        if inside_en {
+            return seg.to_owned();
+        }
+        regex!(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+            .replace_all(seg, |caps: &regex::Captures| {
+                format!("<en>{}</en>", email_to_spoken_english(&caps[0]))
+            })
+            .into_owned()
     })
 }
 
-fn is_hebrew_letter(character: char) -> bool {
-    ('\u{05d0}'..='\u{05ea}').contains(&character)
+fn should_spell_alphanumeric_token(token: &str) -> bool {
+    if token.is_empty() || token.contains('@') {
+        return false;
+    }
+    if !regex!(r"^[A-Za-z0-9][A-Za-z0-9\-_/]*$").is_match(token) {
+        return false;
+    }
+    let letters = token.chars().filter(char::is_ascii_alphabetic).count();
+    let digits = token.chars().filter(char::is_ascii_digit).count();
+    if letters == 0 || digits == 0 {
+        return false;
+    }
+    if letters < 2 && digits < 2 {
+        return false;
+    }
+    token.chars().filter(|c| !matches!(c, '-' | '_' | '/')).count() >= 3
+}
+
+fn spell_alphanumeric_code(code: &str, lang: &str) -> String {
+    let mut letters = Vec::new();
+    let mut groups = Vec::new();
+    for seg in regex!(r"[-_/]+").split(code) {
+        if seg.is_empty() {
+            continue;
+        }
+        letters.extend(
+            seg.chars()
+                .filter(char::is_ascii_alphabetic)
+                .map(|c| c.to_ascii_uppercase().to_string()),
+        );
+        let d: String = seg.chars().filter(char::is_ascii_digit).collect();
+        if !d.is_empty() {
+            groups.push(d);
+        }
+    }
+    let digit_parts: Vec<String> = groups
+        .iter()
+        .map(|g| spoken_digits(g, lang))
+        .filter(|p| !p.is_empty())
+        .collect();
+    if letters.is_empty() && digit_parts.is_empty() {
+        return String::new();
+    }
+    let letters_block = if letters.is_empty() {
+        String::new()
+    } else {
+        format!("<en>{}</en>", letters.join(" "))
+    };
+    let mut digits_block = digit_parts.join(" , ");
+    if !digits_block.is_empty() {
+        digits_block.push_str(" .");
+    }
+    let joined = [letters_block, digits_block]
+        .into_iter()
+        .filter(|b| !b.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    mark_slow_segment(&joined)
+}
+
+fn expand_alphanumeric_codes(text: &str, lang: &str) -> String {
+    map_en_spans(text, lang, |seg, l, inside_en| {
+        if inside_en {
+            return seg.to_owned();
+        }
+        freplace_all(
+            fregex!(r"(?<![A-Za-z0-9])[A-Za-z0-9]+(?:[-_/][A-Za-z0-9]+)*(?![A-Za-z0-9])"),
+            seg,
+            |caps| {
+                let token = &caps[0];
+                if !should_spell_alphanumeric_token(token) {
+                    return token.to_owned();
+                }
+                let spelled = spell_alphanumeric_code(token, l);
+                if spelled.is_empty() {
+                    token.to_owned()
+                } else {
+                    spelled
+                }
+            },
+        )
+    })
+}
+
+fn expand_list_markers(text: &str, lang: &str) -> String {
+    map_en_spans(text, lang, |seg, l, inside_en| {
+        if inside_en {
+            return seg.to_owned();
+        }
+        freplace_all(
+            fregex!(format!(
+                r#"(?<![0-9/])([0-9]{{1,2}})\.{JS_S}+(?=[\x{{0590}}-\x{{05ff}}A-Za-z"'(<])"#
+            )),
+            seg,
+            |caps| {
+                let k: f64 = caps[1].parse().unwrap_or(0.0);
+                match spoken_number(k, l, false) {
+                    Some(word) => format!("{word}. "),
+                    None => caps[0].to_owned(),
+                }
+            },
+        )
+    })
+}
+
+fn expand_plus_sign(text: &str, lang: &str) -> String {
+    map_en_spans(text, lang, |seg, l, inside_en| {
+        if inside_en {
+            return seg.to_owned();
+        }
+        let word = if l == "ru" { PLUS_WORD_RU } else { "plus" };
+        regex!(&format!(r"{JS_S}+\+{JS_S}+"))
+            .replace_all(seg, format!(" {word} ").as_str())
+            .into_owned()
+    })
+}
+
+fn expand_times(text: &str, lang: &str) -> String {
+    map_en_spans(text, lang, |seg, l, inside_en| {
+        freplace_all(
+            fregex!(r"(?<![0-9])([01]?[0-9]|2[0-3]):([0-5][0-9])(?![0-9])"),
+            seg,
+            |caps| {
+                let h: f64 = caps[1].parse().unwrap_or(0.0);
+                let mi: f64 = caps[2].parse().unwrap_or(0.0);
+                let Some(hour) = spoken_number(h, l, false) else {
+                    return caps[0].to_owned();
+                };
+                if mi == 0.0 {
+                    return maybe_slow(hour, inside_en);
+                }
+                let Some(minute) = spoken_number(mi, l, false) else {
+                    return caps[0].to_owned();
+                };
+                maybe_slow(format!("{hour} {minute}"), inside_en)
+            },
+        )
+    })
+}
+
+fn expand_dates(text: &str, lang: &str) -> String {
+    map_en_spans(text, lang, |seg, l, inside_en| {
+        freplace_all(
+            fregex!(r"(?<![0-9])([0-3]?[0-9])[/.]([01]?[0-9])[/.]([0-9]{2}|[0-9]{4})(?![0-9])"),
+            seg,
+            |caps| {
+                let day: f64 = caps[1].parse().unwrap_or(0.0);
+                let month: f64 = caps[2].parse().unwrap_or(0.0);
+                if !((1.0..=31.0).contains(&day) && (1.0..=12.0).contains(&month)) {
+                    return caps[0].to_owned();
+                }
+                let mut year: f64 = caps[3].parse().unwrap_or(0.0);
+                if caps[3].len() == 2 {
+                    year += if year < 70.0 { 2000.0 } else { 1900.0 };
+                }
+                let Some(year_word) = spoken_number(year, l, false) else {
+                    return caps[0].to_owned();
+                };
+                if l == "ru" {
+                    let day_word = spoken_number(day, "ru", false).unwrap_or_default();
+                    let month_word = spoken_number(month, "ru", false).unwrap_or_default();
+                    return maybe_slow(format!("{day_word} {month_word} {year_word}"), inside_en);
+                }
+                // Month names and ordinals of the other languages are not
+                // reached from the Russian path.
+                caps[0].to_owned()
+            },
+        )
+    })
+}
+
+fn expand_percent_symbols(text: &str, lang: &str) -> String {
+    map_en_spans(text, lang, |seg, l, _| {
+        let word = if l == "ru" {
+            PERCENT_WORD_RU
+        } else {
+            PERCENT_WORD_EN
+        };
+        let seg = regex!(&format!(r"([0-9]+(?:[.,][0-9]+)?){JS_S}*%"))
+            .replace_all(seg, format!("${{1}} {word}").as_str())
+            .into_owned();
+        seg.replace('%', &format!(" {word} "))
+    })
+}
+
+fn expand_ratios(text: &str, lang: &str) -> String {
+    map_en_spans(text, lang, |seg, l, _| {
+        let word = if l == "ru" {
+            RATIO_WORD_RU
+        } else {
+            RATIO_WORD_EN
+        };
+        freplace_all(
+            fregex!(format!(
+                r"(?<![0-9])([0-9]+){JS_S}*:{JS_S}*([0-9]+)(?![0-9])"
+            )),
+            seg,
+            |caps| format!("{} {word} {}", &caps[1], &caps[2]),
+        )
+    })
+}
+
+fn expand_numbers(text: &str, lang: &str) -> String {
+    split_keep(regex!(r"(?i)<en>[\s\S]*?</en>|【[^】]*】"), text)
+        .into_iter()
+        .map(|(part, protected)| -> Cow<'_, str> {
+            if protected {
+                return Cow::Borrowed(part);
+            }
+            let grouped = freplace_all(
+                fregex!(format!(
+                    r"(?<![{PY_W}.,])[0-9]{{1,3}}(?:,[0-9]{{3}})+(?![{PY_W}.,])"
+                )),
+                part,
+                |caps| {
+                    let value: f64 = caps[0].replace(',', "").parse().unwrap_or(f64::NAN);
+                    spoken_number(value, lang, false)
+                        .filter(|w| !w.is_empty())
+                        .unwrap_or_else(|| caps[0].to_owned())
+                },
+            );
+            Cow::Owned(freplace_all(
+                fregex!(format!(r"(?<![{PY_W}])[0-9]+(?:[.,][0-9]+)?(?![{PY_W}])")),
+                &grouped,
+                |caps| {
+                    let raw = &caps[0];
+                    let is_float = raw.contains(['.', ',']);
+                    let value: f64 = raw.replacen(',', ".", 1).parse().unwrap_or(f64::NAN);
+                    spoken_number(value, lang, is_float)
+                        .filter(|w| !w.is_empty())
+                        .unwrap_or_else(|| raw.to_owned())
+                },
+            ))
+        })
+        .collect()
+}
+
+/// `stripSilentSeparatorTokens`: dashes between scripts and stand-alone
+/// dashes and colons become spaces.
+pub(crate) fn strip_silent_separator_tokens(text: &str) -> String {
+    let text = freplace_all(
+        fregex!(r"(?<=[\x{0590}-\x{05ff}])[-–—‑]+(?=[A-Za-z0-9])"),
+        text,
+        |_| " ".into(),
+    );
+    let text = freplace_all(
+        fregex!(r"(?<=[A-Za-z0-9])[-–—‑]+(?=[\x{0590}-\x{05ff}])"),
+        &text,
+        |_| " ".into(),
+    );
+    let text = freplace_all(
+        fregex!(format!(r"(?<![A-Za-z]){JS_S}*[-–—‑]+{JS_S}*(?![A-Za-z])")),
+        &text,
+        |_| " ".into(),
+    );
+    let text = freplace_all(
+        fregex!(format!(r"(?<![0-9]){JS_S}*:+{JS_S}*(?![0-9])")),
+        &text,
+        |_| " ".into(),
+    );
+    js_trim(&js_collapse_spaces(&text)).to_owned()
+}
+
+/// `prepareTextForSynthesis(text, 'ru')`: the Hebrew-only steps are no-ops
+/// for Russian and are left out; slow spans are marked with `【…】`.
+pub(crate) fn prepare_text_for_synthesis_ru(text: &str) -> String {
+    let lang = "ru";
+    let text = regex!(&format!(r"{JS_S}*\[[^\]]*\]{JS_S}*")).replace_all(text, " ");
+    let text = strip_emoji(&text);
+    let text = normalize_common_text(&text);
+    let text = expand_dialogue_quotes(&text);
+    let text = expand_emails(&text, lang);
+    let text = expand_alphanumeric_codes(&text, lang);
+    let text = expand_list_markers(&text, lang);
+    let text = expand_plus_sign(&text, lang);
+    let text = expand_times(&text, lang);
+    let text = expand_dates(&text, lang);
+    let text = expand_percent_symbols(&text, lang);
+    let text = expand_ratios(&text, lang);
+    let text = expand_numbers(&text, lang);
+    strip_silent_separator_tokens(&text)
+}
+
+// ── num2words, Russian (lang_RU.py, nominative cardinals) ──────────────────
+
+const RU_ONES: [&[&str]; 10] = [
+    &["ноль"],
+    &["один", "одна"],
+    &["два", "две"],
+    &["три", "три"],
+    &["четыре", "четыре"],
+    &["пять"],
+    &["шесть"],
+    &["семь"],
+    &["восемь"],
+    &["девять"],
+];
+const RU_TENS: [&str; 10] = [
+    "десять",
+    "одиннадцать",
+    "двенадцать",
+    "тринадцать",
+    "четырнадцать",
+    "пятнадцать",
+    "шестнадцать",
+    "семнадцать",
+    "восемнадцать",
+    "девятнадцать",
+];
+const RU_TWENTIES: [&str; 10] = [
+    "",
+    "",
+    "двадцать",
+    "тридцать",
+    "сорок",
+    "пятьдесят",
+    "шестьдесят",
+    "семьдесят",
+    "восемьдесят",
+    "девяносто",
+];
+const RU_HUNDREDS: [&str; 10] = [
+    "",
+    "сто",
+    "двести",
+    "триста",
+    "четыреста",
+    "пятьсот",
+    "шестьсот",
+    "семьсот",
+    "восемьсот",
+    "девятьсот",
+];
+const RU_THOUSAND_STEMS: [&str; 4] = ["миллион", "миллиард", "триллион", "квадриллион"];
+const RU_BITNESS: [(&str, &str); 9] = [
+    ("десятая", "десятых"),
+    ("сотая", "сотых"),
+    ("тысячная", "тысячных"),
+    ("десятитысячная", "десятитысячных"),
+    ("стотысячная", "стотысячных"),
+    ("миллионная", "миллионных"),
+    ("десятимиллионная", "десятимиллионных"),
+    ("стомиллионная", "стомиллионных"),
+    ("миллиардная", "миллиардных"),
+];
+
+fn ru_pluralize(n: u64, forms: [&str; 3]) -> String {
+    if (11..=14).contains(&(n % 100)) {
+        return forms[2].to_owned();
+    }
+    match n % 10 {
+        1 => forms[0].to_owned(),
+        2..=4 => forms[1].to_owned(),
+        _ => forms[2].to_owned(),
+    }
+}
+
+fn ru_thousand_forms(i: usize) -> [String; 3] {
+    if i == 1 {
+        return ["тысяча".into(), "тысячи".into(), "тысяч".into()];
+    }
+    let stem = RU_THOUSAND_STEMS[i - 2];
+    [stem.to_owned(), format!("{stem}а"), format!("{stem}ов")]
+}
+
+/// `utils.splitbyx(str(n), 3)`.
+fn split_by_3(n: u64) -> Vec<u64> {
+    let s = n.to_string();
+    if s.len() <= 3 {
+        return vec![n];
+    }
+    let mut out = Vec::new();
+    let start = s.len() % 3;
+    if start > 0 {
+        out.push(s[..start].parse().unwrap_or(0));
+    }
+    let mut i = start;
+    while i < s.len() {
+        out.push(s[i..i + 3].parse().unwrap_or(0));
+        i += 3;
+    }
+    out
+}
+
+fn ru_int(n: u64, feminine: bool) -> String {
+    if n == 0 {
+        return "ноль".into();
+    }
+    let mut words: Vec<String> = Vec::new();
+    let chunks = split_by_3(n);
+    let mut i = chunks.len();
+    for x in chunks {
+        i -= 1;
+        if x == 0 {
+            continue;
+        }
+        let (ones, tens, hundreds) = ((x % 10) as usize, ((x / 10) % 10) as usize, ((x / 100) % 10) as usize);
+        if hundreds > 0 {
+            words.push(RU_HUNDREDS[hundreds].into());
+        }
+        if tens > 1 {
+            words.push(RU_TWENTIES[tens].into());
+        }
+        if tens == 1 {
+            words.push(RU_TENS[ones].into());
+        } else if ones > 0 {
+            // Thousands are feminine.
+            let f = if i == 1 { true } else if i == 0 { feminine } else { false };
+            let forms = RU_ONES[ones];
+            words.push(if f && forms.len() > 1 { forms[1] } else { forms[0] }.into());
+        }
+        if i > 0 {
+            let forms = ru_thousand_forms(i);
+            words.push(ru_pluralize(
+                x,
+                [forms[0].as_str(), forms[1].as_str(), forms[2].as_str()],
+            ));
+        }
+    }
+    words.join(" ")
+}
+
+fn ru_cardinal(value: f64, is_float: bool) -> Option<String> {
+    // JavaScript's String(number) for these magnitudes is Rust's Display.
+    let mut n = format!("{value}");
+    if is_float && !n.contains('.') {
+        n.push_str(".0");
+    }
+    let Some((left, right)) = n.split_once('.') else {
+        return Some(ru_int(n.parse().ok()?, false));
+    };
+    let (unit, units) = *RU_BITNESS.get(right.len().checked_sub(1)?)?;
+    let l: u64 = left.parse().ok()?;
+    let bit = if right.ends_with('1') && !right.ends_with("11") {
+        unit
+    } else {
+        units
+    };
+    Some(format!(
+        "{} {} {} {bit}",
+        ru_int(l, true),
+        ru_pluralize(l, ["целая", "целых", "целых"]),
+        ru_int(right.parse().ok()?, true)
+    ))
 }
 
 #[cfg(test)]
@@ -1237,292 +798,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn colon_pauses_and_answer_labels_keep_explicit_vowels() {
+    fn latin_languages_are_only_trimmed() {
         assert_eq!(
-            prepare_text_for_synthesis("לכן תשובה ב׳: אֶן קֶלְוִין", "he"),
-            "לכן תשובה בֵּת. אֶן קֶלְוִין"
+            prepare_text("  Dr. Smith paid $25 (cash).\n", "en"),
+            "Dr. Smith paid $25 (cash)."
         );
-        for quote in ["'", "׳", "’"] {
-            assert_eq!(
-                prepare_text_for_synthesis(&format!("תשובה ב{quote}"), "he"),
-                "תשובה בֵּת"
-            );
-        }
-        assert!(!prepare_text_for_synthesis("בשעה 12:30", "he").contains('.'));
-        assert_eq!(prepare_text_for_synthesis("ג׳אז", "he"), "ג׳אז");
     }
 
     #[test]
-    fn lone_letters_with_geresh_read_as_letter_names() {
-        for (text, expected) in [
-            ("דגניה ב׳ היא קיבוץ", "דגניה בֵּת היא קיבוץ"),
-            ("דגניה ב׳, היא", "דגניה בֵּת, היא"),
-            ("כיתה ג׳.", "כיתה גִּימֶל."),
-            ("יום ב' וחלק ד’", "יום בֵּת וחלק דָּלֶת"),
-            ("א׳ ב׳ ג׳", "אָלֶף בֵּת גִּימֶל"),
-            ("כיתה א' ", "כיתה אָלֶף "),
-            ("כיתה א׳ ", "כיתה אָלֶף "),
-            ("כיתה א’ ", "כיתה אָלֶף "),
-            ("פרק ת׳", "פרק תָּו"),
-            ("\"ק׳\"", "\"קוֹף\""),
-        ] {
-            assert_eq!(expand_letter_labels(text), expected, "{text}");
-        }
-        // A letter after the geresh makes it a loanword, and a letter before
-        // the lone letter makes it part of a longer word.
-        for text in ["ג׳אז", "צ׳יפס", "ז׳קט", "ת׳ירטי", "מנג׳ר", "צה״ל", "ט''ו"]
-        {
-            assert_eq!(expand_letter_labels(text), text);
-        }
-        assert_eq!(prepare_text_for_synthesis("ג׳אז", "he"), "ג׳אז");
-        assert_eq!(prepare_text_for_synthesis("צ׳יפס", "he"), "צ׳יפס");
-    }
-
-    #[test]
-    fn lone_he_with_geresh_is_the_divine_name_unless_it_labels_something() {
-        for quote in ["׳", "'", "’"] {
-            for (text, expected) in [
-                ("ברוך ה{q}", "ברוך הַשֵּׁם"),
-                ("ברוך ה{q}.", "ברוך הַשֵּׁם."),
-                ("בעזרת ה{q} נצליח", "בעזרת הַשֵּׁם נצליח"),
-                ("ה{q} יתברך", "הַשֵּׁם יתברך"),
-                ("אמן ה{q}", "אמן הַשֵּׁם"),
-                ("כיתה ה{q}", "כיתה הֵא"),
-                ("סעיף ה{q}", "סעיף הֵא"),
-                ("יום ה{q}", "יום הֵא"),
-                ("וחלק ה{q}", "וחלק הֵא"),
-                ("תשובה ה{q}.", "תשובה הֵא."),
-                ("אפשרות ה{q}", "אפשרות הֵא"),
-                ("פרק ה{q}", "פרק הֵא"),
-                ("שלב ה{q}", "שלב הֵא"),
-                ("מס{q} ה{q}", "מס{q} הֵא"),
-                ("ה{q} באייר", "הֵא באייר"),
-                ("א{q} ב{q} ג{q} ד{q} ה{q}", "אָלֶף בֵּת גִּימֶל דָּלֶת הֵא"),
-                ("ד{q}, ה{q}", "דָּלֶת, הֵא"),
-                ("ה{q} ו{q}", "הֵא וָו"),
-            ] {
-                let text = text.replace("{q}", quote);
-                let expected = expected.replace("{q}", quote);
-                assert_eq!(expand_letter_labels(&text), expected, "{text}");
-            }
-        }
-        assert_eq!(prepare_text_for_synthesis("ברוך ה׳", "he"), "ברוך הַשֵּׁם");
+    fn russian_numbers_are_read_as_the_site_reads_them() {
+        assert_eq!(ru_int(21, false), "двадцать один");
+        assert_eq!(ru_int(2_021, false), "две тысячи двадцать один");
         assert_eq!(
-            prepare_text_for_synthesis("דגניה ב׳ היא קיבוץ.", "he"),
-            "דגניה בֵּת היא קיבוץ."
+            ru_cardinal(3.5, true).unwrap(),
+            "три целых пять десятых"
         );
     }
 
     #[test]
-    fn prefixes_hyphenated_onto_latin_words_are_pointed() {
-        for (text, expected) in [
-            ("פרטים מה-PDF המצורף", "פרטים מֵהַּ PDF המצורף"),
-            ("ה-PDF", "הַ PDF"),
-            ("ל-Google", "לַ Google"),
-            ("לַ-Google", "לַ Google"),
-            ("וה-API, שה-GPU", "וְהַ API, שֶׁהַ GPU"),
-            ("מ-Google וב-Apple", "מִ Google וּבַ Apple"),
-            ("עבר ל-GPU", "עבר לַ GPU"),
-        ] {
-            assert_eq!(prepare_text_for_synthesis(text, "he"), expected, "{text}");
-        }
-        // Not a prefix: a whole word before the hyphen, Hebrew after it, or a
-        // letter pair that is no prefix cluster.
-        assert_eq!(expand_prefixes_before_latin("בית-ספר"), "בית-ספר");
-        assert_eq!(expand_prefixes_before_latin("מה-שלום"), "מה-שלום");
-        assert_eq!(expand_prefixes_before_latin("גם-PDF"), "גם-PDF");
-        assert_eq!(expand_prefixes_before_latin("שלום-PDF"), "שלום-PDF");
-    }
-
-    #[test]
-    fn hebrew_compounds_split_at_the_hyphen_but_prefixes_stay_on() {
-        for (text, expected) in [
-            ("בית-ספר", "בית ספר"),
-            ("בית\u{05be}ספר", "בית ספר"),
-            ("תל-אביב", "תל אביב"),
-            ("ראש-הממשלה", "ראש הממשלה"),
-            ("אי-אפשר", "אי אפשר"),
-            ("בֵּית-סֵפֶר", "בֵּית סֵפֶר"),
-            ("ו-ירושלים", "וירושלים"),
-            ("וְ-ירושלים", "וְירושלים"),
-            ("ה-מדינה", "המדינה"),
-            ("וה-מדינה", "והמדינה"),
-        ] {
-            assert_eq!(normalize_hebrew_punctuation(text), expected, "{text}");
-        }
-        for (text, expected) in [
-            ("למד בבית-ספר גדול.", "למד בבית ספר גדול."),
-            ("ו-ירושלים", "וירושלים"),
-            ("ב-PDF", "בַּ PDF"),
-        ] {
-            assert_eq!(prepare_text_for_synthesis(text, "he"), expected, "{text}");
-        }
-        assert!(!prepare_text_for_synthesis("ב-2011", "he").contains('-'));
-    }
-
-    #[test]
-    fn normalization_keeps_typed_nikud() {
-        let text = normalize_for_speech("הַמְּנוֹרָה מאירה.");
-        assert!(contains_nikud(&text));
-        assert_eq!(text, "הַמְּנוֹרָה מאירה.");
-        assert_eq!(
-            prepare_text_for_synthesis("שָׁל֫וֹם", "he"),
-            "שָׁל֫וֹם",
-            "the hatama survives for RenikudPlus to read"
-        );
-    }
-
-    #[test]
-    fn diacritized_text_prepares_like_plain_text() {
-        // Niqqud between a letter and its gershayim, geresh or hyphen must not
-        // change how the text is prepared.
-        assert_eq!(prepare_text_for_synthesis("צַהַ\"ל", "he"), "צַהַל");
-        assert_eq!(prepare_text_for_synthesis("תשובה בַּ׳", "he"), "תשובה בֵּת");
-        assert_eq!(
-            prepare_text_for_synthesis("לַ-GPU", "he"),
-            prepare_text_for_synthesis("ל-GPU", "he")
-        );
-    }
-
-    #[test]
-    fn strip_nikud_preserves_letters() {
-        assert_eq!(strip_nikud("הַמְּנוֹרָה"), "המנורה");
-    }
-
-    #[test]
-    fn normalizes_reference_codes_and_phone_numbers() {
-        let text = normalize_for_speech("מספר TKT-90254, טלפון 03-5551234.");
-        assert!(text.contains("T K T"));
-        assert!(text.contains("אפס שלוש חמש חמש חמש"));
-    }
-
-    #[test]
-    fn prepares_hebrew_reference_segments_and_structured_values() {
-        let text = prepare_text_for_synthesis(
-            "הג'מיני הגיע ל-GPU ב-08:15, קוד TKT-90254 הוא 50% הצלחה.",
-            "he",
-        );
-        assert!(text.contains("<en>Gemini</en>"));
-        assert!(text.contains("לַ GPU"));
-        assert!(text.contains(REF_CODE_MARK_OPEN));
-        assert!(text.contains("אחוז"));
-    }
-
-    #[test]
-    fn splits_slow_reference_segments() {
-        let segments = split_prepared_by_reference_codes("רגיל 【אחת שתיים】.");
-        assert_eq!(segments.len(), 2);
-        assert!(!segments[0].is_reference_code);
-        assert!(segments[1].is_reference_code);
-        assert_eq!(segments[1].text, "אחת שתיים.");
-    }
-
-    #[test]
-    fn a_number_that_ends_a_sentence_is_not_a_list_marker() {
-        for (text, expected) in [
-            ("הוא בן 21. הוא גר בעיר.", "הוא בן עשרים ואחת. הוא גר בעיר."),
-            ("גרתי בקומה 15. היה נחמד.", "גרתי בקומה חמש עשרה. היה נחמד."),
-            ("היו שם 2. ילדות", "היו שם שתיים. ילדות"),
-        ] {
-            assert_eq!(prepare_text_for_synthesis(text, "he"), expected, "{text}");
-        }
-        // A list number starts a line and comes before Hebrew text.
-        assert_eq!(
-            prepare_text_for_synthesis("רשימה:\n2. ילדה טובה\n12. ילד", "he"),
-            "רשימה. שתיים. ילדה טובה שתים עשרה. ילד"
-        );
-    }
-
-    #[test]
-    fn markup_is_stripped_but_language_spans_stay() {
-        assert_eq!(
-            prepare_text_for_synthesis("<b>Hello</b> <EN>world</EN>.<br/>", "en"),
-            "Hello <EN>world</EN>."
-        );
-        assert_eq!(
-            prepare_text_for_synthesis("<i class=\"x\">שלום</i> עולם", "he"),
-            "שלום עולם"
-        );
-    }
-
-    #[test]
-    fn colons_inside_tokens_and_spaced_dashes() {
-        let ratio = prepare_text_for_synthesis("והיחס 3:1 בערך", "he");
-        assert!(!ratio.contains('.'), "{ratio}");
-        assert!(ratio.contains("שלוש"), "{ratio}");
-        let url = prepare_text_for_synthesis("בקרו ב https://example.com/a:b היום", "he");
-        assert!(!url.contains(". "), "{url}");
-        assert!(!prepare_text_for_synthesis("בשעה 12:30 נפגש", "he").contains('.'));
-        assert_eq!(
-            prepare_text_for_synthesis("שלום - עולם", "he"),
-            "שלום, עולם"
-        );
-        assert_eq!(
-            prepare_text_for_synthesis("שלום — עולם", "he"),
-            "שלום, עולם"
-        );
-        assert_eq!(
-            prepare_text_for_synthesis("שלום, - עולם", "he"),
-            "שלום, עולם"
-        );
-    }
-
-    #[test]
-    fn a_blank_line_survives_hebrew_preparation() {
-        for text in ["כותרת\n\nגוף הטקסט כאן.", "כותרת\r\n  \r\nגוף הטקסט כאן."]
-        {
-            let prepared = prepare_text_for_synthesis(text, "he");
-            assert_eq!(prepared, "כותרת\n\nגוף הטקסט כאן.");
-            assert_eq!(
-                crate::chunking::split_sentence_chunks(&prepared),
-                ["כותרת", "גוף הטקסט כאן."]
-            );
-        }
-        // A single line break is still only a space.
-        assert_eq!(prepare_text_for_synthesis("שלום\nעולם", "he"), "שלום עולם");
-    }
-
-    #[test]
-    fn english_runs_keep_their_numbers_for_the_english_g2p() {
-        for (text, expected) in [
-            (
-                "The meeting at 10:30 had 36 participants.",
-                "<en>The meeting at 10:30 had 36 participants.</en>",
-            ),
-            (
-                "שלום. The meeting at 10:30 had 36 participants. ביי",
-                "שלום. <en>The meeting at 10:30 had 36 participants.</en> ביי",
-            ),
-            (
-                "קניתי iPhone 15 Pro אתמול",
-                "קניתי <en>iPhone 15 Pro</en> אתמול",
-            ),
-            ("<EN>room 5</EN> שלום 5", "<EN>room 5</EN> שלום חמש"),
-            // Hebrew sentences with numbers still read in Hebrew.
-            (
-                "יש לי 3 ילדים ו-25₪",
-                "יש לי שלושה ילדים ועשרים וחמישה שקלים",
-            ),
-            ("בשעה 14:30", "בשעה שתיים וחצי אחר הצהריים"),
-            ("ב-3.9.2026", "בשלושה בספטמבר אלפיים עשרים ושש"),
-        ] {
-            assert_eq!(prepare_text_for_synthesis(text, "he"), expected, "{text}");
-        }
-        // One Latin word in a Hebrew sentence is not an English run.
-        let code = prepare_text_for_synthesis("קוד GPT-4 עכשיו.", "he");
-        assert!(code.contains("ארבע"), "{code}");
-    }
-
-    #[test]
-    fn expands_dialogue_and_list_markers() {
-        let text = prepare_text_for_synthesis("1. אמר \"שלום\"", "he");
-        assert!(
-            text.starts_with("אחד."),
-            "unexpected prepared text: {text:?}"
-        );
-        assert!(
-            text.contains("אמר, שלום."),
-            "unexpected prepared text: {text:?}"
-        );
+    fn inline_spans_need_a_matching_close() {
+        assert!(has_inline_lang("שלום <en>hello</en>"));
+        assert!(has_inline_lang("<b>bold</b>"));
+        assert!(!has_inline_lang("<en>hello</he>"));
+        assert!(!has_inline_lang("a < b > c"));
     }
 }
