@@ -139,7 +139,11 @@ fn blue_bundle(app: &tauri::AppHandle) -> Result<ModelBundle, String> {
         installed: source
             .files
             .iter()
-            .all(|file| dir.join(&file.name).is_file()),
+            // An empty file is a download that never got its bytes.
+            .all(|file| {
+                std::fs::metadata(dir.join(&file.name))
+                    .is_ok_and(|metadata| metadata.is_file() && metadata.len() > 0)
+            }),
         runtime: "blue".to_string(),
         model_path: path_string(&dir),
         codec_path: path_string(&renikud_path),
@@ -199,10 +203,12 @@ async fn download_runtime_bundle(
     app: tauri::AppHandle,
     runtime: &str,
 ) -> Result<ModelBundle, String> {
+    // No early return when every file is present: a download is always a
+    // user's request, and checking each file against the size the server
+    // reports is what repairs a truncated file that would otherwise count as
+    // installed for good. Files that match are kept, so this costs one HEAD
+    // request a file.
     let bundle = model_bundle_for_runtime(&app, runtime)?;
-    if bundle.installed {
-        return Ok(bundle);
-    }
     let source = runtime_source(runtime).ok_or_else(|| format!("missing `{runtime}` source"))?;
     let dir = PathBuf::from(&bundle.model_dir);
     tokio::fs::create_dir_all(&dir)
