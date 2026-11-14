@@ -1,4 +1,4 @@
-//! Python bindings for the BlueTTS engine.
+//! Python bindings for the BlueV3 engine.
 //!
 //! The same Rust inference path the desktop sidecar uses, exposed to
 //! Python so a server can be written there without a second copy of the
@@ -11,13 +11,13 @@ use std::sync::Mutex;
 
 use blue_rs::{
     phonemize::{Language, Phonemizer},
-    BlueTts, ChunkingOptions, SynthesisOptions, VoiceStyle,
+    BlueTts, SynthesisOptions, VoiceStyle,
 };
-use mambotts_registry::{blue_voice_name, BLUE_VOICES, DEFAULT_BLUE_VOICE};
+use mambotts_registry::{blue_voice_name, BLUE_POLYG2P_DIR, BLUE_VOICES, DEFAULT_BLUE_VOICE};
 use pyo3::exceptions::{PyKeyError, PyValueError};
 use pyo3::prelude::*;
 
-/// A loaded BlueTTS bundle.
+/// A loaded BlueV3 bundle.
 ///
 /// The engine holds mutable ONNX session state and its phonemizer is
 /// `Send` but not `Sync`, so it lives behind a mutex. That also makes the
@@ -43,11 +43,13 @@ impl BlueTtsEngine {
     fn new(model_dir: PathBuf, renikud_path: Option<PathBuf>) -> PyResult<Self> {
         let tts = BlueTts::from_dir(&model_dir).map_err(to_py_err)?;
         let renikud = renikud_path.unwrap_or_else(|| model_dir.join("renikud-plus.onnx"));
-        let phonemizer = if renikud.is_file() {
-            Phonemizer::with_language(Some(&renikud), Language::English)
-        } else {
-            Phonemizer::with_language(None::<PathBuf>, Language::English)
-        }
+        // polyg2p's lexicons are part of the bundle; Hebrew additionally
+        // needs the RenikudPlus model.
+        let phonemizer = Phonemizer::open(
+            renikud.is_file().then_some(&renikud),
+            Some(model_dir.join(BLUE_POLYG2P_DIR)),
+            Language::English,
+        )
         .map_err(to_py_err)?;
 
         let voices_dir = model_dir.join("voices");
@@ -89,7 +91,7 @@ impl BlueTtsEngine {
     }
 
     fn languages(&self) -> Vec<String> {
-        ["he", "en", "es", "de", "it"]
+        ["he", "en", "es", "de", "it", "ru"]
             .into_iter()
             .map(str::to_owned)
             .collect()
@@ -110,7 +112,10 @@ impl BlueTtsEngine {
     }
 
     /// Synthesizes text, returning mono `f32` samples.
-    #[pyo3(signature = (text, voice = None, language = "auto", speed = 0.95, cfg_scale = 4.0, total_step = 8))]
+    ///
+    /// `speed` is a pace multiplier, as in the desktop app: 1.0 is the
+    /// natural pace for the language, below one is slower.
+    #[pyo3(signature = (text, voice = None, language = "auto", speed = 1.0, cfg_scale = 4.0, total_step = 8))]
     fn synthesize(
         &self,
         py: Python<'_>,
@@ -122,7 +127,7 @@ impl BlueTtsEngine {
         total_step: usize,
     ) -> PyResult<Vec<f32>> {
         let language = resolve_language(text, language)?;
-        let options = options(language.code(), speed, cfg_scale, total_step);
+        let options = options(language.code(), speed, cfg_scale, total_step)?;
         py.detach(|| {
             let mut engine = self.lock()?;
             let style = engine.style_for(voice)?.clone();
@@ -135,7 +140,10 @@ impl BlueTtsEngine {
     }
 
     /// Synthesizes from IPA that has already been produced elsewhere.
-    #[pyo3(signature = (phonemes, voice = None, language = "en", speed = 0.95, cfg_scale = 4.0, total_step = 8))]
+    ///
+    /// With `language="auto"` the language comes from a leading tag such as
+    /// `<he>`, which is how `phonemize` returns its output, else English.
+    #[pyo3(signature = (phonemes, voice = None, language = "auto", speed = 1.0, cfg_scale = 4.0, total_step = 8))]
     fn synthesize_phonemes(
         &self,
         py: Python<'_>,
@@ -146,7 +154,8 @@ impl BlueTtsEngine {
         cfg_scale: f32,
         total_step: usize,
     ) -> PyResult<Vec<f32>> {
-        let options = options(language, speed, cfg_scale, total_step);
+        let language = resolve_phoneme_language(phonemes, language)?;
+        let options = options(language.code(), speed, cfg_scale, total_step)?;
         py.detach(|| {
             let mut engine = self.lock()?;
             let style = engine.style_for(voice)?.clone();
@@ -190,18 +199,52 @@ impl Engine {
     }
 }
 
-fn options(language: &str, speed: f32, cfg_scale: f32, total_step: usize) -> SynthesisOptions {
-    SynthesisOptions {
+fn options(
+    language: &str,
+    speed: f32,
+    cfg_scale: f32,
+    total_step: usize,
+) -> PyResult<SynthesisOptions> {
+    if !(speed.is_finite() && speed > 0.0) {
+        return Err(PyValueError::new_err(format!(
+            "speed must be a positive number, got {speed}"
+        )));
+    }
+    if total_step == 0 {
+        return Err(PyValueError::new_err("total_step must be at least 1"));
+    }
+    Ok(SynthesisOptions {
         lang: language.to_owned(),
         total_step,
         cfg_scale,
-        speed,
-        chunking: Some(ChunkingOptions {
-            enabled: true,
-            silence_seconds: 0.15,
-            max_chars: Some(200),
-        }),
+        speed: speed * natural_pace(language),
+    })
+}
+
+/// What a speed of 1.0 means for a language, matching the desktop sidecar:
+/// the release's own 1.0 reads a little fast, Hebrew most of all.
+fn natural_pace(language: &str) -> f32 {
+    if language == "he" {
+        0.9
+    } else {
+        0.95
     }
+}
+
+/// IPA has no script to detect, so `auto` reads the language from a leading
+/// `<xx>` tag and falls back to English.
+fn resolve_phoneme_language(phonemes: &str, language: &str) -> PyResult<Language> {
+    let requested = language.trim().to_ascii_lowercase();
+    if !(requested.is_empty() || requested == "auto") {
+        return resolve_language(phonemes, &requested);
+    }
+    let tagged = phonemes
+        .trim_start()
+        .strip_prefix('<')
+        .and_then(|rest| rest.split_once('>'))
+        .map(|(code, _)| code)
+        .filter(|code| ["he", "en", "es", "de", "it", "ru"].contains(code));
+    resolve_language(phonemes, tagged.unwrap_or("en"))
 }
 
 /// Mirrors the sidecar: an empty or `auto` language is decided by whether
@@ -211,6 +254,8 @@ fn resolve_language(text: &str, language: &str) -> PyResult<Language> {
     let code = if code.is_empty() || code == "auto" {
         if text.chars().any(|c| ('\u{0590}'..='\u{05ff}').contains(&c)) {
             "he"
+        } else if text.chars().any(|c| ('\u{0400}'..='\u{04ff}').contains(&c)) {
+            "ru"
         } else {
             "en"
         }
@@ -223,8 +268,9 @@ fn resolve_language(text: &str, language: &str) -> PyResult<Language> {
         "es" => Ok(Language::Spanish),
         "de" | "ge" => Ok(Language::German),
         "it" => Ok(Language::Italian),
+        "ru" | "ru-ru" => Ok(Language::Russian),
         other => Err(PyValueError::new_err(format!(
-            "unsupported language `{other}`; expected he, en, es, de, or it"
+            "unsupported language `{other}`; expected he, en, es, de, it, or ru"
         ))),
     }
 }

@@ -4,28 +4,17 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-zip = { version = "2.2", default-features = false, features = ["deflate"] }
 anyhow = "1"
-espeak-rs = { path = "../espeak-rs" }
-hound = "3.5.1"
+# The Hebrew text normaliser of the BlueV3 release (he_normalize).
+heb-tts-normalizer = "=0.2.0"
 ndarray = "0.17"
+# The release's G2P for English, German, Spanish, Italian and Russian, at the
+# commit its training labels were made with (MANIFEST.json, polyg2p_commit).
+polyg2p = { git = "https://github.com/maxmelichov/polyg2p", rev = "cbb613499adcda2d3039861c7d347c902e60fbd0" }
 ort = { version = "=2.0.0-rc.11", features = ["ndarray"] }
 rand = "0.9"
 rand_distr = "0.5"
 regex = "1"
 renikud-plus-rs = { path = "../renikud-plus-rs" }
-rodio = "0.20"
-rustfft = "6.2"
 serde_json = "1"
 unicode-normalization = "0.1"
-
-# The embedded example bakes model files into the binary with include_bytes!,
-# from paths that only exist on a machine that has laid them out by hand, so
-# building it unconditionally broke `cargo test --workspace` everywhere else.
-# Build it with `cargo run -p blue-rs --example embedded --features embedded-example`.
-[features]
-embedded-example = []
-
-[[example]]
-name = "embedded"
-required-features = ["embedded-example"]

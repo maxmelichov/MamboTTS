@@ -4,8 +4,7 @@
       "binaries/mambotts-server"
     ],
     "resources": [
-      "binaries/libonnxruntime*.so*",
-      "binaries/espeak-ng-data/**/*"
+      "binaries/libonnxruntime*.so*"
     ]
   }
 }

@@ -1,6 +1,8 @@
 const TEMPLATE: &str = r#"# MamboTTS Local TTS API
 
-You are using MamboTTS, a local BlueTTS HTTP API. The shipped runtime supports Hebrew, English, Spanish, German, and Italian, fixed voices, and streaming WAV output. It does not support voice cloning.
+You are using MamboTTS, a local BlueV3 text-to-speech HTTP API. The shipped runtime speaks six languages: Hebrew (`he`), English (`en`), Spanish (`es`), German (`de`), Italian (`it`), and Russian (`ru`), in fixed voices (GET /v1/voices), with WAV, MP3, and streaming WAV output. It does not support voice cloning.
+
+`language` may be `auto` (the default), one of the six codes, or a language name such as `Hebrew`. `auto` picks Hebrew for Hebrew script, Russian for Cyrillic, and English otherwise, so set the language explicitly for Spanish, German, and Italian. Voice names are case-insensitive. An unsupported language or an unknown voice is a 400 `invalid_request`.
 
 Hebrew grapheme-to-IPA uses RenikudPlus (`renikud-plus.onnx`) with optional `speaker` / `target_speaker` conditioning (0=unknown, 1=male, 2=female). The same RenikudPlus model adds Hebrew diacritics (niqqud).
 
@@ -18,7 +20,7 @@ Recommended flow:
 3. Check whether the model files already exist in MamboTTS Desktop's default model directory.
 4. Call POST /v1/models/load with `runtime`, `model_path`, and `renikud_path` pointing at `renikud-plus.onnx`. Optional: `speaker`, `target_speaker`.
 5. Optional IPA preview: POST /v1/phonemize, then edit phonemes client-side.
-6. Call POST /v1/audio/speech to synthesize speech. For edited IPA, set `input_is_phonemes: true` and `stream: true` (phoneme input requires streaming).
+6. Call POST /v1/audio/speech to synthesize speech. For edited IPA, set `input_is_phonemes: true` and `stream: true` (phoneme input requires streaming), and send the IPA's language: IPA has no script to detect, so with `auto` only a leading `<xx>` tag (for example `<he>ʃalˈom</he>`) identifies it, and untagged IPA is read as English.
 7. Non-streaming responses return a standalone WAV (`stream: false`). Streaming responses use MamboTTS binary frames.
 8. A streaming response carries an `x-mambotts-generation-id` header. POST it to /v1/audio/speech/cancel as `{"id":"..."}` to stop that generation; an empty body stops every running one. Dropping the response also stops it, at the next chunk boundary.
 
@@ -33,7 +35,7 @@ curl {{base_url}}/v1/models/sources
 
 curl -X POST {{base_url}}/v1/models/load \
   -H 'Content-Type: application/json' \
-  -d '{"runtime":"blue","model_path":"/path/to/bluetts-2.5","renikud_path":"/path/to/bluetts-2.5/renikud-plus.onnx","speaker":0,"target_speaker":0}'
+  -d '{"runtime":"blue","model_path":"/path/to/bluev3-3.0.0","renikud_path":"/path/to/bluev3-3.0.0/renikud-plus.onnx","speaker":0,"target_speaker":0}'
 
 curl -X POST {{base_url}}/v1/phonemize \
   -H 'Content-Type: application/json' \
@@ -54,9 +56,9 @@ curl -X POST {{base_url}}/v1/audio/speech \
 Useful endpoints for the desktop Phoneme editor:
 
 - POST /v1/phonemize → `{"phonemes":"..."}`
-- GET /v1/phonemes → BlueTTS phoneme inventory
+- GET /v1/phonemes → BlueV3 phoneme inventory
 - POST /v1/diacritize with `{"input":"..."}` → `{"text":"<Hebrew with niqqud>"}` (RenikudPlus re-points the text from its own reading; the stressed syllable is marked with the hatama U+05AB, which /v1/phonemize reads back. Add `"stress": false` for plain niqqud with no stress mark.)
-- POST /v1/audio/speech with `input_is_phonemes: true` and `stream: true` to speak edited IPA
+- POST /v1/audio/speech with `input_is_phonemes: true`, `stream: true`, and the IPA's `language` to speak edited IPA
 - POST /v1/audio/speech/cancel with `{"id":"<x-mambotts-generation-id>"}` to stop a generation
 
 If the API returns no_model, ask the user to install the MamboTTS model in the desktop app first.
@@ -64,4 +66,23 @@ If the API returns no_model, ask the user to install the MamboTTS model in the d
 
 pub fn render_skill(host: &str) -> String {
     TEMPLATE.replace("{{base_url}}", &format!("http://{host}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::render_skill;
+
+    #[test]
+    fn names_all_six_languages_and_the_v3_bundle() {
+        let skill = render_skill("127.0.0.1:8791");
+        for language in [
+            "Hebrew", "English", "Spanish", "German", "Italian", "Russian",
+        ] {
+            assert!(skill.contains(language), "{language}");
+        }
+        assert!(skill.contains("BlueV3"));
+        assert!(skill.contains("bluev3-3.0.0"));
+        assert!(!skill.contains("bluetts-2.5"));
+        assert!(skill.contains("http://127.0.0.1:8791/openapi.json"));
+    }
 }

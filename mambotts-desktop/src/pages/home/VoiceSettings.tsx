@@ -9,6 +9,7 @@ const languageLabels: Record<string, string> = {
   de: "German",
   es: "Spanish",
   it: "Italian",
+  ru: "Russian",
 };
 
 // Voice and speed used to live here too. They moved down beside the text and

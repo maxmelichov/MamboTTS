@@ -173,7 +173,7 @@ fn is_legacy_chunk_file(name: &str) -> bool {
 mod tests {
     use std::{convert::Infallible, path::Path, time::Duration};
 
-    use futures_util::{StreamExt, stream};
+    use futures_util::{stream, StreamExt};
 
     use super::{is_legacy_chunk_file, receive_speech_stream, sweep_legacy_chunk_files};
 
@@ -327,14 +327,21 @@ mod tests {
         .await
         .unwrap();
 
-        println!("chunks: {chunks} {sizes:?}, files: {:?}", files_in(dir.path()));
+        println!(
+            "chunks: {chunks} {sizes:?}, files: {:?}",
+            files_in(dir.path())
+        );
         assert!(chunks > 0);
         assert_eq!(files_in(dir.path()), vec!["mambotts-speech-1.wav"]);
         assert_eq!(&std::fs::read(&output).unwrap()[..4], b"RIFF");
 
-        // Now stop one part-way, the way the Stop button does.
+        // Now stop one part-way, the way the Stop button does. The stop is
+        // sent as soon as the first chunk is playing rather than after a fixed
+        // wait, so it lands mid-stream however fast the engine is, and the
+        // text is long enough (hundreds of one-sentence chunks) that no engine
+        // finishes it in the moment that takes.
         let stopped_output = dir.path().join("mambotts-speech-2.wav");
-        let long = "שלום לכם וברוכים הבאים לבדיקה של מנוע הדיבור. ".repeat(60);
+        let long = "שלום לכם וברוכים הבאים לבדיקה של מנוע הדיבור. ".repeat(400);
         let response = speech(&client, &base, &long).await;
         let generation = response
             .headers()
@@ -342,18 +349,74 @@ mod tests {
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned)
             .expect("generation id header");
-        let read = receive_speech_stream(response.bytes_stream(), &stopped_output, |_| Ok(()));
-        let outcome = tokio::time::timeout(Duration::from_secs(45), read).await;
-        assert!(outcome.is_err(), "the generation should still be running");
-        client
+        let (first_chunk, mut first_chunk_arrived) = tokio::sync::mpsc::unbounded_channel();
+        let reader_output = stopped_output.clone();
+        let read = tokio::spawn(async move {
+            let mut received = 0usize;
+            let outcome = receive_speech_stream(response.bytes_stream(), &reader_output, |_| {
+                received += 1;
+                let _ = first_chunk.send(());
+                Ok(())
+            })
+            .await;
+            (outcome, received)
+        });
+        tokio::time::timeout(Duration::from_secs(120), first_chunk_arrived.recv())
+            .await
+            .expect("the first chunk should arrive")
+            .expect("the stream should deliver a chunk before it ends");
+        assert!(
+            !read.is_finished(),
+            "the generation should still be running"
+        );
+        let cancel = client
             .post(format!("{base}/v1/audio/speech/cancel"))
             .json(&serde_json::json!({ "id": generation }))
             .send()
             .await
             .unwrap();
+        assert!(
+            cancel.status().is_success(),
+            "the running generation should be found by its id: {:?}",
+            cancel.status()
+        );
+
+        // The server stops at the next chunk boundary and says so in an error
+        // frame, so the read ends promptly, as a failure, well short of the text.
+        let (outcome, received) = tokio::time::timeout(Duration::from_secs(60), read)
+            .await
+            .expect("the stream should end soon after the stop")
+            .unwrap();
+        println!("stopped after {received} chunks: {outcome:?}");
+        let message = outcome.expect_err("a stopped stream is not a finished take");
+        assert!(message.contains("cancelled"), "{message}");
+        assert!(
+            received < 400,
+            "the stop came after the whole text: {received}"
+        );
         println!("after the stop, files: {:?}", files_in(dir.path()));
         // The stopped take left nothing; only the finished one is still there.
         assert_eq!(files_in(dir.path()), vec!["mambotts-speech-1.wav"]);
+        assert!(!stopped_output.exists());
+
+        // And the engine itself stopped, rather than reading on for nobody.
+        let mut busy = true;
+        for _ in 0..50 {
+            let health: serde_json::Value = client
+                .get(format!("{base}/health"))
+                .send()
+                .await
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            busy = health["busy"].as_bool().unwrap_or(true);
+            if !busy {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+        assert!(!busy, "the server is still synthesizing the stopped text");
     }
 
     #[cfg(test)]

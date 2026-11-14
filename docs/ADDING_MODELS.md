@@ -64,7 +64,7 @@ Maintainers may reject models that are too large for the desktop UX, require pro
 
 Use this when you are not introducing a new engine. Examples:
 
-- New fixed voice embedding JSON next to `voices/female1.json`
+- New fixed voice embedding JSON next to `voices/noa.json`
 - Newer `renikud-plus.onnx` (or equivalent) with a compatible API
 - Replacement BlueTTS ONNX pipeline pieces that keep the same IO contract
 
@@ -85,7 +85,7 @@ Use this when you are not introducing a new engine. Examples:
 
 ### BlueTTS bundle expectations today
 
-Registered Blue files currently include the ONNX pipeline (`duration_predictor`, `text_encoder`, `vector_estimator`, `vocoder`), `vocab.json`, `tts.json`, voice styles under `voices/`, and `renikud-plus.onnx` for Hebrew G2P and diacritization.
+Registered Blue files are the BlueV3 ONNX pipeline (`duration_predictor_style`, `text_encoder`, `vector_estimator`, `vocoder`), `vocab.json`, `tts.json`, voice styles under `voices/`, polyg2p's lexicons under `polyg2p/` for English, German, Italian and Russian, and `renikud-plus.onnx` for Hebrew G2P and diacritization. Every URL names a pinned revision, never `main`, so an installed app keeps getting the files it was built for.
 
 If your change breaks the existing Blue IO contract, treat it as a new runtime (Option B) or a major version bump of the Blue directory name (for example a new `directory` / `version` so old and new installs do not collide).
 
@@ -148,7 +148,7 @@ Do not hardcode a one-off marketing card that disagrees with the registry.
 
 ### 4. Packaging native dependencies
 
-Runtimes are compiled into `mambotts-server` and bundled as a Tauri sidecar. If your engine needs extra shared libraries (ONNX Runtime, espeak data, etc.):
+Runtimes are compiled into `mambotts-server` and bundled as a Tauri sidecar. If your engine needs extra shared libraries (ONNX Runtime and the like):
 
 1. Extend [`scripts/pre_build.py`](../scripts/pre_build.py) (and Linux/Windows CI if needed) so those libraries ship beside the sidecar.
 2. Confirm macOS codesigning and notarization still work. See [BUILDING.md](./BUILDING.md) and `docs/code-signing/`.

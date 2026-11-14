@@ -23,8 +23,7 @@ right ONNX Runtime library into the installer.
 - Rust stable, installed through [rustup](https://rustup.rs)
 - Node.js 22 and pnpm 10
 - Python with [uv](https://docs.astral.sh/uv/), used by `scripts/pre_build.py`
-- CMake and a C toolchain, because espeak-ng is compiled from source
-- Clang, because `espeak-rs-sys` generates its bindings with bindgen
+- A C toolchain, because a few dependencies (the LAME MP3 encoder among them) compile C sources
 
 `scripts/pre_build.py` downloads ONNX Runtime 1.23.2 into
 `crates/blue-rs/.ort/` on first use and sets `ORT_STRATEGY`,
@@ -83,55 +82,6 @@ cd mambotts-desktop
 pnpm tauri build --debug
 ```
 
-### If the espeak-ng build fails with "Failed to open"
-
-espeak-ng compiles its phoneme data with fixed 180 byte path buffers, so a deep
-checkout path can push the generated file names past the end of those buffers.
-The build then stops on a truncated path, for example:
-
-```text
-Failed to open: '.../out/build/espeak-ng-data/../phsource/vwl_en_us_nyc/a_rais'Error: Compile error.
-```
-
-Note the missing `ed` at the end of `a_raised`. Adding `--target
-aarch64-apple-darwin` makes this more likely, because the triple adds another
-twenty one characters to every artifact path. Point Cargo at a shorter build
-directory and it goes away:
-
-```console
-export CARGO_TARGET_DIR=/tmp/mambotts-build
-uv run scripts/pre_build.py
-```
-
-`scripts/pre_build.py` reads `CARGO_TARGET_DIR`, so it still finds the sidecar
-and stages it correctly. Moving the checkout itself somewhere shorter works too.
-
-### If the espeak-ng build fails with "speak_lib.h file not found"
-
-```text
-./espeak-ng/src/include/espeak-ng/espeak_ng.h:22:10: fatal error: 'espeak-ng/speak_lib.h' file not found
-```
-
-The header is there in the checkout, so this looks like a broken vendored
-dependency. It is not. `espeak-rs-sys` copies the espeak-ng tree into its
-`OUT_DIR` only `if !espeak_dst.exists()`, so a build interrupted partway
-through that copy leaves a directory that exists but is incomplete, and no
-later build repairs it. Every build after that fails the same way.
-
-Delete the copies and build again:
-
-```console
-rm -rf "$CARGO_TARGET_DIR"/*/build/espeak-rs-sys-*
-```
-
-The usual cause is a build that was killed, either by hand or by the system
-under memory pressure. On a machine with little memory free, capping the
-parallelism avoids the kill in the first place:
-
-```console
-export CARGO_BUILD_JOBS=2 CMAKE_BUILD_PARALLEL_LEVEL=2
-```
-
 ## Linux on x86_64
 
 ### System packages
@@ -143,9 +93,9 @@ bundles are verified in.
 ```console
 sudo apt-get update
 sudo apt-get install -y \
-  build-essential cmake git curl wget file patchelf ca-certificates \
+  build-essential git curl wget file patchelf ca-certificates \
   libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
-  libssl-dev libgtk-3-dev libxdo-dev clang libclang-dev libasound2-dev \
+  libssl-dev libgtk-3-dev libxdo-dev libasound2-dev \
   pkg-config xdg-utils
 ```
 
@@ -217,8 +167,6 @@ rm -f mambotts-desktop/src-tauri/binaries/mambotts-server-x86_64-unknown-linux-g
 Beyond the shared list, a Windows machine needs:
 
 - Visual Studio Build Tools with the "Desktop development with C++" workload, which supplies the MSVC linker and the Windows SDK
-- LLVM, so bindgen can find `libclang.dll`. Set `LIBCLANG_PATH` to its `bin` directory if the build cannot locate it.
-- CMake on `PATH`
 - The WebView2 runtime, which is already present on Windows 11 and current Windows 10
 
 ### Build on Windows
@@ -249,16 +197,6 @@ system directories. A copy anywhere else, including one reachable through
 loader with `0xC000007B` (`STATUS_INVALID_IMAGE_FORMAT`) before it can run a
 line of its own code or write a word to stderr.
 
-`espeak-ng-data` ships beside the executables too, and the desktop shell
-also passes `PIPER_ESPEAKNG_DATA_DIRECTORY` explicitly when it spawns the
-sidecar. That value has any `\\?\` prefix stripped first: espeak-ng joins
-the directory with its own relative paths using forward slashes, and Windows
-does not normalise those inside a verbatim path the way it does for an
-ordinary one, so a `\\?\` value makes every lookup under the data
-directory fail. Without it espeak-ng falls back to the path baked in when it
-was compiled, which belongs to the build machine, and every language except
-Hebrew stops working.
-
 ### Cross-compile the Windows sidecar from macOS or Linux
 
 The installer has to be produced on Windows, but the sidecar can be
@@ -282,11 +220,9 @@ export ORT_DIR="$PWD/crates/blue-rs/.ort/onnxruntime-win-x64-1.23.2/lib"
 export ORT_STRATEGY=system
 export ORT_PREFER_DYNAMIC_LINK=1
 export ORT_LIB_LOCATION="$ORT_DIR"
-export RUSTFLAGS="-L native=$ORT_DIR -C link-arg=advapi32.lib"
+export RUSTFLAGS="-L native=$ORT_DIR"
 cargo xwin build -p mambotts-server --release --target x86_64-pc-windows-msvc
 ```
-
-`advapi32.lib` is required because espeak-ng calls the Windows registry APIs.
 
 ## Development
 
@@ -303,29 +239,32 @@ ONNX Runtime before Tauri starts.
 ## Validate
 
 ```console
-cargo test --workspace --exclude mambotts-py --exclude espeak-rs
+cargo test --workspace --exclude mambotts-py
 cargo build -p mambotts-server --release --bin mambotts-server
 cd mambotts-desktop
 pnpm build
 ```
 
-`crates/espeak-rs` and `crates/espeak-rs-sys` are a vendored fork that nothing
-in the product depends on, because `blue-rs` takes espeak from a git dependency
-on piper-rs instead. Excluding `espeak-rs` from the test run keeps that unwired
-copy out of the way.
-
 The tests that need real model files are `#[ignore]`d. Run them with the
 downloaded bundle:
 
 ```console
-MAMBOTTS_RENIKUD_PATH=/path/to/models/bluetts-2.5/renikud-plus.onnx \
+MAMBOTTS_BLUE_MODEL_DIR=/path/to/models/bluev3-3.0.0 \
+MAMBOTTS_RENIKUD_PATH=/path/to/models/bluev3-3.0.0/renikud-plus.onnx \
   cargo test -p blue-rs -p renikud-plus-rs -- --ignored
 ```
 
-The `embedded` example in `blue-rs` bakes model files into the binary from
-paths that only exist when laid out by hand, so it is behind a feature and
-`cargo test` skips it: `cargo run -p blue-rs --example embedded --features
-embedded-example`.
+The ONNX Runtime download that `ort` does on a plain `cargo build` can be
+refused by its CDN. Point the build at the copy `scripts/pre_build.py` keeps in
+`crates/blue-rs/.ort` instead: `ORT_STRATEGY=system`, `ORT_LIB_LOCATION=<that
+copy's lib directory>` and `ORT_PREFER_DYNAMIC_LINK=1`, with the same directory
+on `DYLD_LIBRARY_PATH` (macOS) or `LD_LIBRARY_PATH` (Linux) to run the tests.
+
+To hear the engine without the app, speak a line straight from a bundle:
+
+```console
+cargo run -p blue-rs --example speak -- /path/to/models/bluev3-3.0.0 noa en "Hello there." out.wav
+```
 
 ### Validate on Windows
 
@@ -335,11 +274,10 @@ way `scripts/pre_build.py` does, from Git Bash:
 ```console
 export ORT_DIR="$PWD/crates/blue-rs/.ort/onnxruntime-win-x64-1.23.2/lib"
 export ORT_STRATEGY=system ORT_PREFER_DYNAMIC_LINK=1 ORT_LIB_LOCATION="$ORT_DIR"
-export RUSTFLAGS="-L native=$ORT_DIR -C link-arg=advapi32.lib"
-export LIBCLANG_PATH="C:\\Program Files\\LLVM\\bin"
+export RUSTFLAGS="-L native=$ORT_DIR"
 mkdir -p target/debug/deps
 cp "$ORT_DIR"/onnxruntime*.dll target/debug/deps/
-cargo test --workspace --exclude mambotts-py --exclude espeak-rs
+cargo test --workspace --exclude mambotts-py
 ```
 
 The copy into `target/debug/deps` is the same System32 problem the installer

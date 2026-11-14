@@ -50,41 +50,35 @@ pub enum RuntimeParams {
     },
 }
 
-pub fn language_display_name(language: &str) -> String {
-    match language.trim().to_lowercase().as_str() {
-        "en-us" | "en" | "en-gb" => "English".into(),
-        "he" => "Hebrew".into(),
-        "es" => "Spanish".into(),
-        "de" | "ge" => "German".into(),
-        "it" => "Italian".into(),
-        other => title_case_language(other),
-    }
-}
-
+/// The code a request's `language` names: `English`, `en-US` and `en` are
+/// all `en`, and an empty value is `auto`.
 pub fn language_code_alias(language: &str) -> String {
     match language.trim().to_lowercase().as_str() {
-        "auto" => "auto".into(),
+        "" | "auto" => "auto".into(),
         "english" | "american english" | "american" | "british english" | "british" | "en-us"
         | "en-gb" => "en".into(),
         "hebrew" => "he".into(),
         "spanish" => "es".into(),
-        "german" => "de".into(),
+        "german" | "ge" => "de".into(),
         "italian" => "it".into(),
+        "russian" | "ru-ru" => "ru".into(),
         other => other.into(),
     }
 }
 
-fn title_case_language(language: &str) -> String {
-    language
-        .split(['-', '_', ' '])
-        .filter(|part| !part.is_empty())
-        .map(|part| {
-            let mut chars = part.chars();
-            match chars.next() {
-                Some(first) => first.to_uppercase().chain(chars).collect::<String>(),
-                None => String::new(),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+#[cfg(test)]
+mod tests {
+    use super::language_code_alias;
+
+    #[test]
+    fn language_names_and_regional_codes_resolve_to_the_bare_code() {
+        assert_eq!(language_code_alias("English"), "en");
+        assert_eq!(language_code_alias(" en-US "), "en");
+        assert_eq!(language_code_alias("Hebrew"), "he");
+        assert_eq!(language_code_alias("RU"), "ru");
+        assert_eq!(language_code_alias("ru-RU"), "ru");
+        assert_eq!(language_code_alias("ge"), "de");
+        assert_eq!(language_code_alias(""), "auto");
+        assert_eq!(language_code_alias("fr"), "fr");
+    }
 }

@@ -12,10 +12,6 @@ use crate::model;
 
 use super::{cancel::SynthesisRegistry, dto::ReadySignal};
 
-/// espeak-rs reads this to find its phoneme data, ahead of any other probe.
-const ESPEAK_DATA_ENV: &str = "PIPER_ESPEAKNG_DATA_DIRECTORY";
-const ESPEAK_DATA_DIR_NAME: &str = "espeak-ng-data";
-
 pub struct RunnerState {
     pub process: Mutex<Option<RunnerProcess>>,
     pub synthesis: SynthesisRegistry,
@@ -44,7 +40,6 @@ impl RunnerProcess {
             }
         }
         prepend_native_library_paths(&mut cmd, app, binary_path);
-        set_espeak_data_dir(&mut cmd, app, binary_path);
 
         #[cfg(target_os = "windows")]
         {
@@ -232,7 +227,7 @@ fn prepend_native_library_paths(cmd: &mut Command, app: &tauri::AppHandle, binar
 }
 
 /// The directories that hold the assets shipped beside the sidecar: the ONNX
-/// Runtime shared libraries and the espeak-ng data.
+/// Runtime shared libraries.
 ///
 /// Tauri does not gather these in one place. `externalBin` puts the sidecar
 /// next to the main executable, while `resources` keeps the declared
@@ -249,29 +244,6 @@ fn sidecar_asset_dirs(app: &tauri::AppHandle, binary_path: &Path) -> Vec<PathBuf
     }
     dirs.retain(|dir| dir.exists());
     dirs
-}
-
-/// Point espeak-ng at the phoneme data that ships with the app.
-///
-/// When it is given nothing, espeak-ng falls back to the data directory that
-/// was baked in when it was compiled. That is a path on the build machine, so
-/// on a user's machine it does not exist and initialisation fails. Everything
-/// that goes through espeak then breaks, which is English, Spanish, German and
-/// Italian; Hebrew survives only because it takes the separate Renikud
-/// phonemizer. An explicit environment variable is used rather than relying on
-/// the executable-directory probe in espeak-rs, because the sidecar and the
-/// data can land in different directories depending on the bundle format.
-fn set_espeak_data_dir(cmd: &mut Command, app: &tauri::AppHandle, binary_path: &Path) {
-    // Respect a deliberate override from the surrounding environment.
-    if env::var_os(ESPEAK_DATA_ENV).is_some() {
-        return;
-    }
-    for dir in sidecar_asset_dirs(app, binary_path) {
-        if dir.join(ESPEAK_DATA_DIR_NAME).is_dir() {
-            cmd.env(ESPEAK_DATA_ENV, plain_path(&dir));
-            return;
-        }
-    }
 }
 
 /// Tie the sidecar's lifetime to this process with a Windows job object.
@@ -314,7 +286,11 @@ fn confine_to_job_object(child: &Child) {
             std::ptr::addr_of!(limits).cast(),
             std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
         );
-        if applied == 0 { 0 } else { handle as isize }
+        if applied == 0 {
+            0
+        } else {
+            handle as isize
+        }
     });
 
     if job == 0 {
@@ -325,38 +301,8 @@ fn confine_to_job_object(child: &Child) {
         return;
     }
 
-    let assigned =
-        unsafe { AssignProcessToJobObject(job as _, child.as_raw_handle() as _) };
+    let assigned = unsafe { AssignProcessToJobObject(job as _, child.as_raw_handle() as _) };
     if assigned == 0 {
         tracing::warn!("could not assign the MamboTTS server to the job object");
     }
-}
-
-/// Remove the `\\?\` extended-length prefix from a path.
-///
-/// espeak-ng joins the data directory with its own relative paths using forward
-/// slashes. Windows normalises those to backslashes for an ordinary path but
-/// deliberately does not inside a verbatim `\\?\` path, where the string reaches
-/// the filesystem untouched, so every lookup under the directory fails. Tauri
-/// hands back verbatim paths on Windows, so the prefix has to come off before
-/// the value goes to a C library that will build paths out of it.
-#[cfg(target_os = "windows")]
-fn plain_path(path: &Path) -> PathBuf {
-    use std::path::{Component, Prefix};
-
-    let mut components = path.components();
-    if let Some(Component::Prefix(prefix)) = components.next() {
-        // Only a plain drive has a shorter spelling. A verbatim UNC path does
-        // not, so it is left exactly as it came.
-        if let Prefix::VerbatimDisk(letter) = prefix.kind() {
-            let root = format!("{}:\\", letter as char);
-            return PathBuf::from(root).join(components.as_path());
-        }
-    }
-    path.to_path_buf()
-}
-
-#[cfg(not(target_os = "windows"))]
-fn plain_path(path: &Path) -> PathBuf {
-    path.to_path_buf()
 }

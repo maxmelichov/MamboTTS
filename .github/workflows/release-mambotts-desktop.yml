@@ -34,26 +34,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Must run before the Rust cache step, which snapshots the target dir.
-      - name: Configure Windows build environment
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          # espeak-ng compiles its phoneme data with fixed 180 byte path buffers,
-          # so the default D:\a\MamboTTS\MamboTTS\target path truncates generated
-          # file names and fails the sidecar build (see docs/BUILDING.md).
-          # scripts/pre_build.py reads CARGO_TARGET_DIR when it stages the sidecar.
-          echo "CARGO_TARGET_DIR=D:/t" | Out-File -FilePath $env:GITHUB_ENV -Append
-          # crates/espeak-rs-sys/build.rs always runs bindgen, which needs libclang.
-          $llvmBin = "C:\Program Files\LLVM\bin"
-          if (Test-Path "$llvmBin\libclang.dll") {
-            echo "LIBCLANG_PATH=$llvmBin" | Out-File -FilePath $env:GITHUB_ENV -Append
-          }
-          # Same build script drives espeak-ng through CMake.
-          if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
-            throw "cmake was not found on PATH; crates/espeak-rs-sys/build.rs needs it"
-          }
-
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -135,8 +115,7 @@ jobs:
       # install.ps1 -Server downloads MamboTTS-Server_<version>_x86_64-windows.zip
       # from this release, and nothing else publishes it, so without this step
       # every -Server install stops on a 404. The layout is what install.ps1
-      # checks for: the sidecar, both ONNX Runtime DLLs and espeak-ng-data at the
-      # zip root, where espeak-rs finds the data beside the executable.
+      # checks for: the sidecar and both ONNX Runtime DLLs at the zip root.
       - name: Package Windows server zip
         if: runner.os == 'Windows'
         shell: pwsh
@@ -149,7 +128,6 @@ jobs:
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
           Copy-Item "$bin/mambotts-server-${{ matrix.target }}.exe" "$stage/mambotts-server.exe"
           Copy-Item "$bin/onnxruntime.dll", "$bin/onnxruntime_providers_shared.dll" $stage
-          Copy-Item "$bin/espeak-ng-data" $stage -Recurse
           # The Start Menu entry install.ps1 writes points at a .cmd launcher,
           # which otherwise shows the generic Windows script icon. install.ps1
           # picks this file up as the shortcut icon when it is present.

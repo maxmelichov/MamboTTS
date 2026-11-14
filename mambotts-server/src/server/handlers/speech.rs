@@ -17,6 +17,7 @@ use super::super::{
     state::{Cancelled, EngineError, SharedServer},
     util::first_non_empty,
 };
+use crate::runtime::language_code_alias;
 
 /// Identifies a streamed generation so a client can cancel it by id through
 /// `POST /v1/audio/speech/cancel`.
@@ -40,6 +41,16 @@ fn engine_error(err: EngineError) -> Response {
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/phonemize",
+    request_body = PhonemizeBody,
+    responses(
+        (status = 200, body = PhonemizeResponse),
+        (status = 400, description = "Empty input or an unsupported language"),
+        (status = 503, description = "No model loaded")
+    )
+)]
 pub async fn phonemize(
     State(server): State<SharedServer>,
     Json(body): Json<PhonemizeBody>,
@@ -51,7 +62,11 @@ pub async fn phonemize(
             "request body must contain input",
         );
     }
-    let PhonemizeBody { input, language } = body;
+    let language = match checked_language(&server, &body.language) {
+        Ok(language) => language,
+        Err(response) => return *response,
+    };
+    let PhonemizeBody { input, .. } = body;
     match server
         .with_engine(move |ctx| ctx.phonemize(&input, &language))
         .await
@@ -61,6 +76,11 @@ pub async fn phonemize(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/phonemes",
+    responses((status = 200, body = PhonemeInventoryResponse), (status = 503))
+)]
 pub async fn phoneme_inventory(State(server): State<SharedServer>) -> Response {
     let info = server.info();
     if !info.loaded {
@@ -81,6 +101,16 @@ pub async fn phoneme_inventory(State(server): State<SharedServer>) -> Response {
     .into_response()
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/diacritize",
+    request_body = DiacritizeBody,
+    responses(
+        (status = 200, body = DiacritizeResponse),
+        (status = 400, description = "Empty input"),
+        (status = 503, description = "No model loaded")
+    )
+)]
 pub async fn diacritize(
     State(server): State<SharedServer>,
     Json(body): Json<DiacritizeBody>,
@@ -118,14 +148,17 @@ fn supports_voice_reference(server: &SharedServer) -> bool {
     responses(
         (status = 200, content_type = "audio/wav", description = "audio/wav by default, audio/mpeg for response_format mp3",
          headers(("x-mambotts-generation-id" = String, description = "Streamed responses only: the id to pass to /v1/audio/speech/cancel"))),
-        (status = 400),
+        (status = 400, description = "Empty input, an unsupported language or response_format, or an unknown voice"),
         (status = 409, description = "The generation was cancelled"),
         (status = 503),
         (status = 500)
     )
 )]
-pub async fn speech(State(server): State<SharedServer>, Json(body): Json<SpeechBody>) -> Response {
-    if body.input.is_empty() {
+pub async fn speech(
+    State(server): State<SharedServer>,
+    Json(mut body): Json<SpeechBody>,
+) -> Response {
+    if body.input.trim().is_empty() {
         return write_error(
             StatusCode::BAD_REQUEST,
             "invalid_request",
@@ -145,6 +178,14 @@ pub async fn speech(State(server): State<SharedServer>, Json(body): Json<SpeechB
             "the loaded runtime supports only its saved voices; \
              load a runtime with voice cloning to use voice_reference",
         );
+    }
+    body.language = match checked_language(&server, &body.language) {
+        Ok(language) => language,
+        Err(response) => return *response,
+    };
+    let voice = first_non_empty([body.voice_reference.clone(), body.voice.clone()]);
+    if let Err(message) = server.info().check_voice(&voice) {
+        return write_error(StatusCode::BAD_REQUEST, "invalid_request", message);
     }
     if body.stream {
         // The chunk protocol carries WAV frames the desktop plays as they
@@ -166,7 +207,6 @@ pub async fn speech(State(server): State<SharedServer>, Json(body): Json<SpeechB
         );
     }
 
-    let voice = first_non_empty([body.voice_reference.clone(), body.voice.clone()]);
     let speed = resolve_speed(body.speed);
     let generation = server.begin_generation();
     let cancel = generation.cancel_flag();
@@ -194,6 +234,29 @@ pub async fn speech(State(server): State<SharedServer>, Json(body): Json<SpeechB
         Ok(data) => audio_response(data, format),
         Err(err) => engine_error(err),
     }
+}
+
+/// Resolve a request's `language` to the code the runtime takes and check the
+/// loaded model speaks it. With no model loaded the answer is `no_model`, not a
+/// misleading "unsupported language" against an empty list.
+fn checked_language(server: &SharedServer, requested: &str) -> Result<String, Box<Response>> {
+    let info = server.info();
+    if !info.loaded {
+        return Err(Box::new(write_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "no_model",
+            "no model loaded",
+        )));
+    }
+    let code = language_code_alias(requested);
+    info.check_language(&code).map_err(|message| {
+        Box::new(write_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            message,
+        ))
+    })?;
+    Ok(code)
 }
 
 #[utoipa::path(
@@ -371,13 +434,6 @@ fn send_final_wav(tx: &tokio::sync::mpsc::Sender<Result<Bytes, std::io::Error>>,
     }
 }
 
-/// The pace MamboTTS has always shipped.
-///
-/// The request carries a multiplier rather than an engine value, so a speed of
-/// 1.0 reproduces exactly what every previous version produced and the control
-/// changes nothing until somebody moves it.
-const BASELINE_SPEED: f32 = 0.95;
-
 /// The outer bounds the API will accept. These only guard against nonsense.
 /// The app's own slider is much tighter, 0.9 to 1.1, because outside that the
 /// audio loses level and articulation rather than simply changing pace. The
@@ -385,11 +441,17 @@ const BASELINE_SPEED: f32 = 0.95;
 const MIN_SPEED: f32 = 0.5;
 const MAX_SPEED: f32 = 2.0;
 
+/// The pace multiplier the runtime gets.
+///
+/// The request carries a multiplier, not an engine value: the runtime owns what
+/// 1.0 sounds like for each language (`natural_pace` in the Blue runtime), so
+/// no baseline is applied here as well. Applying one in both places slowed
+/// every take a second time.
 fn resolve_speed(requested: f32) -> f32 {
     // Absent, zero and negative all mean "unspecified" here, because serde
     // defaults a missing float to zero and no caller means to ask for silence.
     let multiplier = if requested > 0.0 { requested } else { 1.0 };
-    BASELINE_SPEED * multiplier.clamp(MIN_SPEED, MAX_SPEED)
+    multiplier.clamp(MIN_SPEED, MAX_SPEED)
 }
 
 fn frame(kind: u8, payload: Vec<u8>) -> Bytes {
@@ -419,4 +481,21 @@ fn audio_response(data: Vec<u8>, format: AudioFormat) -> Response {
         HeaderValue::from_static(disposition),
     );
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_speed;
+
+    #[test]
+    fn speed_is_a_plain_clamped_multiplier() {
+        // The runtime applies the per-language pace for 1.0; the handler must
+        // not scale it again.
+        assert_eq!(resolve_speed(1.0), 1.0);
+        assert_eq!(resolve_speed(0.0), 1.0);
+        assert_eq!(resolve_speed(-3.0), 1.0);
+        assert_eq!(resolve_speed(1.1), 1.1);
+        assert_eq!(resolve_speed(0.1), 0.5);
+        assert_eq!(resolve_speed(9.0), 2.0);
+    }
 }

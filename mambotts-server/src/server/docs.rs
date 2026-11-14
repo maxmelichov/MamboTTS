@@ -3,8 +3,9 @@ use utoipa_swagger_ui::SwaggerUi;
 
 use super::{
     dto::{
-        CancelBody, CancelResponse, HealthResponse, LanguagesResponse, LoadBody, LoadResponse,
-        ModelsResponse, SpeechBody, StatusResponse, VoicesResponse,
+        CancelBody, CancelResponse, DiacritizeBody, DiacritizeResponse, HealthResponse,
+        LanguagesResponse, LoadBody, LoadResponse, ModelsResponse, PhonemeInventoryResponse,
+        PhonemizeBody, PhonemizeResponse, SpeechBody, StatusResponse, VoicesResponse,
     },
     errors::{ErrorBody, ErrorDetail},
     handlers,
@@ -16,7 +17,9 @@ use crate::runtime::Language;
 #[openapi(
     info(
         title = "MamboTTS API",
-        description = "Local TTS HTTP API served by mambotts-server."
+        description = "Local BlueV3 text-to-speech HTTP API served by mambotts-server. \
+                       Speaks Hebrew, English, Spanish, German, Italian and Russian \
+                       (he, en, es, de, it, ru) in fixed voices; no voice cloning."
     ),
     paths(
         handlers::state::health,
@@ -29,6 +32,9 @@ use crate::runtime::Language;
         handlers::state::voices,
         handlers::speech::speech,
         handlers::speech::cancel_speech,
+        handlers::speech::phonemize,
+        handlers::speech::diacritize,
+        handlers::speech::phoneme_inventory,
     ),
     components(schemas(
         ErrorBody,
@@ -43,6 +49,11 @@ use crate::runtime::Language;
         SpeechBody,
         CancelBody,
         CancelResponse,
+        PhonemizeBody,
+        PhonemizeResponse,
+        DiacritizeBody,
+        DiacritizeResponse,
+        PhonemeInventoryResponse,
         Language,
         ModelSourceFile,
         ModelSource,

@@ -6,10 +6,22 @@ use regex::Regex;
 use serde_json::Value;
 use unicode_normalization::UnicodeNormalization;
 
+use crate::ipa::{normalize_ipa, strip_language_tags, tag_code};
+
 pub(crate) struct Tokenizer {
     pad_id: i64,
     char_to_id: HashMap<char, i64>,
     tag_re: Regex,
+    /// Present on BlueV3 release bundles, whose ids carry the language tags.
+    lang_tag: Option<LangTag>,
+}
+
+/// The vocab characters a release bundle spells `<code>` ... `</code>` with.
+#[derive(Clone, Copy)]
+struct LangTag {
+    open: char,
+    close: char,
+    slash: char,
 }
 
 impl Tokenizer {
@@ -31,11 +43,39 @@ impl Tokenizer {
                 char_to_id.insert(ch, v.as_i64().unwrap_or(pad_id));
             }
         }
+        let lang_tag = json
+            .get("lang_tag")
+            .filter(|tag| tag.is_object())
+            .map(|tag| {
+                let character = |key: &str, default: char| {
+                    tag[key]
+                        .as_str()
+                        .and_then(|value| value.chars().next())
+                        .unwrap_or(default)
+                };
+                LangTag {
+                    open: character("open", '<'),
+                    close: character("close", '>'),
+                    slash: character("slash", '/'),
+                }
+            });
         Ok(Self {
             pad_id,
             char_to_id,
             tag_re: Regex::new(r"</?[^>]+>")?,
+            lang_tag,
         })
+    }
+
+    /// True when ids are wrapped in language tags (a BlueV3 release bundle).
+    pub(crate) fn is_tagged(&self) -> bool {
+        self.lang_tag.is_some()
+    }
+
+    /// Ids one chunk of phonemes becomes, tags included: the unit the
+    /// release's chunk budget is counted in.
+    pub(crate) fn token_count(&self, phonemes: &str, lang: &str) -> Result<usize> {
+        Ok(self.encode_one(phonemes, lang)?.len())
     }
 
     pub(crate) fn supported_characters(&self) -> Vec<char> {
@@ -70,6 +110,9 @@ impl Tokenizer {
     }
 
     fn encode_one(&self, text: &str, lang: &str) -> Result<Vec<i64>> {
+        if let Some(tag) = self.lang_tag {
+            return self.encode_tagged(text, lang, tag);
+        }
         if !matches!(lang, "en" | "es" | "de" | "it" | "he") {
             bail!("invalid language: {lang}");
         }
@@ -88,6 +131,42 @@ impl Tokenizer {
             .chars()
             .map(|ch| *self.char_to_id.get(&ch).unwrap_or(&self.pad_id))
             .collect())
+    }
+}
+
+impl Tokenizer {
+    /// `encode_tagged` of the release: the ids of `<code>`, the normalised
+    /// phonemes and `</code>`. Inline routing tags from the G2P are dropped
+    /// and the chunk is wrapped once in its own language. A symbol the vocab
+    /// does not know becomes the pad id, as the reference does.
+    fn encode_tagged(&self, text: &str, lang: &str, tag: LangTag) -> Result<Vec<i64>> {
+        let code = tag_code(lang);
+        if code.is_empty() {
+            bail!("invalid language: {lang}");
+        }
+        let id = |character: char| {
+            self.char_to_id.get(&character).copied().with_context(|| {
+                format!("vocab.json has no id for the language tag character `{character}`")
+            })
+        };
+        let text = normalize_ipa(&strip_language_tags(text), &code);
+        let mut ids = Vec::with_capacity(text.chars().count() + 2 * code.len() + 5);
+        ids.push(id(tag.open)?);
+        for character in code.chars() {
+            ids.push(id(character)?);
+        }
+        ids.push(id(tag.close)?);
+        ids.extend(
+            text.chars()
+                .map(|character| *self.char_to_id.get(&character).unwrap_or(&self.pad_id)),
+        );
+        ids.push(id(tag.open)?);
+        ids.push(id(tag.slash)?);
+        for character in code.chars() {
+            ids.push(id(character)?);
+        }
+        ids.push(id(tag.close)?);
+        Ok(ids)
     }
 }
 
@@ -120,12 +199,10 @@ fn preprocess_phonemes(text: &str) -> String {
     text = text.replace('@', " at ");
     text = text.replace("e.g.,", "for example, ");
     text = text.replace("i.e.,", "that is, ");
-    text = Regex::new(r"(?u)([\u{0590}-\u{05ff}])[-–—‑]+([A-Za-z0-9])")
-        .expect("valid regex")
+    text = regex!(r"(?u)([\u{0590}-\u{05ff}])[-–—‑]+([A-Za-z0-9])")
         .replace_all(&text, "$1 $2")
         .into_owned();
-    text = Regex::new(r"(?u)([A-Za-z0-9])[-–—‑]+([\u{0590}-\u{05ff}])")
-        .expect("valid regex")
+    text = regex!(r"(?u)([A-Za-z0-9])[-–—‑]+([\u{0590}-\u{05ff}])")
         .replace_all(&text, "$1 $2")
         .into_owned();
     text.split_whitespace().collect::<Vec<_>>().join(" ")

@@ -5,7 +5,7 @@
 
 use std::sync::OnceLock;
 
-use regex::{Captures, Regex};
+use regex::Captures;
 
 use crate::hebrew_numbers::normalize_hebrew_numbers;
 
@@ -34,8 +34,7 @@ pub fn contains_nikud(text: &str) -> bool {
 
 /// Remove internal slow-segment markers before displaying prepared text.
 pub fn strip_reference_code_markers(text: &str) -> String {
-    text.replace(REF_CODE_MARK_OPEN, "")
-        .replace(REF_CODE_MARK_CLOSE, "")
+    text.replace([REF_CODE_MARK_OPEN, REF_CODE_MARK_CLOSE], "")
 }
 
 /// Split prepared text into ordinary and slow reference-code segments.
@@ -108,27 +107,19 @@ pub fn split_prepared_by_reference_codes(text: &str) -> Vec<PreparedSegment> {
 /// Normalize structured text while preserving ordinary Hebrew words **and**
 /// their niqqud.
 pub fn normalize_for_speech(text: &str) -> String {
-    let heading = Regex::new(r"(?m)^\s{0,3}#{1,6}\s+").expect("valid heading regex");
-    let list = Regex::new(r"(?m)(^|\n)\s*(\d{1,2})[.)]\s+").expect("valid list regex");
-    let email =
-        Regex::new(r"(?i)[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}").expect("valid email regex");
-    let phone = Regex::new(r"(?:\*\d{2,}|0\d{1,2}-\d{6,8})").expect("valid phone regex");
-    let date = Regex::new(r"([0-3]?\d)[/.]([01]?\d)[/.](\d{2}|\d{4})").expect("valid date regex");
-    let time = Regex::new(r"([01]?\d|2[0-3]):([0-5]\d)").expect("valid time regex");
-    let identifier =
-        Regex::new(r"[A-Za-z]+(?:[-_/]?[A-Za-z0-9]+)+").expect("valid identifier regex");
+    let heading = regex!(r"(?m)^\s{0,3}#{1,6}\s+");
+    let list = regex!(r"(?m)(^|\n)\s*(\d{1,2})[.)]\s+");
+    let email = regex!(r"(?i)[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}");
+    let phone = regex!(r"(?:\*\d{2,}|0\d{1,2}-\d{6,8})");
+    let date = regex!(r"([0-3]?\d)[/.]([01]?\d)[/.](\d{2}|\d{4})");
+    let time = regex!(r"([01]?\d|2[0-3]):([0-5]\d)");
+    let identifier = regex!(r"[A-Za-z]+(?:[-_/]?[A-Za-z0-9]+)+");
 
     let mut text = heading.replace_all(text, "").into_owned();
     text = text
-        .replace('–', "-")
-        .replace('—', "-")
-        .replace('‑', "-")
-        .replace('[', " ")
-        .replace(']', " ")
-        .replace('{', " ")
-        .replace('}', " ")
-        .replace('(', ",")
-        .replace(')', ",");
+        .replace(['–', '—', '‑'], "-")
+        .replace(['[', ']', '{', '}'], " ")
+        .replace(['(', ')'], ",");
     text = normalize_hebrew_punctuation(&text);
     text = list
         .replace_all(&text, |caps: &Captures| {
@@ -157,38 +148,211 @@ pub fn normalize_for_speech(text: &str) -> String {
     normalize_punctuation(&text)
 }
 
-/// Apply BlueTTS's text normalization before G2P.
+/// Prepare text for the G2P of its language, as the BlueV3 front end does.
 ///
-/// This intentionally keeps `<en>…</en>` spans and `【…】` pacing spans in the
-/// output. The G2P and synthesis layers consume those markers later.
+/// English, German, Spanish, Italian and Russian go to polyg2p as written: it
+/// reads numbers, dates, money and abbreviations itself, and the model's
+/// labels were made from its reading of raw text. Only helper markup comes
+/// out here.
+///
+/// Hebrew is normalised to spoken Hebrew first, a paragraph at a time so a
+/// blank line still separates chunks. This intentionally keeps `<en>…</en>`
+/// spans and `【…】` pacing spans in the output; the G2P and synthesis layers
+/// consume those markers later.
+///
+/// Markup that is not an inline language tag (`<b>`, `<br/>`) is never
+/// spoken, in any language.
 pub fn prepare_text_for_synthesis(text: &str, lang: &str) -> String {
     let lang = canonical_lang(lang);
-    let mut text = strip_helper_markup(text);
-    text = normalize_common_text(&text);
-    if lang == "he" {
-        text = normalize_hebrew_punctuation(&text);
-        text = expand_letter_labels(&text);
-        text = expand_geresh_loanwords(&text);
-        text = expand_dialogue_quotes(&text);
-        text = expand_prefixes_before_latin(&text);
-        text = expand_lamed_before_latin(&text);
+    let text = strip_synthesis_tags(&strip_helper_markup(text));
+    if lang != "he" {
+        return text.trim().to_owned();
     }
-    text = expand_alphanumeric_codes(&text, &lang);
-    text = expand_list_markers(&text, &lang);
-    text = expand_plus_sign(&text, &lang);
-    if lang == "he" {
-        text = expand_phone_numbers(&text);
-        text = expand_times(&text);
-        text = expand_dates(&text);
-        // Hebrew number words depend on gender, on the noun that follows and
-        // on whether the digits are a year, an ordinal or a range, so Hebrew
-        // gets its own pass and leaves nothing for the generic ones below.
-        text = normalize_hebrew_numbers(&text);
+    // List numbers while line starts are still there to tell a list from a
+    // number that ends a sentence; the normaliser would drop a leading "1."
+    // as Markdown instead of reading it.
+    let text = expand_list_markers(&text, &lang);
+    regex!(r"\n\s*\n")
+        .split(&text)
+        .map(prepare_hebrew_paragraph)
+        .filter(|paragraph| !paragraph.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn prepare_hebrew_paragraph(text: &str) -> String {
+    let lang = "he";
+    let mut text = normalize_common_text(text);
+    // Letter labels first: a label is written out with its vowel points so
+    // the G2P cannot read it as a word.
+    text = expand_letter_labels(&text);
+    // English runs and inline language spans keep their digits for their
+    // own G2P: nothing below reads them as Hebrew.
+    let (masked, spans) = mask_foreign_runs(&text);
+    // Then the normaliser, while the text still has the gershayim it reads
+    // abbreviations and units by.
+    text = hebrew_normalize(&masked);
+    text = normalize_hebrew_punctuation(&text);
+    text = expand_geresh_loanwords(&text);
+    text = expand_dialogue_quotes(&text);
+    text = expand_prefixes_before_latin(&text);
+    text = expand_lamed_before_latin(&text);
+    text = expand_alphanumeric_codes(&text, lang);
+    text = expand_plus_sign(&text, lang);
+    text = expand_phone_numbers(&text);
+    text = expand_times(&text);
+    text = expand_dates(&text);
+    // What is left of digit:digit after the normaliser and the times is a
+    // ratio (3:1), read before the digits become words.
+    text = expand_ratios(&text, lang);
+    // Hebrew number words depend on gender, on the noun that follows and
+    // on whether the digits are a year, an ordinal or a range, so Hebrew
+    // gets its own pass and leaves nothing for the generic ones below.
+    text = normalize_hebrew_numbers(&text);
+    text = expand_percent_symbols(&text, lang);
+    text = expand_numbers(&text, lang);
+    text = colon_pauses(&text);
+    unmask_foreign_runs(&strip_silent_separator_tokens(&text), &spans)
+}
+
+/// MamboTTS reads a colon that ends a phrase (`תשובה ב׳: …`) as a sentence
+/// pause. A colon inside a token (a URL, `a:b`) is not a pause.
+fn colon_pauses(text: &str) -> String {
+    regex!(r"\s*:+(\s|$)").replace_all(text, ". ").into_owned()
+}
+
+/// Placeholder delimiters for text the Hebrew passes must not touch: marks
+/// the normaliser passes through as they are (it mangles private-use ones).
+const MASK_OPEN: char = '⟦';
+const MASK_CLOSE: char = '⟧';
+/// Digits of a placeholder's index, runic `ᚠ` for 0 to `ᚩ` for 9.
+const MASK_DIGIT: u32 = 0x16a0;
+
+fn mask(spans: &mut Vec<String>, value: String) -> String {
+    let index = spans.len();
+    spans.push(value);
+    let digits: String = index
+        .to_string()
+        .chars()
+        .filter_map(|d| char::from_u32(MASK_DIGIT + d.to_digit(10)?))
+        .collect();
+    format!("{MASK_OPEN}{digits}{MASK_CLOSE}")
+}
+
+fn unmask_foreign_runs(text: &str, spans: &[String]) -> String {
+    if spans.is_empty() {
+        return text.to_owned();
     }
-    text = expand_percent_symbols(&text, &lang);
-    text = expand_ratios(&text, &lang);
-    text = expand_numbers(&text, &lang);
-    strip_silent_separator_tokens(&text.replace(':', ". "))
+    regex!("⟦([\u{16a0}-\u{16a9}]+)⟧")
+        .replace_all(text, |caps: &Captures| {
+            let index: String = caps[1]
+                .chars()
+                .filter_map(|c| char::from_digit(c as u32 - MASK_DIGIT, 10))
+                .collect();
+            index
+                .parse::<usize>()
+                .ok()
+                .and_then(|index| spans.get(index).cloned())
+                .unwrap_or_default()
+        })
+        .into_owned()
+}
+
+/// Hide from the Hebrew passes what is not Hebrew to read: inline spans in
+/// another language (`<en>…</en>`), stray language tags, and runs of English
+/// (two or more Latin words with no Hebrew letter between them, or the whole
+/// text when it has no Hebrew at all). A run is wrapped as `<en>` a sentence
+/// at a time, so its numbers are read by the English G2P, and a number next
+/// to Hebrew stays Hebrew.
+fn mask_foreign_runs(text: &str) -> (String, Vec<String>) {
+    let mut spans = Vec::new();
+    let text = regex!(r"(?is)<(en|en-us|es|de|ge|it|ru)>.*?</(?:en|en-us|es|de|ge|it|ru)>")
+        .replace_all(text, |caps: &Captures| mask(&mut spans, caps[0].to_owned()))
+        .into_owned();
+    let text = regex!(r"(?i)</?(?:he|en|en-us|es|de|ge|it|ru)>")
+        .replace_all(&text, |caps: &Captures| {
+            mask(&mut spans, caps[0].to_owned())
+        })
+        .into_owned();
+    let no_hebrew = !text.chars().any(is_hebrew_letter);
+    let latin_words = |run: &str| {
+        run.split_whitespace()
+            .filter(|word| word.chars().any(is_latin_letter))
+            .count()
+    };
+    let text = regex!("[^\u{0590}-\u{05ff}⟦⟧\u{16a0}-\u{16a9}]+")
+        .replace_all(&text, |caps: &Captures| {
+            let run = &caps[0];
+            let words = latin_words(run);
+            if words == 0 || (words < 2 && !no_hebrew) {
+                return run.to_owned();
+            }
+            // From the first Latin letter to the last letter or digit, and
+            // the sentence marks right after it.
+            let Some(start) = run.find(is_latin_letter) else {
+                return run.to_owned();
+            };
+            let mut end = run.rfind(char::is_alphanumeric).map_or(run.len(), |i| {
+                i + run[i..].chars().next().map_or(1, char::len_utf8)
+            });
+            end += run[end..]
+                .find(|c: char| !matches!(c, '.' | '!' | '?' | '…'))
+                .unwrap_or(run.len() - end);
+            if end <= start {
+                return run.to_owned();
+            }
+            let wrapped = crate::chunking::split_sentences_text(&run[start..end])
+                .iter()
+                .map(|sentence| format!("<en>{sentence}</en>"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            format!(
+                "{}{}{}",
+                &run[..start],
+                mask(&mut spans, wrapped),
+                &run[end..]
+            )
+        })
+        .into_owned();
+    (text, spans)
+}
+
+fn is_latin_letter(character: char) -> bool {
+    character.is_ascii_alphabetic()
+        || (('\u{c0}'..='\u{24f}').contains(&character) && character.is_alphabetic())
+}
+
+/// Remove XML-like markup that is not an inline language tag, so tag names
+/// are never spoken (the reference's `_strip_synthesis_tags`).
+fn strip_synthesis_tags(text: &str) -> String {
+    let stripped = regex!(r"</?([A-Za-z][A-Za-z0-9_:-]*)(\s[^<>]*)?/?>").replace_all(
+        text,
+        |caps: &Captures| {
+            let whole = &caps[0];
+            let language = matches!(
+                caps[1].to_ascii_lowercase().as_str(),
+                "en" | "en-us" | "he" | "es" | "de" | "ge" | "it" | "ru"
+            );
+            if language && caps.get(2).is_none() && !whole.ends_with("/>") {
+                whole.to_owned()
+            } else {
+                " ".to_owned()
+            }
+        },
+    );
+    // Only the spaces a removed tag left behind; line breaks stay.
+    regex!(r"[^\S\n]{2,}")
+        .replace_all(&stripped, " ")
+        .into_owned()
+}
+
+/// The release's Hebrew text normaliser (heb-tts-normalizer at its default
+/// reading style: 12-hour clock, day-month-year dates): numbers by gender,
+/// ordinals, dates, times, currency, percent, units and abbreviations become
+/// spoken Hebrew. What it leaves is read by the expanders that follow.
+fn hebrew_normalize(text: &str) -> String {
+    static CONFIG: OnceLock<heb_tts_normalizer::Config> = OnceLock::new();
+    heb_tts_normalizer::normalize(text, CONFIG.get_or_init(Default::default))
 }
 
 fn canonical_lang(lang: &str) -> String {
@@ -200,21 +364,20 @@ fn canonical_lang(lang: &str) -> String {
 }
 
 fn strip_helper_markup(text: &str) -> String {
-    let block = Regex::new(r"(?is)<lang_list\b[^>]*>.*?</lang_list>").expect("valid regex");
-    let tag = Regex::new(r"(?i)</?lang_list\b[^>]*>").expect("valid regex");
+    let block = regex!(r"(?is)<lang_list\b[^>]*>.*?</lang_list>");
+    let tag = regex!(r"(?i)</?lang_list\b[^>]*>");
     tag.replace_all(&block.replace_all(text, " "), " ")
         .into_owned()
 }
 
 fn normalize_common_text(text: &str) -> String {
-    let heading = Regex::new(r"(?m)(^|\s)#{1,6}\s*").expect("valid regex");
+    let heading = regex!(r"(?m)(^|\s)#{1,6}\s*");
     let mut text = heading.replace_all(text, "$1").into_owned();
     text = text
         .replace(['(', '[', '{'], ", ")
         .replace([')', ']', '}'], ", ");
     text = normalize_punctuation(&text);
-    Regex::new(r"(?i)\banymore\b")
-        .expect("valid regex")
+    regex!(r"(?i)\banymore\b")
         .replace_all(&text, |caps: &Captures| {
             if caps[0].starts_with('A') {
                 "Any more"
@@ -485,9 +648,9 @@ fn expand_geresh_loanwords(text: &str) -> String {
 }
 
 fn expand_dialogue_quotes(text: &str) -> String {
-    let terminal = Regex::new(r#"(?u)(\S)\s*["“„”]\s*$"#).expect("valid regex");
-    let opening = Regex::new(r#"(?u)\s*:?\s*["“„”]\s*"#).expect("valid regex");
-    let closing = Regex::new(r#"(?u)(\S)\s*["“„”]"#).expect("valid regex");
+    let terminal = regex!(r#"(?u)(\S)\s*["“„”]\s*$"#);
+    let opening = regex!(r#"(?u)\s*:?\s*["“„”]\s*"#);
+    let closing = regex!(r#"(?u)(\S)\s*["“„”]"#);
     let text = terminal.replace_all(text, "$1.").into_owned();
     let text = opening.replace_all(&text, ", ").into_owned();
     closing.replace_all(&text, "$1, ").into_owned()
@@ -498,13 +661,9 @@ fn expand_dialogue_quotes(text: &str) -> String {
 /// (מה as "ma"). The Latin word already carries the article in speech, so
 /// ב, ל and כ take the definite patah the way they are said aloud.
 fn expand_prefixes_before_latin(text: &str) -> String {
-    static PREFIX: OnceLock<Regex> = OnceLock::new();
-    let prefix = PREFIX.get_or_init(|| {
-        Regex::new(
-            r"(^|[^\p{L}\p{M}\p{N}])((?:[\u{05d0}-\u{05ea}][\u{0591}-\u{05C7}]*){1,2})[-\u{2010}\u{2011}\u{2013}\u{05be}]?([A-Za-z])",
-        )
-        .expect("valid prefix regex")
-    });
+    let prefix = regex!(
+        r"(^|[^\p{L}\p{M}\p{N}])((?:[\u{05d0}-\u{05ea}][\u{0591}-\u{05C7}]*){1,2})[-\u{2010}\u{2011}\u{2013}\u{05be}]?([A-Za-z])"
+    );
     prefix
         .replace_all(text, |caps: &Captures| {
             let pointed = match strip_nikud(&caps[2]).as_str() {
@@ -533,14 +692,13 @@ fn expand_prefixes_before_latin(text: &str) -> String {
 
 fn expand_lamed_before_latin(text: &str) -> String {
     // A pointed ל was already read as a prefix by expand_prefixes_before_latin.
-    Regex::new(r"(?u)(^|[^\u{0590}-\u{05ff}])ל\s*[-\u{2013}\u{2014}\u{2011}]?\s*([A-Za-z0-9])")
-        .expect("valid regex")
+    regex!(r"(?u)(^|[^\u{0590}-\u{05ff}])ל\s*[-\u{2013}\u{2014}\u{2011}]?\s*([A-Za-z0-9])")
         .replace_all(text, "$1אל $2")
         .into_owned()
 }
 
 fn expand_alphanumeric_codes(text: &str, lang: &str) -> String {
-    let token = Regex::new(r"(?i)[a-z0-9]+(?:[-_/][a-z0-9]+)*").expect("valid regex");
+    let token = regex!(r"(?i)[a-z0-9]+(?:[-_/][a-z0-9]+)*");
     token
         .replace_all(text, |caps: &Captures| {
             let value = &caps[0];
@@ -573,18 +731,21 @@ fn expand_alphanumeric_codes(text: &str, lang: &str) -> String {
         .into_owned()
 }
 
+/// A list number at the start of a line, before Hebrew text (`1. אמר`), as
+/// the reference's `_LIST_MARKER_RE` reads one. A number that ends a
+/// sentence (`הוא בן 21. הוא`) is left to the normaliser.
 fn expand_list_markers(text: &str, lang: &str) -> String {
-    let list = Regex::new(r"(?m)(^|[^\d/])(\d{1,2})\.\s+").expect("valid regex");
-    list.replace_all(text, |caps: &Captures| {
-        let n: u8 = caps[2].parse().unwrap_or_default();
-        let word = if lang == "he" {
-            list_number(n)
-        } else {
-            number_to_words(u16::from(n), lang)
-        };
-        format!("{}{}. ", &caps[1], word)
-    })
-    .into_owned()
+    regex!("(?m)^([ \t]*)(\\d{1,2})\\.[ \t]+([\u{0590}-\u{05ff}\"'(<״“])")
+        .replace_all(text, |caps: &Captures| {
+            let n: u8 = caps[2].parse().unwrap_or_default();
+            let word = if lang == "he" {
+                list_number(n)
+            } else {
+                number_to_words(u16::from(n), lang)
+            };
+            format!("{}{}. {}", &caps[1], word, &caps[3])
+        })
+        .into_owned()
 }
 
 fn expand_plus_sign(text: &str, lang: &str) -> String {
@@ -594,14 +755,13 @@ fn expand_plus_sign(text: &str, lang: &str) -> String {
         "it" => "più",
         _ => "plus",
     };
-    Regex::new(r"\s+\+\s+")
-        .expect("valid regex")
+    regex!(r"\s+\+\s+")
         .replace_all(text, format!(" {word} "))
         .into_owned()
 }
 
 fn expand_phone_numbers(text: &str) -> String {
-    let phone = Regex::new(r"(?x)(?:\*\d{2,}|0\d{0,2}-\d{6,8})").expect("valid regex");
+    let phone = regex!(r"(?x)(?:\*\d{2,}|0\d{0,2}-\d{6,8})");
     phone
         .replace_all(text, |caps: &Captures| {
             let raw = &caps[0];
@@ -616,7 +776,7 @@ fn expand_phone_numbers(text: &str) -> String {
 }
 
 fn expand_times(text: &str) -> String {
-    let time = Regex::new(r"([01]?\d|2[0-3]):([0-5]\d)").expect("valid regex");
+    let time = regex!(r"([01]?\d|2[0-3]):([0-5]\d)");
     time.replace_all(text, |caps: &Captures| {
         let hour = caps[1].parse::<u16>().unwrap_or_default();
         let minute = caps[2].parse::<u16>().unwrap_or_default();
@@ -635,7 +795,7 @@ fn expand_times(text: &str) -> String {
 }
 
 fn expand_dates(text: &str) -> String {
-    let date = Regex::new(r"([0-3]?\d)[/.]([01]?\d)[/.](\d{2}|\d{4})").expect("valid regex");
+    let date = regex!(r"([0-3]?\d)[/.]([01]?\d)[/.](\d{2}|\d{4})");
     date.replace_all(text, |caps: &Captures| {
         let day = caps[1].parse::<u16>().unwrap_or_default();
         let month = caps[2].parse::<usize>().unwrap_or_default();
@@ -680,8 +840,7 @@ fn expand_percent_symbols(text: &str, lang: &str) -> String {
         "it" => "per cento",
         _ => "percent",
     };
-    Regex::new(r"(\d+(?:[.,]\d+)?)\s*%")
-        .expect("valid regex")
+    regex!(r"(\d+(?:[.,]\d+)?)\s*%")
         .replace_all(text, format!("$1 {word}"))
         .into_owned()
 }
@@ -692,14 +851,13 @@ fn expand_ratios(text: &str, lang: &str) -> String {
         "de" => "zu",
         _ => "to",
     };
-    Regex::new(r"(\d+)\s*:\s*(\d+)")
-        .expect("valid regex")
+    regex!(r"(\d+)\s*:\s*(\d+)")
         .replace_all(text, format!("$1 {word} $2"))
         .into_owned()
 }
 
 fn expand_numbers(text: &str, lang: &str) -> String {
-    let numbers = Regex::new(r"\d+(?:[.,]\d+)?").expect("valid regex");
+    let numbers = regex!(r"\d+(?:[.,]\d+)?");
     numbers
         .replace_all(text, |caps: &Captures| {
             let raw = &caps[0];
@@ -729,27 +887,21 @@ fn expand_numbers(text: &str, lang: &str) -> String {
 }
 
 fn strip_silent_separator_tokens(text: &str) -> String {
-    let text = Regex::new(r"(?u)([\u{0590}-\u{05ff}])[-–—‑]+([A-Za-z0-9])")
-        .expect("valid regex")
+    let text = regex!(r"(?u)([\u{0590}-\u{05ff}])[-–—‑]+([A-Za-z0-9])")
         .replace_all(text, "$1 $2")
         .into_owned();
-    let text = Regex::new(r"(?u)([A-Za-z0-9])[-–—‑]+([\u{0590}-\u{05ff}])")
-        .expect("valid regex")
+    let text = regex!(r"(?u)([A-Za-z0-9])[-–—‑]+([\u{0590}-\u{05ff}])")
         .replace_all(&text, "$1 $2")
         .into_owned();
-    let text = Regex::new(r"\s*[-–—‑]+\s*")
-        .expect("valid regex")
+    // A dash with space on both sides is a pause between phrases.
+    let text = regex!(r"([^\s,.;:!?])\s+[-–—‑]+\s+")
+        .replace_all(&text, "$1, ")
+        .into_owned();
+    let text = regex!(r"\s*[-–—‑]+\s*")
         .replace_all(&text, " ")
         .into_owned();
-    let text = Regex::new(r"\s*:+\s*")
-        .expect("valid regex")
-        .replace_all(&text, " ")
-        .into_owned();
-    Regex::new(r"\s+")
-        .expect("valid regex")
-        .replace_all(&text, " ")
-        .trim()
-        .to_owned()
+    let text = regex!(r"\s*:+\s*").replace_all(&text, " ").into_owned();
+    regex!(r"\s+").replace_all(&text, " ").trim().to_owned()
 }
 
 fn is_nikud(character: char) -> bool {
@@ -822,11 +974,11 @@ fn is_hyphenated_prefix(before: &[char]) -> bool {
 
 fn normalize_punctuation(text: &str) -> String {
     let text = text.replace('…', ",");
-    let dots = Regex::new(r"\.{2,}").expect("valid dot regex");
-    let bangs = Regex::new(r"!{2,}").expect("valid exclamation regex");
-    let questions = Regex::new(r"\?{2,}").expect("valid question regex");
-    let commas = Regex::new(r",{2,}").expect("valid comma regex");
-    let whitespace = Regex::new(r"\s+").expect("valid whitespace regex");
+    let dots = regex!(r"\.{2,}");
+    let bangs = regex!(r"!{2,}");
+    let questions = regex!(r"\?{2,}");
+    let commas = regex!(r",{2,}");
+    let whitespace = regex!(r"\s+");
     let text = dots.replace_all(&text, ",");
     let text = bangs.replace_all(&text, "!");
     let text = questions.replace_all(&text, "?");
@@ -1054,7 +1206,7 @@ fn list_number(number: u8) -> String {
         8 => "שמונה".to_owned(),
         9 => "תשע".to_owned(),
         10 => "עשר".to_owned(),
-        _ => spell_digits(&number.to_string()),
+        _ => number_to_words(u16::from(number), "he"),
     }
 }
 
@@ -1263,6 +1415,102 @@ mod tests {
         assert!(!segments[0].is_reference_code);
         assert!(segments[1].is_reference_code);
         assert_eq!(segments[1].text, "אחת שתיים.");
+    }
+
+    #[test]
+    fn a_number_that_ends_a_sentence_is_not_a_list_marker() {
+        for (text, expected) in [
+            ("הוא בן 21. הוא גר בעיר.", "הוא בן עשרים ואחת. הוא גר בעיר."),
+            ("גרתי בקומה 15. היה נחמד.", "גרתי בקומה חמש עשרה. היה נחמד."),
+            ("היו שם 2. ילדות", "היו שם שתיים. ילדות"),
+        ] {
+            assert_eq!(prepare_text_for_synthesis(text, "he"), expected, "{text}");
+        }
+        // A list number starts a line and comes before Hebrew text.
+        assert_eq!(
+            prepare_text_for_synthesis("רשימה:\n2. ילדה טובה\n12. ילד", "he"),
+            "רשימה. שתיים. ילדה טובה שתים עשרה. ילד"
+        );
+    }
+
+    #[test]
+    fn markup_is_stripped_but_language_spans_stay() {
+        assert_eq!(
+            prepare_text_for_synthesis("<b>Hello</b> <EN>world</EN>.<br/>", "en"),
+            "Hello <EN>world</EN>."
+        );
+        assert_eq!(
+            prepare_text_for_synthesis("<i class=\"x\">שלום</i> עולם", "he"),
+            "שלום עולם"
+        );
+    }
+
+    #[test]
+    fn colons_inside_tokens_and_spaced_dashes() {
+        let ratio = prepare_text_for_synthesis("והיחס 3:1 בערך", "he");
+        assert!(!ratio.contains('.'), "{ratio}");
+        assert!(ratio.contains("שלוש"), "{ratio}");
+        let url = prepare_text_for_synthesis("בקרו ב https://example.com/a:b היום", "he");
+        assert!(!url.contains(". "), "{url}");
+        assert!(!prepare_text_for_synthesis("בשעה 12:30 נפגש", "he").contains('.'));
+        assert_eq!(
+            prepare_text_for_synthesis("שלום - עולם", "he"),
+            "שלום, עולם"
+        );
+        assert_eq!(
+            prepare_text_for_synthesis("שלום — עולם", "he"),
+            "שלום, עולם"
+        );
+        assert_eq!(
+            prepare_text_for_synthesis("שלום, - עולם", "he"),
+            "שלום, עולם"
+        );
+    }
+
+    #[test]
+    fn a_blank_line_survives_hebrew_preparation() {
+        for text in ["כותרת\n\nגוף הטקסט כאן.", "כותרת\r\n  \r\nגוף הטקסט כאן."]
+        {
+            let prepared = prepare_text_for_synthesis(text, "he");
+            assert_eq!(prepared, "כותרת\n\nגוף הטקסט כאן.");
+            assert_eq!(
+                crate::chunking::split_sentence_chunks(&prepared),
+                ["כותרת", "גוף הטקסט כאן."]
+            );
+        }
+        // A single line break is still only a space.
+        assert_eq!(prepare_text_for_synthesis("שלום\nעולם", "he"), "שלום עולם");
+    }
+
+    #[test]
+    fn english_runs_keep_their_numbers_for_the_english_g2p() {
+        for (text, expected) in [
+            (
+                "The meeting at 10:30 had 36 participants.",
+                "<en>The meeting at 10:30 had 36 participants.</en>",
+            ),
+            (
+                "שלום. The meeting at 10:30 had 36 participants. ביי",
+                "שלום. <en>The meeting at 10:30 had 36 participants.</en> ביי",
+            ),
+            (
+                "קניתי iPhone 15 Pro אתמול",
+                "קניתי <en>iPhone 15 Pro</en> אתמול",
+            ),
+            ("<EN>room 5</EN> שלום 5", "<EN>room 5</EN> שלום חמש"),
+            // Hebrew sentences with numbers still read in Hebrew.
+            (
+                "יש לי 3 ילדים ו-25₪",
+                "יש לי שלושה ילדים ועשרים וחמישה שקלים",
+            ),
+            ("בשעה 14:30", "בשעה שתיים וחצי אחר הצהריים"),
+            ("ב-3.9.2026", "בשלושה בספטמבר אלפיים עשרים ושש"),
+        ] {
+            assert_eq!(prepare_text_for_synthesis(text, "he"), expected, "{text}");
+        }
+        // One Latin word in a Hebrew sentence is not an English run.
+        let code = prepare_text_for_synthesis("קוד GPT-4 עכשיו.", "he");
+        assert!(code.contains("ארבע"), "{code}");
     }
 
     #[test]

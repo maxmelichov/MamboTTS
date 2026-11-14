@@ -37,7 +37,7 @@ export function HomePage() {
             <div className="grid gap-6 sm:grid-cols-3">
                 {[
                     { title: "Total Privacy", desc: "Your data never leaves your machine. Your audio, your rules." },
-                    { title: "Languages", desc: "Generate speech in English, Chinese, Japanese, and more." },
+                    { title: "Languages", desc: "Speak Hebrew, English, Spanish, German, Italian, and Russian with 15 built-in voices." },
                     { title: "Production Ready", desc: "High-fidelity models that fit into your creative workflow." }
                 ].map((feat) => (
                     <div key={feat.title} className="group relative rounded-3xl bg-white/30 p-8 border border-border/40 transition-all hover:bg-white/60 hover:border-border/60 hover:-translate-y-1 duration-500">

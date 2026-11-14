@@ -1,15 +1,11 @@
 use futures_util::StreamExt;
 use serde::Serialize;
-use std::{
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 use tauri::{Emitter, Manager};
 use tokio::io::AsyncWriteExt;
 
 use crate::analytics;
 use mambotts_registry::runtimes;
-
-const BLUE_MODEL_BASE_URL: &str = "https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ModelBundle {
@@ -21,7 +17,6 @@ pub struct ModelBundle {
     /// so this is not optional.
     pub renikud_path: String,
     pub voices_path: Option<String>,
-    pub espeak_data_path: Option<String>,
     pub model_dir: String,
     pub version: String,
     pub url: String,
@@ -150,10 +145,9 @@ fn blue_bundle(app: &tauri::AppHandle) -> Result<ModelBundle, String> {
         codec_path: path_string(&renikud_path),
         renikud_path: path_string(&renikud_path),
         voices_path: Some(path_string(&dir.join("voices"))),
-        espeak_data_path: None,
         model_dir: path_string(&dir),
         version: source.version,
-        url: BLUE_MODEL_BASE_URL.to_string(),
+        url: mambotts_registry::blue_model_base_url().to_string(),
     })
 }
 
@@ -209,8 +203,7 @@ async fn download_runtime_bundle(
     if bundle.installed {
         return Ok(bundle);
     }
-    let source =
-        runtime_source(runtime).ok_or_else(|| format!("missing `{runtime}` source"))?;
+    let source = runtime_source(runtime).ok_or_else(|| format!("missing `{runtime}` source"))?;
     let dir = PathBuf::from(&bundle.model_dir);
     tokio::fs::create_dir_all(&dir)
         .await
@@ -256,7 +249,7 @@ async fn download_runtime_bundle(
         if let Ok(metadata) = tokio::fs::metadata(&destination).await {
             let complete = metadata.is_file()
                 && metadata.len() > 0
-                && remote_len.map_or(true, |expected| expected == metadata.len());
+                && remote_len.is_none_or(|expected| expected == metadata.len());
             if complete {
                 downloaded += metadata.len();
                 continue;
@@ -358,14 +351,25 @@ fn content_range_total(response: &reqwest::Response) -> Option<u64> {
         .and_then(|value| value.parse::<u64>().ok())
 }
 
+/// The size of the file a response describes, read from its headers.
+///
+/// `Response::content_length` is the size of the body reqwest will read, and
+/// the body of a HEAD response is empty, so it is `Some(0)` there whatever
+/// the server says. Trusting it made every file look the wrong size, so the
+/// download fetched the whole bundle again on every attempt. The headers are
+/// read directly instead: Hugging Face's `X-Linked-Size` (the real file size,
+/// also on its redirects) first, then `Content-Length`. Zero means unknown.
 fn response_content_length(response: &reqwest::Response) -> Option<u64> {
-    response.content_length().or_else(|| {
-        response
-            .headers()
-            .get("x-linked-size")
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.parse::<u64>().ok())
-    })
+    header_size(response.headers())
+}
+
+fn header_size(headers: &reqwest::header::HeaderMap) -> Option<u64> {
+    ["x-linked-size", reqwest::header::CONTENT_LENGTH.as_str()]
+        .into_iter()
+        .filter_map(|name| headers.get(name))
+        .filter_map(|value| value.to_str().ok())
+        .filter_map(|value| value.trim().parse::<u64>().ok())
+        .find(|size| *size > 0)
 }
 
 async fn download_model_file(
@@ -475,4 +479,23 @@ fn emit_progress(app: &tauri::AppHandle, payload: ModelDownloadProgress) {
 
 fn path_string(path: &Path) -> String {
     path.as_os_str().to_string_lossy().into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_head_response_size_comes_from_its_headers() {
+        use reqwest::header::{HeaderMap, HeaderValue, CONTENT_LENGTH};
+        let mut headers = HeaderMap::new();
+        headers.insert(CONTENT_LENGTH, HeaderValue::from_static("101428551"));
+        assert_eq!(super::header_size(&headers), Some(101_428_551));
+        // A redirect's own length is not the file's; the linked size is.
+        headers.insert(CONTENT_LENGTH, HeaderValue::from_static("1018"));
+        headers.insert("x-linked-size", HeaderValue::from_static("3382"));
+        assert_eq!(super::header_size(&headers), Some(3382));
+        assert_eq!(super::header_size(&HeaderMap::new()), None);
+        let mut empty = HeaderMap::new();
+        empty.insert(CONTENT_LENGTH, HeaderValue::from_static("0"));
+        assert_eq!(super::header_size(&empty), None);
+    }
 }

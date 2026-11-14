@@ -1,13 +1,13 @@
 use std::path::Path;
+use std::sync::Once;
 
-use anyhow::{Result, anyhow, bail};
-use espeak_rs::text_to_phonemes;
+use anyhow::{Result, bail};
 use ort::session::Session;
 use regex::Regex;
 use renikud_plus_rs::lexicon::{ForceLexicon, OnInvalidEntry};
 use renikud_plus_rs::{G2P, G2PConfig, NiqqudMode, Options};
 
-use crate::handling::prepare_text_for_synthesis;
+use crate::handling::{prepare_text_for_synthesis, strip_reference_code_markers};
 
 /// RenikudPlus as MamboTTS runs it: niqqud in the input is read as evidence
 /// rather than dropped, because the app lets people type and edit the points
@@ -19,14 +19,12 @@ fn hebrew_config() -> G2PConfig {
     }
 }
 
-/// Languages supported by the BlueTTS model.
+/// Languages the BlueV3 release reads.
 ///
 /// Codes:
-/// - `he` Hebrew, via RenikudPlus when Hebrew characters are present.
-/// - `en` English, via eSpeak voice `en-us`.
-/// - `es` Spanish, via eSpeak voice `es`.
-/// - `de` German, via eSpeak voice `de`.
-/// - `it` Italian, via eSpeak voice `it`.
+/// - `he` Hebrew, via the Hebrew text normaliser and RenikudPlus.
+/// - `en` English, `es` Spanish (Castilian), `de` German, `it` Italian and
+///   `ru` Russian, via polyg2p, the G2P the model's labels were made with.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Language {
     Hebrew,
@@ -34,9 +32,19 @@ pub enum Language {
     Spanish,
     German,
     Italian,
+    Russian,
 }
 
 impl Language {
+    pub const ALL: [Language; 6] = [
+        Self::Hebrew,
+        Self::English,
+        Self::Spanish,
+        Self::German,
+        Self::Italian,
+        Self::Russian,
+    ];
+
     pub fn code(self) -> &'static str {
         match self {
             Self::Hebrew => "he",
@@ -44,16 +52,19 @@ impl Language {
             Self::Spanish => "es",
             Self::German => "de",
             Self::Italian => "it",
+            Self::Russian => "ru",
         }
     }
 
-    pub fn espeak_voice(self) -> Option<&'static str> {
+    /// The polyg2p language that reads this one; Hebrew has its own front end.
+    fn polyg2p(self) -> Option<polyg2p::Lang> {
         match self {
             Self::Hebrew => None,
-            Self::English => Some("en-us"),
-            Self::Spanish => Some("es"),
-            Self::German => Some("de"),
-            Self::Italian => Some("it"),
+            Self::English => Some(polyg2p::Lang::En),
+            Self::Spanish => Some(polyg2p::Lang::Es),
+            Self::German => Some(polyg2p::Lang::De),
+            Self::Italian => Some(polyg2p::Lang::It),
+            Self::Russian => Some(polyg2p::Lang::Ru),
         }
     }
 }
@@ -61,20 +72,86 @@ impl Language {
 impl TryFrom<&str> for Language {
     type Error = anyhow::Error;
 
+    /// Codes are read case-insensitively (`EN`, `en-US`), as the
+    /// reference's `_canonical_lang` reads them.
     fn try_from(value: &str) -> Result<Self> {
-        match value {
+        match value.trim().to_ascii_lowercase().as_str() {
             "he" => Ok(Self::Hebrew),
             "en" | "en-us" => Ok(Self::English),
             "es" => Ok(Self::Spanish),
             "de" | "ge" => Ok(Self::German),
             "it" => Ok(Self::Italian),
-            _ => bail!("unsupported language code `{value}`; expected he, en, es, de, or it"),
+            "ru" | "ru-ru" => Ok(Self::Russian),
+            _ => bail!("unsupported language code `{value}`; expected he, en, es, de, it, or ru"),
         }
+    }
+}
+
+/// polyg2p data the release's labels were made with. English reads from its
+/// lexicon and the large out-of-vocabulary model, German and Italian from
+/// their lexicons, Russian from its stress and ё dictionaries; Spanish is
+/// rules alone. `en.g2p` is the small model Russian uses for Latin words.
+pub const POLYG2P_DATA_FILES: &[&str] = &[
+    "en.lex",
+    "en-large.g2p",
+    "en.g2p",
+    "de.lex",
+    "it.lex",
+    "ru_accents.lex",
+    "ru_homographs.lex",
+    "ru_suffix.lex",
+    "ru_yo.lex",
+    "ru_yo_homographs.lex",
+];
+
+const MIXED_LATIN: &str = r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|\d+[A-Za-z]+|[A-Za-z]+(?:[.'’\-][A-Za-z0-9]+)*";
+const INLINE_TAG: &str =
+    r"(?is)<(en|en-us|he|es|de|ge|it|ru)>(.*?)</(?:en|en-us|he|es|de|ge|it|ru)>";
+
+fn open_polyg2p(data_dir: Option<&Path>) -> Result<polyg2p::G2p> {
+    if let Some(dir) = data_dir {
+        let missing: Vec<&str> = POLYG2P_DATA_FILES
+            .iter()
+            .copied()
+            .filter(|name| !dir.join(name).is_file())
+            .collect();
+        if !missing.is_empty() {
+            bail!(
+                "polyg2p data is missing from {}: {}",
+                dir.display(),
+                missing.join(", ")
+            );
+        }
+    }
+    // polyg2p picks its English out-of-vocabulary model from this variable
+    // when English first loads, and the release's labels used the large one.
+    // Set once per process, and never over a value the user chose.
+    static SET_EN_MODEL: Once = Once::new();
+    SET_EN_MODEL.call_once(|| {
+        if let Some(model) = en_model_to_set(std::env::var_os(EN_MODEL_VAR)) {
+            // SAFETY: runs once, while the first phonemizer is being built
+            // and before any polyg2p call can read the variable; nothing
+            // else in this process writes it.
+            unsafe { std::env::set_var(EN_MODEL_VAR, model) };
+        }
+    });
+    Ok(polyg2p::G2p::new(data_dir))
+}
+
+const EN_MODEL_VAR: &str = "POLYG2P_EN_MODEL";
+
+/// The English model to put in [`EN_MODEL_VAR`]: the release's large one,
+/// unless the variable already holds the user's own choice.
+fn en_model_to_set(current: Option<std::ffi::OsString>) -> Option<&'static str> {
+    match current {
+        Some(value) if !value.is_empty() => None,
+        _ => Some("large"),
     }
 }
 
 pub struct Phonemizer {
     hebrew: Option<G2P>,
+    poly: polyg2p::G2p,
     language: Language,
     mixed_re: Regex,
     inline_tag_re: Regex,
@@ -84,23 +161,33 @@ pub struct Phonemizer {
 }
 
 impl Phonemizer {
-    /// Create a phonemizer with Hebrew as the default language.
-    ///
-    /// Supported language codes are `he`, `en`, `es`, `de`, and `it`. Use
-    /// [`Self::with_language`] or [`Self::phonemize_lang`] to select one.
+    /// Create a phonemizer with Hebrew as the default language and no
+    /// polyg2p data: see [`Self::open`] for the front end a bundle ships.
     ///
     /// `renikud_model` is only required when phonemizing Hebrew text (RenikudPlus ONNX).
     pub fn new(renikud_model: Option<impl AsRef<Path>>) -> Result<Self> {
         Self::with_language(renikud_model, Language::Hebrew)
     }
 
-    /// Create a phonemizer with an explicit default language.
-    ///
-    /// Supported model language codes are `he`, `en`, `es`, `de`, and `it`.
-    /// Non-Hebrew languages use eSpeak. Hebrew uses RenikudPlus when Hebrew
-    /// characters are present.
+    /// Create a phonemizer with an explicit default language and no polyg2p
+    /// data directory. polyg2p then reads with its built-in rules only, which
+    /// is exact for Spanish and well short of the release for the rest.
     pub fn with_language(
         renikud_model: Option<impl AsRef<Path>>,
+        language: Language,
+    ) -> Result<Self> {
+        Self::open(renikud_model, None::<&Path>, language)
+    }
+
+    /// Create the release's front end: RenikudPlus for Hebrew and polyg2p with
+    /// the bundle's data directory for the other languages.
+    ///
+    /// Every file in [`POLYG2P_DATA_FILES`] has to be in `polyg2p_data`. A
+    /// missing lexicon would not fail a request, it would quietly read every
+    /// word by rule, so it fails here instead.
+    pub fn open(
+        renikud_model: Option<impl AsRef<Path>>,
+        polyg2p_data: Option<impl AsRef<Path>>,
         language: Language,
     ) -> Result<Self> {
         let hebrew = match renikud_model {
@@ -110,36 +197,31 @@ impl Phonemizer {
             )?),
             None => None,
         };
-        Ok(Self {
+        Self::from_parts(
             hebrew,
+            open_polyg2p(polyg2p_data.as_ref().map(AsRef::as_ref))?,
             language,
-            mixed_re: Regex::new(
-                r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|\d+[A-Za-z]+|[A-Za-z]+(?:[.'’\-][A-Za-z0-9]+)*",
-            )?,
-            inline_tag_re: Regex::new(
-                r"(?is)<(en|en-us|he|es|de|ge|it)>(.*?)</(?:en|en-us|he|es|de|ge|it)>",
-            )?,
-            speaker: 0,
-            target_speaker: 0,
-        })
+        )
     }
 
     /// Create a phonemizer from embedded RenikudPlus ONNX bytes.
-    ///
-    /// Supported model language codes are `he`, `en`, `es`, `de`, and `it`.
-    /// This is useful for self-contained binaries built with `include_bytes!`.
     pub fn from_renikud_bytes(bytes: &[u8], language: Language) -> Result<Self> {
         let builder = Session::builder()?;
         let session = builder.commit_from_memory(bytes)?;
-        Ok(Self {
-            hebrew: Some(G2P::from_session_with_config(session, hebrew_config())?),
+        Self::from_parts(
+            Some(G2P::from_session_with_config(session, hebrew_config())?),
+            open_polyg2p(None)?,
             language,
-            mixed_re: Regex::new(
-                r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|\d+[A-Za-z]+|[A-Za-z]+(?:[.'’\-][A-Za-z0-9]+)*",
-            )?,
-            inline_tag_re: Regex::new(
-                r"(?is)<(en|en-us|he|es|de|ge|it)>(.*?)</(?:en|en-us|he|es|de|ge|it)>",
-            )?,
+        )
+    }
+
+    fn from_parts(hebrew: Option<G2P>, poly: polyg2p::G2p, language: Language) -> Result<Self> {
+        Ok(Self {
+            hebrew,
+            poly,
+            language,
+            mixed_re: Regex::new(MIXED_LATIN)?,
+            inline_tag_re: Regex::new(INLINE_TAG)?,
             speaker: 0,
             target_speaker: 0,
         })
@@ -198,23 +280,22 @@ impl Phonemizer {
 
     /// Phonemize text using the default language.
     ///
-    /// Supported model language codes are `he`, `en`, `es`, `de`, and `it`.
-    /// For mixed Hebrew/Latin input, Hebrew spans use RenikudPlus and Latin spans
-    /// use the default language's eSpeak voice, falling back to English for
-    /// Hebrew default.
+    /// For mixed Hebrew/Latin input, Hebrew spans use RenikudPlus and Latin
+    /// spans are read as English.
     pub fn phonemize(&mut self, text: &str) -> Result<String> {
         self.phonemize_lang(text, self.language)
     }
 
     /// Prepare raw text and return BlueTTS-ready, language-tagged IPA.
     pub fn g2p(&mut self, text: &str, language: Language) -> Result<String> {
-        let prepared = prepare_text_for_synthesis(text, language.code());
+        // The slow-segment markers pace synthesis; they are not phonemes, and
+        // phonemes handed back here can be synthesized again.
+        let prepared =
+            strip_reference_code_markers(&prepare_text_for_synthesis(text, language.code()));
         self.phonemize_prepared(&prepared, language)
     }
 
     /// Phonemize text using an explicit supported model language.
-    ///
-    /// Supported model language codes are `he`, `en`, `es`, `de`, and `it`.
     pub fn phonemize_lang(&mut self, text: &str, language: Language) -> Result<String> {
         self.g2p(text, language)
     }
@@ -263,7 +344,7 @@ impl Phonemizer {
             return Ok(Vec::new());
         }
         if language != Language::Hebrew && !contains_hebrew(text) {
-            let ipa = self.phonemize_espeak(text, language)?;
+            let ipa = self.phonemize_polyg2p(text, language);
             return Ok((!ipa.is_empty())
                 .then_some((language, ipa))
                 .into_iter()
@@ -312,7 +393,7 @@ impl Phonemizer {
         let ipa = if language == Language::Hebrew {
             self.phonemize_renikud(text)?
         } else {
-            self.phonemize_espeak(text, language)?
+            self.phonemize_polyg2p(text, language)
         };
         if !ipa.trim().is_empty() {
             output.push((language, ipa));
@@ -324,13 +405,23 @@ impl Phonemizer {
         wrap_segments(segments)
     }
 
-    fn phonemize_espeak(&self, text: &str, language: Language) -> Result<String> {
-        let voice = language
-            .espeak_voice()
-            .ok_or_else(|| anyhow!("language `{}` does not use eSpeak", language.code()))?;
-        Ok(text_to_phonemes(text, voice, None)
-            .map_err(|e| anyhow!("{e}"))?
-            .join(" "))
+    /// polyg2p's reading of `text`, as the release calls it: bracketed spans
+    /// such as `[laughs]` are dropped first, and a piece with no letter or
+    /// digit passes through as its punctuation. Cyrillic is Russian whatever
+    /// language was asked for.
+    fn phonemize_polyg2p(&self, text: &str, language: Language) -> String {
+        let text = bracketed_spans().replace_all(text, " ");
+        let text = text.trim();
+        if !text.chars().any(char::is_alphanumeric) {
+            return text.to_owned();
+        }
+        let language = if contains_cyrillic(text) {
+            Language::Russian
+        } else {
+            language
+        };
+        let lang = language.polyg2p().unwrap_or(polyg2p::Lang::En);
+        self.poly.phonemize(text, lang)
     }
 
     fn phonemize_renikud(&mut self, text: &str) -> Result<String> {
@@ -388,6 +479,14 @@ fn starts_with_punctuation(text: &str) -> bool {
     text.starts_with(['.', ',', '!', '?', ';', ':', ')', ']', '}'])
 }
 
+fn bracketed_spans() -> &'static Regex {
+    regex!(r"\s*\[[^\]]*\]\s*")
+}
+
+fn contains_cyrillic(text: &str) -> bool {
+    text.chars().any(|c| ('\u{0400}'..='\u{04ff}').contains(&c))
+}
+
 fn contains_hebrew(text: &str) -> bool {
     text.chars().any(|c| ('\u{0590}'..='\u{05ff}').contains(&c))
 }
@@ -401,9 +500,7 @@ fn contains_latin_or_digit(text: &str) -> bool {
 }
 
 fn is_email(text: &str) -> bool {
-    Regex::new(r"(?i)^[A-Z0-9._%+\-]+@[A-Z0-9.-]+\.[A-Z]{2,}$")
-        .expect("valid email regex")
-        .is_match(text)
+    regex!(r"(?i)^[A-Z0-9._%+\-]+@[A-Z0-9.-]+\.[A-Z]{2,}$").is_match(text)
 }
 
 fn email_to_spoken_english(email: &str) -> String {
@@ -431,11 +528,21 @@ fn email_to_spoken_english(email: &str) -> String {
 }
 
 #[cfg(test)]
-mod espeak_tests {
+mod polyg2p_tests {
     use super::*;
+
+    /// The release front end over an installed bundle, for the tests that
+    /// need its lexicons: `MAMBOTTS_BLUE_MODEL_DIR=<bundle> cargo test -- --ignored`.
+    fn bundle_phonemizer() -> Phonemizer {
+        let dir = std::path::PathBuf::from(
+            std::env::var("MAMBOTTS_BLUE_MODEL_DIR").expect("set MAMBOTTS_BLUE_MODEL_DIR"),
+        );
+        Phonemizer::open(None::<&Path>, Some(dir.join("polyg2p")), Language::English).unwrap()
+    }
 
     /// A change of language is a word break, not a pause: no comma between
     /// segments, and a trailing period attaches to the last word.
+    /// The BlueV3 reference inserts "," at a switch; MamboTTS deliberately does not.
     #[test]
     fn joins_language_segments_with_a_space() {
         let he = |ipa: &str| (Language::Hebrew, ipa.to_owned());
@@ -459,22 +566,90 @@ mod espeak_tests {
         }
     }
 
+    /// Spanish is rules alone in polyg2p, so it reads the same with no data
+    /// directory: word breaks and punctuation survive, numbers are read.
     #[test]
-    fn mixed_latin_and_punctuation_have_no_stray_commas() {
-        // Without a Hebrew model the Hebrew segments pass through as-is, which
-        // is enough to see how Latin segments and punctuation are joined.
-        let mut phonemizer = Phonemizer::with_language(None::<&str>, Language::English).unwrap();
+    fn spanish_keeps_word_breaks_and_punctuation() {
+        let mut phonemizer = Phonemizer::with_language(None::<&str>, Language::Spanish).unwrap();
         let ipa = phonemizer
-            .phonemize_prepared("hello PDF, world.", Language::Hebrew)
+            .g2p("Hola, mundo. ¡Adiós! Tengo 3 gatos.", Language::Spanish)
             .unwrap();
-        assert_eq!(ipa, "<en>həlˈoʊ pˌiːdˌiːˈɛf, wˈɜːld.</en>");
+        assert_eq!(ipa, "<es>ˈola, mˈundo. aðjˈos! tˈɛŋɡo tɾˈes ɣˈatos.</es>");
     }
 
-    /// Issue #12: eSpeak-backed languages came back as one run-on token, with
-    /// no word breaks and no punctuation for the model to pause on.
     #[test]
-    fn keeps_word_breaks_and_punctuation() {
-        let mut phonemizer = Phonemizer::with_language(None::<&str>, Language::English).unwrap();
+    fn bracketed_spans_are_dropped_before_g2p() {
+        let mut phonemizer = Phonemizer::with_language(None::<&str>, Language::Spanish).unwrap();
+        let plain = phonemizer.g2p("Hola, mundo.", Language::Spanish).unwrap();
+        let tagged = phonemizer
+            .g2p("Hola, [laughs] mundo.", Language::Spanish)
+            .unwrap();
+        assert_eq!(tagged, plain);
+        // A piece with no letter or digit passes through as its punctuation.
+        assert_eq!(
+            phonemizer.phonemize_polyg2p(" ... ", Language::Spanish),
+            "..."
+        );
+    }
+
+    #[test]
+    fn language_codes_and_inline_tags_are_case_insensitive() {
+        assert_eq!(Language::try_from("EN").unwrap(), Language::English);
+        assert_eq!(Language::try_from("He").unwrap(), Language::Hebrew);
+        assert_eq!(Language::try_from("en-US").unwrap(), Language::English);
+        assert_eq!(Language::try_from("GE").unwrap(), Language::German);
+        let mut phonemizer = Phonemizer::with_language(None::<&str>, Language::Spanish).unwrap();
+        let plain = phonemizer.g2p("Hola mundo.", Language::Spanish).unwrap();
+        let tagged = phonemizer
+            .g2p("<ES>Hola</ES> mundo.", Language::Spanish)
+            .unwrap();
+        assert_eq!(tagged, plain);
+    }
+
+    #[test]
+    fn markup_that_is_not_a_language_tag_is_never_spoken() {
+        let mut phonemizer = Phonemizer::with_language(None::<&str>, Language::Spanish).unwrap();
+        let plain = phonemizer.g2p("Hola mundo.", Language::Spanish).unwrap();
+        for text in [
+            "<b>Hola</b> mundo.",
+            "<i>Hola</i> <span class=\"x\">mundo</span>.",
+            "Hola<br/> mundo.",
+        ] {
+            assert_eq!(
+                phonemizer.g2p(text, Language::Spanish).unwrap(),
+                plain,
+                "{text}"
+            );
+        }
+        // Routing spans still route.
+        let routed = phonemizer
+            .g2p("<b>Hola</b> <es>mundo</es>.", Language::Spanish)
+            .unwrap();
+        assert_eq!(routed, plain);
+    }
+
+    #[test]
+    fn the_english_model_is_never_chosen_over_the_user() {
+        assert_eq!(en_model_to_set(None), Some("large"));
+        assert_eq!(en_model_to_set(Some("".into())), Some("large"));
+        assert_eq!(en_model_to_set(Some("small".into())), None);
+    }
+
+    #[test]
+    fn a_bundle_with_a_missing_lexicon_fails_at_load() {
+        let dir = std::env::temp_dir().join("mambotts-empty-polyg2p");
+        std::fs::create_dir_all(&dir).unwrap();
+        let error = Phonemizer::open(None::<&Path>, Some(&dir), Language::English)
+            .err()
+            .expect("an empty data directory is not a front end")
+            .to_string();
+        assert!(error.contains("en.lex"), "{error}");
+    }
+
+    #[test]
+    #[ignore = "requires MAMBOTTS_BLUE_MODEL_DIR pointing to an installed BlueV3 bundle"]
+    fn every_polyg2p_language_reads_text_as_written() {
+        let mut phonemizer = bundle_phonemizer();
         for (language, text, expected) in [
             (
                 Language::English,
@@ -482,19 +657,24 @@ mod espeak_tests {
                 "<en>həlˈoʊ, wˈɜːld. ɡʊdbˈaɪ!</en>",
             ),
             (
-                Language::Spanish,
-                "Hola, mundo. ¡Adiós!",
-                "<es>ˈola, mˈundo. ¡aðjˈos!</es>",
+                Language::English,
+                "Dr. Smith paid $25 on March 3rd, 2024.",
+                "<en>dˈɑːktɚ smˈɪθ pˈeɪd twˈɛnti fˈaɪv dˈɑːlɚz ˌɔn mˈɑːɹʧ θˈɜːd, twˈɛnti twˈɛnti fˈɔːɹ.</en>",
             ),
             (
                 Language::German,
                 "Hallo, Welt. Tschüss!",
-                "<de>hˈaloː, vˈɛlt. tʃˈʏs!</de>",
+                "<de>halˈoː, vˈɛlt. ʧˈʏs!</de>",
             ),
             (
                 Language::Italian,
                 "Ciao, mondo. Arrivederci!",
-                "<it>tʃˈao, mˈondo. arɾivedˈɛrtʃɪ!</it>",
+                "<it>ʧˈao, mˈondo. arɾivedˈerʧɪ!</it>",
+            ),
+            (
+                Language::Russian,
+                "Всё хорошо, дверь закрыта.",
+                "<ru>fsʲˈɵ xərɐʂˈo, dvʲerʲ zɐkrˈɨtə.</ru>",
             ),
         ] {
             let ipa = phonemizer.g2p(text, language).unwrap();
@@ -503,21 +683,31 @@ mod espeak_tests {
     }
 
     #[test]
-    fn keeps_question_marks_and_sentence_breaks() {
-        let mut phonemizer = Phonemizer::with_language(None::<&str>, Language::English).unwrap();
+    #[ignore = "requires MAMBOTTS_BLUE_MODEL_DIR pointing to an installed BlueV3 bundle"]
+    fn english_text_in_a_hebrew_request_reads_its_numbers_in_english() {
+        let mut phonemizer = bundle_phonemizer();
+        let text = "The meeting at 10:30 had 36 participants.";
+        let english = phonemizer.g2p(text, Language::English).unwrap();
+        assert_eq!(phonemizer.g2p(text, Language::Hebrew).unwrap(), english);
+        assert!(english.contains("θˈɜːɾi sˈɪks"), "{english}");
+    }
+
+    #[test]
+    #[ignore = "requires MAMBOTTS_BLUE_MODEL_DIR pointing to an installed BlueV3 bundle"]
+    fn mixed_latin_and_punctuation_have_no_stray_commas() {
+        // Without a Hebrew model the Hebrew segments pass through as-is, which
+        // is enough to see how Latin segments and punctuation are joined.
+        let mut phonemizer = bundle_phonemizer();
         let ipa = phonemizer
-            .g2p(
-                "How are you today? I am fine, thank you.",
-                Language::English,
-            )
+            .phonemize_prepared("hello PDF, world.", Language::Hebrew)
             .unwrap();
-        assert!(ipa.contains("? "), "{ipa}");
-        assert!(ipa.contains(", "), "{ipa}");
-        assert!(ipa.ends_with(".</en>"), "{ipa}");
-        // One word break per word, bar the pairs espeak runs together.
-        assert!(
-            ipa.split_whitespace().count() >= 7,
-            "{ipa} has too few word breaks"
+        assert_eq!(ipa, "<en>həlˈoʊ pˌiːdˌiːˈɛf, wˈɜːld.</en>");
+        // Cyrillic is Russian whatever language was asked for.
+        let russian = phonemizer.g2p("дверь", Language::Russian).unwrap();
+        let routed = phonemizer.g2p("дверь", Language::English).unwrap();
+        assert_eq!(
+            routed.replace("<en>", "").replace("</en>", ""),
+            russian.replace("<ru>", "").replace("</ru>", "")
         );
     }
 }
@@ -548,6 +738,11 @@ mod regression_tests {
             .g2p("לכן תשובה ב׳: אֶן", Language::Hebrew)
             .unwrap();
         assert!(paused.contains('.'), "{paused}");
+        // Slow-segment markers pace synthesis and never reach the phonemes.
+        let code = phonemizer
+            .g2p("קוד GPT-4 עכשיו.", Language::Hebrew)
+            .unwrap();
+        assert!(!code.contains(['【', '】']), "{code}");
 
         let text = "שבת שלום, hello!\nספר";
         let nikud = phonemizer.diacritize(text, true).unwrap();

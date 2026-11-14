@@ -3,11 +3,24 @@ import { CSSProperties } from "react";
 
 // Decoration only. The bundle decides which voices exist, so anything not
 // listed here still renders from its own name rather than disappearing.
+// BlueV3 ships these fifteen, feminine first, in the release's order. The
+// descriptors say only what is certain about each voice.
 const voiceLabels: Record<string, string> = {
-  Noa: "Noa · clear feminine",
-  Lily: "Lily · bright feminine",
-  Daniel: "Daniel · clear masculine",
-  Adam: "Adam · warm masculine",
+  Noa: "Noa · feminine",
+  Lily: "Lily · feminine",
+  Maya: "Maya · feminine",
+  Emma: "Emma · feminine",
+  Sara: "Sara · feminine",
+  Shira: "Shira · feminine",
+  Tamar: "Tamar · feminine",
+  Yael: "Yael · feminine",
+  Adam: "Adam · masculine",
+  Daniel: "Daniel · masculine",
+  Ariel: "Ariel · masculine",
+  David: "David · masculine",
+  Ethan: "Ethan · masculine",
+  Jonathan: "Jonathan · masculine",
+  Michael: "Michael · masculine",
 };
 
 // 0.75 was measured as the point where the pace still changes cleanly, but in

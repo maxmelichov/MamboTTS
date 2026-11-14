@@ -83,20 +83,30 @@ pub struct SpeechBody {
     pub input: String,
     #[serde(default)]
     pub voice_reference: String,
+    /// A voice from /v1/voices, in any letter case (`Noa`, `noa`). Older ids
+    /// such as `libri_male_6209` still resolve. Empty means `Noa`.
     #[serde(default)]
     pub voice: String,
     /// `wav` (the default) or `mp3` (128 kbps mono). Streamed responses are
     /// always WAV chunks.
     #[serde(default)]
     pub response_format: String,
+    /// `auto` (the default), `he`, `en`, `es`, `de`, `it` or `ru`; language
+    /// names such as `Hebrew` and regional codes such as `en-US` are accepted.
+    /// `auto` picks Hebrew for Hebrew script, Russian for Cyrillic, otherwise
+    /// English; for phoneme input it reads the leading `<xx>` tag instead.
     #[serde(default)]
     pub language: String,
+    /// Stream MamboTTS binary frames (WAV chunks, then the whole WAV) instead
+    /// of returning one file.
     #[serde(default)]
     pub stream: bool,
+    /// `input` is IPA (for example from /v1/phonemize) rather than text.
+    /// Requires `stream: true`.
     #[serde(default)]
     pub input_is_phonemes: bool,
-    /// Pace multiplier. 1.0 is the pace the app has always used; below one
-    /// is slower, above one is faster. Zero or absent means 1.0.
+    /// Pace multiplier. 1.0 is the app's normal pace for the language; below
+    /// one is slower, above one is faster. Zero or absent means 1.0.
     ///
     /// The API accepts 0.5 to 2.0, which only guards against nonsense. The
     /// app's own slider offers 0.9 to 1.1, because further out the model
@@ -125,6 +135,7 @@ pub struct CancelResponse {
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct PhonemizeBody {
     pub input: String,
+    /// Same values as the speech request's `language`.
     #[serde(default)]
     pub language: String,
 }

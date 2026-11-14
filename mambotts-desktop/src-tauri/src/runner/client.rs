@@ -1,14 +1,14 @@
 use std::{path::Path, sync::OnceLock};
 
 use tauri::{
-    State,
     ipc::{Channel, InvokeResponseBody},
+    State,
 };
 
 use crate::{analytics, runner::errors::track_runner_err};
 
 use super::{
-    cancel::{SYNTHESIS_CANCELLED, SynthesisRegistry},
+    cancel::{SynthesisRegistry, SYNTHESIS_CANCELLED},
     dto::{
         DiacritizeResponse, LanguagesResponse, LoadModelRequest, PhonemeInventoryResponse,
         PhonemizeRequest, PhonemizeResponse, SpeechRequest, SpeechResult, VoicesResponse,

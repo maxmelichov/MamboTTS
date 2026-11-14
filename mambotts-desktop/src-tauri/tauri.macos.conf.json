@@ -4,8 +4,7 @@
       "binaries/mambotts-server"
     ],
     "resources": [
-      "binaries/libonnxruntime*.dylib",
-      "binaries/espeak-ng-data/**/*"
+      "binaries/libonnxruntime*.dylib"
     ],
     "macOS": {
       "entitlements": "entitlements.plist",

@@ -31,12 +31,15 @@ fn literal_spans() -> &'static Regex {
 fn number_ranges() -> &'static Regex {
     static RANGES: OnceLock<Regex> = OnceLock::new();
     RANGES.get_or_init(|| {
-        Regex::new(r"(^|[^\d\-–./:])(\d{1,4})\s*[-–]\s*(\d{1,4})($|[^\d\-–./:])").expect("valid regex")
+        Regex::new(r"(^|[^\d\-–./:])(\d{1,4})\s*[-–]\s*(\d{1,4})($|[^\d\-–./:])")
+            .expect("valid regex")
     })
 }
 
 fn expand_ranges(text: &str) -> String {
-    number_ranges().replace_all(text, "${1}${2} עד ${3}${4}").into_owned()
+    number_ranges()
+        .replace_all(text, "${1}${2} עד ${3}${4}")
+        .into_owned()
 }
 
 /// Read digits in Hebrew text as Hebrew words, leaving markup literals alone.
@@ -53,7 +56,9 @@ pub fn normalize_hebrew_numbers(text: &str) -> String {
         out.push_str(literal.as_str());
         cursor = literal.end();
     }
-    out.push_str(&normalize_numbers_keep_spacing(&expand_ranges(&text[cursor..])));
+    out.push_str(&normalize_numbers_keep_spacing(&expand_ranges(
+        &text[cursor..],
+    )));
     out
 }
 

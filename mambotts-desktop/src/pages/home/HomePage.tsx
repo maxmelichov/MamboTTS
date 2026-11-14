@@ -284,7 +284,7 @@ export function HomePage({ bundle, setBundle, studio, setStudio }: HomePageProps
       const selectedLanguage = supportedLanguages.includes(language) ? language : "auto";
       if (selectedLanguage !== language) updateStudio({ language: "auto" });
       const synthesisLanguage = inputIsPhonemes && selectedLanguage === "auto"
-        ? (/[֐-׿]/.test(text) ? "he" : "en")
+        ? (/[֐-׿]/.test(text) ? "he" : /[\u0400-\u04ff]/.test(text) ? "ru" : "en")
         : selectedLanguage;
 
       throwIfStopped();

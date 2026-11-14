@@ -2,8 +2,6 @@
 members = [
     "mambotts-desktop/src-tauri",
     "mambotts-server",
-    "crates/espeak-rs",
-    "crates/espeak-rs-sys",
     "crates/blue-rs",
     "crates/renikud-plus-rs",
     "crates/mambotts-registry",

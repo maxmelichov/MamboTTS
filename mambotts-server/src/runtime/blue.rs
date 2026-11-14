@@ -8,7 +8,7 @@ use blue_rs::{
 
 use super::{Language as RuntimeLanguage, Runtime};
 
-use mambotts_registry::{BLUE_VOICES, DEFAULT_BLUE_VOICE, blue_voice_name};
+use mambotts_registry::{BLUE_POLYG2P_DIR, BLUE_VOICES, DEFAULT_BLUE_VOICE, blue_voice_name};
 
 pub struct BlueRuntime {
     tts: BlueTts,
@@ -49,8 +49,18 @@ impl BlueRuntime {
             .with_context(|| format!("load Blue ONNX models from {}", model_dir.display()))?;
         // RenikudPlus runs natively in-process (ONNX). Do not shell out to uv/git —
         // that downloaded a second package copy and hung first Hebrew synth.
-        let mut phonemizer = Phonemizer::with_language(Some(&renikud_path), Language::English)
-            .with_context(|| format!("load RenikudPlus ONNX from {}", renikud_path.display()))?;
+        // The front end is part of the model: polyg2p's lexicons sit in the
+        // bundle, and a missing one fails here rather than at the first request.
+        let polyg2p_dir = model_dir.join(BLUE_POLYG2P_DIR);
+        let mut phonemizer =
+            Phonemizer::open(Some(&renikud_path), Some(&polyg2p_dir), Language::English)
+                .with_context(|| {
+                    format!(
+                        "load the text front end (RenikudPlus at {}, polyg2p data at {})",
+                        renikud_path.display(),
+                        polyg2p_dir.display()
+                    )
+                })?;
         phonemizer.set_speakers(speaker, target_speaker);
         // `--lexicon` is a property of the process rather than of one model, so
         // it survives the /v1/load the desktop sends after startup.
@@ -78,6 +88,7 @@ impl BlueRuntime {
                 language("es", 2),
                 language("de", 3),
                 language("it", 4),
+                language("ru", 5),
             ],
         })
     }
@@ -85,11 +96,13 @@ impl BlueRuntime {
     fn language_for(text: &str, requested: &str) -> Result<(Language, &'static str)> {
         let requested = requested.trim().to_ascii_lowercase();
         let code = if requested.is_empty() || requested == "auto" {
-            if text
-                .chars()
-                .any(|character| ('\u{0590}'..='\u{05ff}').contains(&character))
-            {
+            let has = |range: std::ops::RangeInclusive<char>| {
+                text.chars().any(|character| range.contains(&character))
+            };
+            if has('\u{0590}'..='\u{05ff}') {
                 "he"
+            } else if has('\u{0400}'..='\u{04ff}') {
+                "ru"
             } else {
                 "en"
             }
@@ -102,9 +115,31 @@ impl BlueRuntime {
             "es" => Language::Spanish,
             "de" | "ge" => Language::German,
             "it" => Language::Italian,
-            _ => bail!("unsupported Blue language `{code}`; expected he, en, es, de, or it"),
+            "ru" | "ru-ru" => Language::Russian,
+            _ => bail!("unsupported Blue language `{code}`; expected he, en, es, de, it, or ru"),
         };
         Ok((language, language.code()))
+    }
+
+    /// The language of a phoneme request.
+    ///
+    /// IPA has no script to detect, so with `auto` the leading `<xx>` routing
+    /// tag the G2P writes (and the Python bindings keep) decides, then the
+    /// script check of [`Self::language_for`], then English.
+    fn phoneme_language_for(phonemes: &str, requested: &str) -> Result<(Language, &'static str)> {
+        let requested = requested.trim();
+        if requested.is_empty() || requested.eq_ignore_ascii_case("auto") {
+            let tagged = phonemes
+                .trim_start()
+                .strip_prefix('<')
+                .and_then(|rest| rest.split_once('>'))
+                .map(|(code, _)| code.trim().to_ascii_lowercase())
+                .filter(|code| SUPPORTED_CODES.contains(&code.as_str()));
+            if let Some(code) = tagged {
+                return Self::language_for(phonemes, &code);
+            }
+        }
+        Self::language_for(phonemes, requested)
     }
 
     fn normalize_voice(voice: &str) -> &str {
@@ -174,14 +209,8 @@ impl Runtime for BlueRuntime {
             style,
             SynthesisOptions {
                 lang: language_code.to_owned(),
-                total_step: 8,
-                cfg_scale: 4.0,
-                speed,
-                chunking: Some(blue_rs::ChunkingOptions {
-                    enabled: true,
-                    silence_seconds: 0.15,
-                    max_chars: Some(200),
-                }),
+                speed: speed * natural_pace(language_code),
+                ..SynthesisOptions::default()
             },
             |chunk| on_chunk(chunk, sample_rate),
         )
@@ -195,7 +224,7 @@ impl Runtime for BlueRuntime {
         speed: f32,
         on_chunk: &mut dyn FnMut(&[f32], u32) -> Result<()>,
     ) -> Result<Vec<f32>> {
-        let (_, language_code) = Self::language_for(phonemes, language)?;
+        let (_, language_code) = Self::phoneme_language_for(phonemes, language)?;
         let voice = Self::normalize_voice(voice.unwrap_or(DEFAULT_BLUE_VOICE));
         let style = self.styles.get(voice).ok_or_else(|| {
             anyhow::anyhow!(
@@ -216,18 +245,22 @@ impl Runtime for BlueRuntime {
             style,
             SynthesisOptions {
                 lang: language_code.to_owned(),
-                total_step: 8,
-                cfg_scale: 4.0,
-                speed,
-                chunking: Some(blue_rs::ChunkingOptions {
-                    enabled: true,
-                    silence_seconds: 0.15,
-                    max_chars: Some(200),
-                }),
+                speed: speed * natural_pace(language_code),
+                ..SynthesisOptions::default()
             },
             |chunk| on_chunk(chunk, sample_rate),
         )
     }
+}
+
+/// What a requested speed of 1.0 means for a language.
+///
+/// At the release's own 1.0 the model reads a sentence a little fast, Hebrew
+/// most of all, so the app's normal pace sits just under it: 0.9 for Hebrew
+/// and 0.95 for the other languages, the defaults the BlueV3 web demo settled
+/// on. The request's speed scales from there.
+fn natural_pace(language_code: &str) -> f32 {
+    if language_code == "he" { 0.9 } else { 0.95 }
 }
 
 fn language(name: &str, id: i32) -> RuntimeLanguage {
@@ -237,8 +270,11 @@ fn language(name: &str, id: i32) -> RuntimeLanguage {
     }
 }
 
+/// The language codes the release speaks, as its routing tags spell them.
+const SUPPORTED_CODES: [&str; 6] = ["en", "es", "de", "it", "ru", "he"];
+
 fn strip_language_tags(phonemes: String) -> String {
-    ["en", "es", "de", "it", "he"]
+    SUPPORTED_CODES
         .into_iter()
         .fold(phonemes, |output, language| {
             output
@@ -258,7 +294,27 @@ mod tests {
         assert_eq!(BlueRuntime::language_for("Hola", "es").unwrap().1, "es");
         assert_eq!(BlueRuntime::language_for("Hallo", "de").unwrap().1, "de");
         assert_eq!(BlueRuntime::language_for("Ciao", "it").unwrap().1, "it");
+        assert_eq!(BlueRuntime::language_for("Привет", "auto").unwrap().1, "ru");
+        assert_eq!(BlueRuntime::language_for("Привет", "ru").unwrap().1, "ru");
         assert!(BlueRuntime::language_for("Bonjour", "fr").is_err());
+    }
+
+    #[test]
+    fn auto_phoneme_input_takes_its_language_from_the_leading_tag() {
+        let code = |phonemes: &str, requested: &str| {
+            BlueRuntime::phoneme_language_for(phonemes, requested)
+                .unwrap()
+                .1
+        };
+        assert_eq!(code("<he>ʃalˈom</he>", "auto"), "he");
+        assert_eq!(code("  <ru>prʲɪvʲˈet</ru>", ""), "ru");
+        assert_eq!(code("<it>ʧˈao</it>", "AUTO"), "it");
+        // An explicit language wins over the tag.
+        assert_eq!(code("<he>ʃalˈom</he>", "en"), "en");
+        // No tag, or one the release does not speak: script detection, then English.
+        assert_eq!(code("ʃalˈom", "auto"), "en");
+        assert_eq!(code("<fr>bɔ̃ʒˈuʁ</fr>", "auto"), "en");
+        assert!(BlueRuntime::phoneme_language_for("ʃalˈom", "fr").is_err());
     }
 
     #[test]

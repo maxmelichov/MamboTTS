@@ -48,21 +48,27 @@ pub async fn model_load(
 
 /// Routes a load request to the parameter builder for its runtime id.
 fn load_params(body: LoadBody) -> Result<LoadParams, &'static str> {
+    load_params_with_env(body, |name| std::env::var(name).unwrap_or_default())
+}
+
+/// [`load_params`] with the environment passed in, so the tests do not depend
+/// on whether `MAMBOTTS_BLUE_MODEL_DIR` happens to be set where they run.
+fn load_params_with_env(
+    body: LoadBody,
+    env: impl Fn(&str) -> String,
+) -> Result<LoadParams, &'static str> {
     match body.runtime.as_str() {
-        mambotts_registry::DEFAULT_RUNTIME_ID => blue_load_params(body),
+        mambotts_registry::DEFAULT_RUNTIME_ID => blue_load_params(body, env),
         _ => Err("unsupported runtime"),
     }
 }
 
-fn blue_load_params(body: LoadBody) -> Result<LoadParams, &'static str> {
-    let model_path = first_non_empty([
-        body.model_path,
-        std::env::var("MAMBOTTS_BLUE_MODEL_DIR").unwrap_or_default(),
-    ]);
-    let renikud_path = first_non_empty([
-        body.renikud_path,
-        std::env::var("MAMBOTTS_RENIKUD_PATH").unwrap_or_default(),
-    ]);
+fn blue_load_params(
+    body: LoadBody,
+    env: impl Fn(&str) -> String,
+) -> Result<LoadParams, &'static str> {
+    let model_path = first_non_empty([body.model_path, env("MAMBOTTS_BLUE_MODEL_DIR")]);
+    let renikud_path = first_non_empty([body.renikud_path, env("MAMBOTTS_RENIKUD_PATH")]);
     if model_path.is_empty() || renikud_path.is_empty() {
         return Err("Blue runtime requires model_path and renikud_path");
     }
@@ -79,8 +85,13 @@ fn blue_load_params(body: LoadBody) -> Result<LoadParams, &'static str> {
 
 #[cfg(test)]
 mod tests {
-    use super::load_params;
+    use super::load_params_with_env;
     use crate::server::dto::LoadBody;
+
+    /// Load parameters as a process with no model environment would see them.
+    fn load_params(body: LoadBody) -> Result<super::LoadParams, &'static str> {
+        load_params_with_env(body, |_| String::new())
+    }
 
     fn blue(model_path: &str, renikud_path: &str) -> LoadBody {
         LoadBody {
@@ -96,6 +107,17 @@ mod tests {
         assert!(load_params(LoadBody::default()).is_err());
         assert!(load_params(blue("/models/blue", "/models/renikud-plus.onnx")).is_ok());
         assert!(load_params(blue("", "/models/renikud-plus.onnx")).is_err());
+    }
+
+    #[test]
+    fn the_environment_fills_in_missing_paths() {
+        let env = |name: &str| match name {
+            "MAMBOTTS_BLUE_MODEL_DIR" => "/env/blue".to_owned(),
+            "MAMBOTTS_RENIKUD_PATH" => "/env/renikud-plus.onnx".to_owned(),
+            _ => String::new(),
+        };
+        assert!(load_params_with_env(LoadBody::default(), env).is_ok());
+        assert!(load_params_with_env(blue("/models/blue", ""), env).is_ok());
     }
 
     #[test]

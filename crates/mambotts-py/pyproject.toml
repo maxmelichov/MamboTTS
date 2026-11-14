@@ -5,7 +5,7 @@ build-backend = "maturin"
 [project]
 name = "mambotts"
 version = "0.1.0"
-description = "Python bindings for the MamboTTS BlueTTS engine"
+description = "Python bindings for the MamboTTS BlueV3 engine: offline speech in Hebrew, English, Spanish, German, Italian and Russian"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 

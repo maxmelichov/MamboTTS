@@ -34,7 +34,7 @@ windows:desktop:
       function Refresh-Path {
         $machine = [System.Environment]::GetEnvironmentVariable("Path", "Machine")
         $user = [System.Environment]::GetEnvironmentVariable("Path", "User")
-        $env:Path = "$env:USERPROFILE\.cargo\bin;$env:USERPROFILE\.local\bin;$env:APPDATA\npm;C:\Program Files\LLVM\bin;C:\Program Files\CMake\bin;$user;$machine"
+        $env:Path = "$env:USERPROFILE\.cargo\bin;$env:USERPROFILE\.local\bin;$env:APPDATA\npm;$user;$machine"
       }
       if (-not (Get-Command rustup -ErrorAction SilentlyContinue)) {
         Invoke-WebRequest https://win.rustup.rs/x86_64 -OutFile rustup-init.exe
@@ -51,19 +51,11 @@ windows:desktop:
       if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
         irm https://astral.sh/uv/install.ps1 | iex
       }
-      if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
-        choco install -y cmake --installargs 'ADD_CMAKE_TO_PATH=System' --no-progress
-      }
-      if (-not (Test-Path "C:\Program Files\LLVM\bin\libclang.dll")) {
-        choco install -y llvm --no-progress
-      }
       Refresh-Path
-      $env:LIBCLANG_PATH = "C:\Program Files\LLVM\bin"
       $env:LIBRARY_PATH = $env:ORT_LIB_LOCATION
       $env:SIGN_ENABLED = "false"
       Write-Host "PATH=$env:Path"
-      Write-Host "LIBCLANG_PATH=$env:LIBCLANG_PATH"
-      Get-Command pnpm, uv, rustc, cmake | Format-Table Name, Source
+      Get-Command pnpm, uv, rustc | Format-Table Name, Source
       pnpm --dir mambotts-desktop install --frozen-lockfile
       uv run scripts/pre_build.py --target x86_64-pc-windows-msvc
       # Build installers separately so NSIS can still archive if MSI fails.
@@ -102,9 +94,9 @@ linux:desktop:
     - apt-get update -qq
     - >
       apt-get install -y -qq
-      build-essential cmake git curl wget file patchelf ca-certificates
+      build-essential git curl wget file patchelf ca-certificates
       libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
-      libssl-dev libgtk-3-dev libxdo-dev clang libclang-dev libasound2-dev
+      libssl-dev libgtk-3-dev libxdo-dev libasound2-dev
       pkg-config xdg-utils
     - curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
     - apt-get install -y -qq nodejs

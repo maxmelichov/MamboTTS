@@ -276,35 +276,6 @@ function Install-Desktop {
     }
 }
 
-# Looks inside the zip without unpacking it, so the script can tell a build that
-# ships espeak-ng-data from one that does not before it deletes anything.
-function Test-ArchiveHasEspeakData {
-    param([string] $Path)
-
-    $archive = $null
-    try {
-        Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
-        $archive = [IO.Compression.ZipFile]::OpenRead($Path)
-        foreach ($entry in $archive.Entries) {
-            # Zip entries are meant to use forward slashes and plenty of writers
-            # ignore that, Compress-Archive included, so both characters have to
-            # count as the separator here.
-            $normalized = $entry.FullName.Replace('\', '/')
-            if ($normalized -like 'espeak-ng-data/*' -or $normalized -like '*/espeak-ng-data/*') {
-                return $true
-            }
-        }
-        return $false
-    } catch {
-        # A zip this cannot read is a zip Expand-Archive is about to complain
-        # about anyway, and answering no here only means a stale directory
-        # survives one more install rather than something being destroyed.
-        return $false
-    } finally {
-        if ($archive) { $archive.Dispose() }
-    }
-}
-
 function Install-Server {
     param([string] $ReleaseVersion)
 
@@ -334,21 +305,11 @@ function Install-Server {
         $existing = Join-Path $InstallDir $name
         if (Test-Path $existing) { Remove-Item $existing -Force -ErrorAction SilentlyContinue }
     }
-    # Expand-Archive overwrites the files that the zip contains and leaves
-    # everything else alone, so an espeak-ng-data directory from an older build
-    # would half survive a reinstall: new files written into it, files that were
-    # dropped still sitting there, and no way to tell which is which. Clearing
-    # it first is what makes the replacement complete.
-    #
-    # It is only cleared when the archive actually carries a replacement. The
-    # desktop app puts its own espeak-ng-data in this same folder, and deleting
-    # that in exchange for nothing would take four languages away from an app
-    # this script was not even asked to touch.
-    $espeakDir = Join-Path $InstallDir 'espeak-ng-data'
-    $archiveHasEspeak = Test-ArchiveHasEspeakData -Path $temp
-    if ($archiveHasEspeak -and (Test-Path $espeakDir)) {
-        Write-Detail 'Clearing the old espeak-ng-data directory so the new one replaces it whole.'
-        Remove-Item $espeakDir -Recurse -Force -ErrorAction SilentlyContinue
+    # Releases before BlueV3 shipped an espeak-ng-data directory beside the
+    # executable. Nothing reads it any more, so an upgrade just removes it.
+    $staleEspeakDir = Join-Path $InstallDir 'espeak-ng-data'
+    if (Test-Path $staleEspeakDir) {
+        Remove-Item $staleEspeakDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 
     Expand-Archive -Path $temp -DestinationPath $InstallDir -Force
@@ -359,23 +320,7 @@ function Install-Server {
         throw "The archive did not contain mambotts-server.exe. Look inside $InstallDir and report this."
     }
 
-    # espeak-ng turns English, Spanish, German and Italian into phonemes and
-    # reads its rules out of espeak-ng-data next to the executable. Without that
-    # directory those four languages come back as HTTP 500 while Hebrew keeps
-    # working, which reads like a language bug rather than a missing file. Catch
-    # it here, before the model download spends twenty minutes.
-    if (-not (Test-Path $espeakDir)) {
-        throw "espeak-ng-data is missing from $InstallDir. Without it only Hebrew works and English, Spanish, German and Italian all fail with HTTP 500. This build of $asset predates the fix that bundles it: install the newest release by running the installer without -Version, or copy an espeak-ng-data directory next to mambotts-server.exe yourself."
-    }
-    $espeakFiles = @(Get-ChildItem -Path $espeakDir -Recurse -File -ErrorAction SilentlyContinue)
-    if ($espeakFiles.Count -lt 1) {
-        throw "espeak-ng-data in $InstallDir is empty, so English, Spanish, German and Italian would fail with HTTP 500. Delete $espeakDir and run this installer again."
-    }
-    if (-not $archiveHasEspeak) {
-        Write-Warn "$asset does not carry espeak-ng-data, so the directory already in $InstallDir is what English, Spanish, German and Italian will use. That is usually fine, since the phoneme data rarely changes, but a newer release ships its own copy."
-    }
-
-    Write-Detail "mambotts-server.exe, the two ONNX Runtime DLLs and $($espeakFiles.Count) espeak-ng-data files are in place."
+    Write-Detail 'mambotts-server.exe and the two ONNX Runtime DLLs are in place.'
     return $exe
 }
 
@@ -587,7 +532,6 @@ function Install-ServerMode {
     Write-Host 'What landed where:'
     Write-Host "  Server:    $exe"
     Write-Host "  Runtime:   $(Join-Path $InstallDir 'onnxruntime.dll')"
-    Write-Host "  espeak:    $(Join-Path $InstallDir 'espeak-ng-data')"
     Write-Host "  Model:     $modelDir"
     Write-Host "  Launcher:  $launcher"
     if ($shortcut) { Write-Host "  Shortcut:  $shortcut" }

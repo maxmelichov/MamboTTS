@@ -92,11 +92,11 @@ export function OnboardPage({ bundle, setBundle }: PageProps) {
     {
       id: "blue",
       name: "BlueTTS",
-      version: "bluetts-2.5",
-      size: "~580 MB",
-      description: "Local speech in Hebrew, English, Spanish, German, and Italian",
+      version: "bluev3-3.0.0",
+      size: "~740 MB",
+      description: "Local speech in Hebrew, English, Spanish, German, Italian, and Russian",
       files: [],
-      directory: "bluetts-2.5",
+      directory: "bluev3-3.0.0",
       capabilities: { hebrew: true, streaming: true, voice_reference: false, fixed_voices: true },
     },
   ]) as ModelSource[];
@@ -198,9 +198,9 @@ export function OnboardPage({ bundle, setBundle }: PageProps) {
             <div className="flex flex-col gap-5 bg-background/10 p-6 sm:flex-row sm:items-center sm:justify-between">
               <div className="space-y-1">
                 <Eyebrow>Local Infrastructure</Eyebrow>
-                <h3 className="text-base font-semibold tracking-tight">{bundles[runtime]?.version ?? "bluetts-2.5"}</h3>
+                <h3 className="text-base font-semibold tracking-tight">{bundles[runtime]?.version ?? "bluev3-3.0.0"}</h3>
                 <p className="text-xs text-secondary opacity-40">
-                  {bundles[runtime]?.installed ? "Already installed locally" : "Initial setup: ~580 MB storage (BlueTTS + RenikudPlus)"}
+                  {bundles[runtime]?.installed ? "Already installed locally" : "Initial setup: ~740 MB storage (BlueTTS + RenikudPlus)"}
                 </p>
               </div>
               <Button onClick={() => selectRuntime(runtime)} disabled={busy} className="h-11 px-6 text-sm shadow-lg shadow-primary/5">

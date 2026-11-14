@@ -83,4 +83,29 @@ mod tests {
         assert_eq!(sources.runtimes[0].id, "blue");
         assert!(sources.runtimes[0].capabilities.hebrew);
     }
+
+    #[test]
+    fn each_source_is_its_registry_manifest() {
+        for (source, manifest) in model_sources()
+            .runtimes
+            .iter()
+            .zip(mambotts_registry::runtimes())
+        {
+            assert_eq!(source.id, manifest.id);
+            assert_eq!(source.version, manifest.version);
+            assert_eq!(source.directory, manifest.directory);
+            assert_eq!(source.description, manifest.description);
+            assert_eq!(source.files.len(), manifest.files.len());
+            for (file, expected) in source.files.iter().zip(manifest.files) {
+                assert_eq!(
+                    (file.name.as_str(), file.url.as_str()),
+                    (expected.name, expected.url)
+                );
+            }
+            assert_eq!(
+                source.capabilities.voice_reference,
+                manifest.capabilities.voice_reference
+            );
+        }
+    }
 }

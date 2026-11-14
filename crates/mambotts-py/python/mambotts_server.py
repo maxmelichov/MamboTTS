@@ -11,7 +11,7 @@ unchanged:
 
 Run it with the model directory in the environment:
 
-    MAMBOTTS_MODEL_DIR=~/…/models/bluetts-2.5 \\
+    MAMBOTTS_MODEL_DIR=~/…/models/bluev3-3.0.0 \\
       uvicorn mambotts_server:app --port 8080
 
 The engine serializes calls internally, so there is no lock around
@@ -66,7 +66,9 @@ class SpeechBody(BaseModel):
     language: str = "auto"
     response_format: str = "wav"
     input_is_phonemes: bool = False
-    speed: float = Field(0.95, gt=0)
+    # Pace multiplier, as in the sidecar: 1.0 is the natural pace for the
+    # language, and zero means 1.0.
+    speed: float = Field(1.0, ge=0, le=2.0)
 
 
 class PhonemizeBody(BaseModel):
@@ -100,9 +102,15 @@ def voices() -> JSONResponse:
     return JSONResponse({"runtime": "blue", "voices": engine().voices()})
 
 
+# The sidecar's language ids, so `items` matches it field for field.
+LANGUAGE_IDS = {"en": 0, "he": 1, "es": 2, "de": 3, "it": 4, "ru": 5}
+
+
 @app.get("/v1/languages")
 def languages() -> JSONResponse:
-    return JSONResponse({"languages": engine().languages()})
+    codes = sorted(engine().languages(), key=lambda code: LANGUAGE_IDS.get(code, 99))
+    items = [{"name": code, "id": LANGUAGE_IDS.get(code, -1)} for code in codes]
+    return JSONResponse({"languages": ["auto", *codes], "items": items})
 
 
 @app.post("/v1/audio/phonemize")
@@ -122,6 +130,9 @@ def speech(body: SpeechBody) -> Response:
         raise HTTPException(400, "request body must contain input")
     if body.response_format and body.response_format != "wav":
         raise HTTPException(400, "only wav response_format is supported")
+    speed = body.speed or 1.0
+    if speed < 0.5:
+        raise HTTPException(400, "speed must be between 0.5 and 2.0")
 
     tts = engine()
     # No lock here: the engine serializes calls behind its own mutex and
@@ -132,7 +143,7 @@ def speech(body: SpeechBody) -> Response:
             body.input,
             voice=body.voice or None,
             language=body.language,
-            speed=body.speed,
+            speed=speed,
         )
     except KeyError as err:
         raise HTTPException(400, str(err)) from err

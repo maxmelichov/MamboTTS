@@ -9,8 +9,7 @@
     ],
     "resources": {
       "binaries/onnxruntime.dll": "onnxruntime.dll",
-      "binaries/onnxruntime_providers_shared.dll": "onnxruntime_providers_shared.dll",
-      "binaries/espeak-ng-data": "espeak-ng-data"
+      "binaries/onnxruntime_providers_shared.dll": "onnxruntime_providers_shared.dll"
     },
     "windows": {
       "webviewInstallMode": {

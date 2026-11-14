@@ -36,14 +36,16 @@ the loading path. See [ADDING_MODELS.md](./ADDING_MODELS.md).
 
 ### BlueTTS (default)
 
-- Hebrew, English, Spanish, Italian, and German local synthesis;
+- [BlueV3](https://huggingface.co/notmax123/BlueV3-onnx) v3.0.0: Hebrew, English, Spanish, Italian, German, and Russian local synthesis at 44.1 kHz;
 - streaming WAV output;
-- fixed `Noa`, `Lily`, `Daniel`, and `Adam` voice styles;
+- the release's fifteen fixed voice styles (`Noa`, `Lily`, `Daniel`, `Adam` and eleven more);
 - no reference-voice cloning;
+- the release's text front end, compiled in: [polyg2p](https://github.com/maxmelichov/polyg2p) reads English, Spanish, German, Italian, and Russian as written (numbers, dates and money included), and [heb-tts-normalizer](https://github.com/thewh1teagle/heb-tts-normalizer) turns Hebrew numbers, dates, currency and units into words before the G2P. eSpeak is no longer used;
+- the release's operating point: ids wrapped in `<lang>` tags, 8 Euler steps at guidance 4.0 inside the vector estimator, the full decoded length of every chunk, 0.1 s between chunks and a 0.95 peak limit per chunk. Two deliberate departures, both taken from the BlueV3 web demo: one sentence is one chunk, because packed sentences run together with almost no pause, and a requested speed of 1.0 runs at 0.9 for Hebrew and 0.95 for the other languages;
 - [RenikudPlus](https://github.com/maxmelichov/RenikudPlus) ONNX phonemization for Hebrew, including optional source/target speaker conditioning. `crates/renikud-plus-rs` is a port of the upstream Python package: the exact-MAP cascade decode, niqqud in the input read as hard constraints on that decode, the Hebrew number front end, the long-input windowing and the force lexicon;
 - Hebrew diacritization (`POST /v1/diacritize`) from the same RenikudPlus pass: its per-letter consonant and vowel predictions are written back as niqqud. Phonemization reads those points back as hard constraints, so the app's editable niqqud is what gets spoken; the marks pointing alone cannot carry (stress, a silent ו, a consonantal י, a pronounced final ה) are written as the hatama, rafe, shva and mapiq. Send `"stress": false` for niqqud with no stress mark.
 
-Its bundle is installed in the application data directory under `models/bluetts-2.5/` and requires the [BlueTTS](https://github.com/maxmelichov/BlueTTS) ONNX pipeline, voice embeddings, and `renikud-plus.onnx`.
+Its bundle is installed in the application data directory under `models/bluev3-3.0.0/`: the four ONNX graphs, `vocab.json`, `tts.json`, the voice styles under `voices/`, polyg2p's lexicons under `polyg2p/`, and `renikud-plus.onnx`. Every file is fetched from a pinned revision. BlueTTS 2.5 bundles are not loaded any more; an existing `models/bluetts-2.5/` directory is simply unused.
 
 Kokoro is not a shipped runtime. Historical code and documentation must not be interpreted as available functionality.
 

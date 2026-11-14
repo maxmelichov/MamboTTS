@@ -6,7 +6,6 @@ export type ModelBundle = {
   /** Hebrew G2P model; BlueTTS reads IPA rather than Hebrew script. */
   renikud_path: string;
   voices_path?: string;
-  espeak_data_path?: string;
   model_dir: string;
   version: string;
   url: string;

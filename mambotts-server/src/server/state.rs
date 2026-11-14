@@ -58,6 +58,45 @@ impl ModelInfo {
             && self.model_path == model_dir.display().to_string()
             && self.codec_path == renikud_path.display().to_string()
     }
+
+    /// Check a request's language code (already through
+    /// `language_code_alias`) against the loaded model, so an unsupported one
+    /// is the caller's mistake (400) before any engine work, rather than an
+    /// engine failure (500) or an error frame inside a 200 stream.
+    pub(crate) fn check_language(&self, code: &str) -> Result<(), String> {
+        if code == "auto" || self.languages.iter().any(|language| language.name == code) {
+            return Ok(());
+        }
+        Err(format!(
+            "unsupported language `{code}`; expected auto, {}",
+            self.languages
+                .iter()
+                .map(|language| language.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
+    }
+
+    /// Check a requested voice against the loaded model's catalog, accepting
+    /// any letter case and the retired file stems the registry still maps.
+    /// An empty voice means the default and always passes.
+    pub(crate) fn check_voice(&self, voice: &str) -> Result<(), String> {
+        let Some(voices) = self.voices.as_ref() else {
+            return Ok(());
+        };
+        if voice.trim().is_empty() {
+            return Ok(());
+        }
+        let name = mambotts_registry::blue_voice_name(voice);
+        if voices.iter().any(|known| known == name) {
+            return Ok(());
+        }
+        Err(format!(
+            "unknown voice `{}`; this model has {}",
+            voice.trim(),
+            voices.join(", ")
+        ))
+    }
 }
 
 /// Why a piece of engine work did not produce a result.
@@ -118,11 +157,10 @@ impl Server {
         if self
             .info()
             .has_loaded(&params.runtime, model_dir, renikud_path)
+            && let Some(ctx) = engine.as_mut()
         {
-            if let Some(ctx) = engine.as_mut() {
-                ctx.set_speakers(*speaker, *target_speaker);
-                return Ok(());
-            }
+            ctx.set_speakers(*speaker, *target_speaker);
+            return Ok(());
         }
         let (ctx, model_path, renikud_path) = tokio::task::spawn_blocking(move || {
             let (ctx, model_path, renikud_path): (Box<dyn Runtime>, _, _) = match params.params {
@@ -359,31 +397,67 @@ mod tests {
         ModelInfo {
             loaded,
             runtime: "blue".into(),
-            model_path: "/m/bluetts-2.5".into(),
-            codec_path: "/m/bluetts-2.5/renikud-plus.onnx".into(),
+            model_path: "/m/bluev3-3.0.0".into(),
+            codec_path: "/m/bluev3-3.0.0/renikud-plus.onnx".into(),
             ..ModelInfo::default()
         }
     }
 
     #[test]
     fn nothing_counts_as_loaded_until_a_model_is_in_place() {
-        let model = Path::new("/m/bluetts-2.5");
-        let renikud = Path::new("/m/bluetts-2.5/renikud-plus.onnx");
+        let model = Path::new("/m/bluev3-3.0.0");
+        let renikud = Path::new("/m/bluev3-3.0.0/renikud-plus.onnx");
         // The recorded paths mean nothing while no model is loaded, which is
         // what keeps the reuse shortcut from skipping the very first load.
         assert!(!info(false).has_loaded("blue", model, renikud));
         assert!(info(true).has_loaded("blue", model, renikud));
     }
 
+    fn loaded_catalog() -> ModelInfo {
+        ModelInfo {
+            languages: ["en", "he", "es", "de", "it", "ru"]
+                .iter()
+                .enumerate()
+                .map(|(id, name)| Language {
+                    name: (*name).into(),
+                    id: id as i32,
+                })
+                .collect(),
+            voices: Some(vec!["Noa".into(), "Daniel".into()]),
+            ..info(true)
+        }
+    }
+
+    #[test]
+    fn requests_are_checked_against_the_loaded_languages() {
+        let info = loaded_catalog();
+        for code in ["auto", "en", "he", "es", "de", "it", "ru"] {
+            assert!(info.check_language(code).is_ok(), "{code}");
+        }
+        let err = info.check_language("fr").unwrap_err();
+        assert!(err.contains("`fr`") && err.contains("ru"), "{err}");
+    }
+
+    #[test]
+    fn voices_match_in_any_case_and_by_their_old_ids() {
+        let info = loaded_catalog();
+        assert!(info.check_voice("").is_ok());
+        assert!(info.check_voice("Noa").is_ok());
+        assert!(info.check_voice("noa").is_ok());
+        assert!(info.check_voice("libri_male_6209").is_ok());
+        let err = info.check_voice("Bogus").unwrap_err();
+        assert!(err.contains("`Bogus`") && err.contains("Noa"), "{err}");
+    }
+
     #[test]
     fn a_different_model_is_not_the_loaded_one() {
-        let renikud = Path::new("/m/bluetts-2.5/renikud-plus.onnx");
+        let renikud = Path::new("/m/bluev3-3.0.0/renikud-plus.onnx");
         assert!(!info(true).has_loaded("blue", Path::new("/m/other"), renikud));
         assert!(!info(true).has_loaded(
             "blue",
-            Path::new("/m/bluetts-2.5"),
+            Path::new("/m/bluev3-3.0.0"),
             Path::new("/m/other/renikud-plus.onnx"),
         ));
-        assert!(!info(true).has_loaded("kokoro", Path::new("/m/bluetts-2.5"), renikud));
+        assert!(!info(true).has_loaded("kokoro", Path::new("/m/bluev3-3.0.0"), renikud));
     }
 }
