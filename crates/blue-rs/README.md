@@ -17,3 +17,25 @@ cargo run -p blue-rs --example speak -- <model_dir> noa he "שלום עולם" o
 `model_dir` is an installed MamboTTS bundle (`models/bluev3-3.0.0`): the four
 graphs, `vocab.json`, `tts.json`, `voices/`, `polyg2p/` and `renikud-plus.onnx`.
 The `smoke` example takes IPA instead of text and needs only the graphs.
+
+## Text handling contract
+
+The front end reproduces BlueV3's reference `site_flow.py`, including its bot
+rules (pictographs, flattened tags, one-line Hebrew lists, phone numbers digit
+by digit, e-mail addresses read in English, the early clause cut).
+`Phonemizer::set_bot_rules(false)` reads text exactly as the BlueTTS site does.
+
+`tests/golden.rs` checks every case of `tests/golden/cases.jsonl`, stage by
+stage. It is vendored, with `vocab.json`, from BlueV3 `tests/golden/`: after the
+reference changes, regenerate it there (`make_golden.py`) and copy both files
+here. `BLUEV3_GOLDEN=<cases.jsonl>` reads another copy.
+
+```bash
+BLUEV3_RENIKUD=<BlueV3>/renikud.onnx cargo test -p blue-rs --test golden -- --nocapture
+```
+
+The G2Ps come from `MAMBOTTS_BLUE_MODEL_DIR` or the installed `bluev3-3.0.0`
+bundle (`BLUEV3_RENIKUD`, `BLUEV3_POLYG2P_DATA` override them); cases whose G2P
+is missing are skipped. The golden file was made with RenikudPlus's float
+model; with the bundle's int8 export a Hebrew case that differs only in its
+phonemes is reported as drift, not failed.

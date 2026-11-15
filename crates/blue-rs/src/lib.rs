@@ -37,7 +37,6 @@ use serde_json::Value;
 
 use crate::{
     chunking::{pack_chunks, silence_samples},
-    handling::prepare_text,
     phonemize::{Language, Phonemizer, strip_lang_tags},
     text::Tokenizer,
 };
@@ -327,33 +326,12 @@ impl BlueTts {
         text: &str,
         lang: &str,
     ) -> Result<TextPlan> {
-        let language = Language::try_from(lang)?;
-        let prepared = prepare_text(text, language.code());
-        let phonemes = phonemizer.phonemize_units(&prepared, language)?;
-        if phonemes.iter().all(String::is_empty) && prepared.chars().any(char::is_alphabetic) {
-            // Letters that came back as nothing are a G2P failure, not
-            // silence: say so instead of returning an empty recording.
-            bail!(
-                "no phonemes were produced for this text, so it cannot be spoken: {:?}",
-                prepared
-            );
-        }
-        let chunks = pack_chunks(
-            phonemes.iter().map(String::as_str),
-            language.code(),
-            self.release.max_chunk_tokens,
-        );
-        Ok(TextPlan {
-            prepared,
-            phonemes,
-            chunks,
-        })
+        plan_text(phonemizer, text, lang, self.release.max_chunk_tokens)
     }
 
     /// The ids a chunk of phonemes is fed to the graphs as.
     pub fn token_ids(&self, phonemes: &str, lang: &str) -> Result<Vec<i64>> {
-        let (ids, _) = self.tokenizer.encode_batch(&[phonemes], &[lang])?;
-        Ok(ids.iter().copied().collect())
+        token_ids(&self.tokenizer, phonemes, lang)
     }
 
     /// What each chunk of the last run was.
@@ -591,6 +569,79 @@ fn output_array3(value: &ort::value::DynValue) -> Result<Array3<f32>> {
     }
 }
 
+/// The site's front end over `text`, without the graphs: the text prepared
+/// ([`Phonemizer::prepare`], bot rules included unless turned off), G2P over
+/// the whole prepared text (Russian a sentence at a time), the phonemes cut
+/// into chunks of at most `max_ids` ids.
+pub fn plan_text(
+    phonemizer: &mut Phonemizer,
+    text: &str,
+    lang: &str,
+    max_ids: usize,
+) -> Result<TextPlan> {
+    let language = Language::try_from(lang)?;
+    let prepared = phonemizer.prepare(text, language);
+    let phonemes = phonemizer.phonemize_units(&prepared, language)?;
+    if phonemes.iter().all(String::is_empty) && regex!(r"\p{L}").is_match(&prepared) {
+        // Letters that came back as nothing are a G2P failure, not
+        // silence: say so instead of returning an empty recording.
+        bail!(
+            "no phonemes were produced for this text, so it cannot be spoken: {:?}",
+            prepared
+        );
+    }
+    let chunks = pack_chunks(phonemes.iter().map(String::as_str), language.code(), max_ids);
+    Ok(TextPlan {
+        prepared,
+        phonemes,
+        chunks,
+    })
+}
+
+/// `ChunkPacker` over G2P units (each the phonemes of a whole text or, for
+/// Russian, of one sentence): chunks of at most `max_ids` ids.
+pub fn chunk_phonemes<'a>(
+    units: impl IntoIterator<Item = &'a str>,
+    lang: &str,
+    max_ids: usize,
+) -> Vec<String> {
+    pack_chunks(units, lang, max_ids)
+}
+
+fn token_ids(tokenizer: &Tokenizer, phonemes: &str, lang: &str) -> Result<Vec<i64>> {
+    let (ids, _) = tokenizer.encode_batch(&[phonemes], &[lang])?;
+    Ok(ids.iter().copied().collect())
+}
+
+/// The ids of a bundle's `vocab.json` without its graphs, for checking the
+/// front end alone.
+pub struct TokenEncoder(Tokenizer);
+
+impl TokenEncoder {
+    pub fn from_json(path: impl AsRef<Path>) -> Result<Self> {
+        Ok(Self(Tokenizer::from_json(path)?))
+    }
+
+    /// The ids a chunk of phonemes is fed to the graphs as
+    /// ([`BlueTts::token_ids`]).
+    pub fn token_ids(&self, phonemes: &str, lang: &str) -> Result<Vec<i64>> {
+        token_ids(&self.0, phonemes, lang)
+    }
+}
+
+/// `(tLat, tMask)` for a chunk of `duration` seconds (after the speed), as
+/// the site rounds them: the width from `trunc(seconds * sr)` in float64,
+/// at least one frame; the mask from the float32 product, within the width.
+pub fn latent_geometry(duration: f32, sample_rate: usize, frame_len: usize) -> (usize, usize) {
+    let rate = sample_rate as f64;
+    let frame = frame_len as f64;
+    let frames = ((f64::from(duration) * rate).trunc() + frame - 1.0) / frame;
+    let frames = frames.floor().max(1.0) as usize;
+    let mask_frames = (f64::from((duration * sample_rate as f32).trunc()) + frame - 1.0) / frame;
+    let mask_frames = (mask_frames.floor().max(0.0) as usize).min(frames);
+    (frames, mask_frames)
+}
+
 /// Samples of speech the model is being asked for at this duration.
 fn requested_sample_count(duration: f32, sample_rate: usize) -> usize {
     (duration * sample_rate as f32).max(1.0).ceil() as usize
@@ -611,12 +662,11 @@ struct NoisyLatent {
 /// from `duration * sr` in float32, as the two numpy expressions compute
 /// them; the noise from `default_rng(seed)`, zeroed past the mask.
 fn sample_noisy_latent(duration: f32, geometry: ModelGeometry, seed: u64) -> NoisyLatent {
-    let rate = geometry.sample_rate as f64;
-    let frame = (geometry.base_chunk_size * geometry.chunk_compress_factor) as f64;
-    let frames = ((f64::from(duration) * rate).trunc() + frame - 1.0) / frame;
-    let frames = frames.floor().max(1.0) as usize;
-    let mask_frames = (f64::from((duration * geometry.sample_rate as f32).trunc()) + frame - 1.0) / frame;
-    let mask_frames = (mask_frames.floor().max(0.0) as usize).min(frames);
+    let (frames, mask_frames) = latent_geometry(
+        duration,
+        geometry.sample_rate,
+        geometry.base_chunk_size * geometry.chunk_compress_factor,
+    );
     let channels = geometry.latent_dim * geometry.chunk_compress_factor;
 
     let mut noise = numpy_rng::standard_normal_f32(seed, channels * frames);

@@ -11,6 +11,9 @@ pub(crate) const FRAGMENT_WORDS: usize = 3;
 pub(crate) const MAX_CHUNK_CHARS: usize = 300;
 /// `_CUT_MARKS`: where a sentence too long for a chunk is cut first.
 const CUT_MARKS: &str = ",;:";
+/// A clause cut leaves at least this many code points before it (BlueV3
+/// `site_flow.py` `CUT_MIN_CHARS`; NOT the site's).
+const CUT_MIN_CHARS: usize = 24;
 
 /// Samples of `seconds` of silence, as the site counts a pause
 /// (`Math.trunc(seconds * sampleRate)`).
@@ -114,6 +117,11 @@ impl ChunkPacker {
     /// fits, else at the last space whose piece fits, past a quarter of what
     /// is left; failing that the same before the quarter; failing that at the
     /// last code point that fits. A mark stays with its piece, a space goes.
+    ///
+    /// An addition for the bot (BlueV3 `site_flow.py`, NOT the site's): a
+    /// `,;:` past the first [`CUT_MIN_CHARS`] code points is tried before a
+    /// space in the last three quarters, so a sentence whose commas sit in
+    /// its first quarter is not cut in the middle of a phrase.
     fn cut(&self, s: &str) -> Vec<String> {
         let mut out = Vec::new();
         let mut cps: Vec<char> = js_trim(s).chars().collect();
@@ -132,7 +140,13 @@ impl ChunkPacker {
                 }
                 None
             };
-            let found = [(CUT_MARKS, lo), (" ", lo), (CUT_MARKS, 0), (" ", 0)]
+            let found = [
+                (CUT_MARKS, lo),
+                (CUT_MARKS, lo.min(CUT_MIN_CHARS)),
+                (" ", lo),
+                (CUT_MARKS, 0),
+                (" ", 0),
+            ]
                 .into_iter()
                 .find_map(|(marks, floor)| last(marks, floor));
             let n = match found {

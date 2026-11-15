@@ -8,7 +8,7 @@ use renikud_plus_rs::{G2P, G2PConfig, NiqqudMode, Options};
 
 use crate::chunking::{is_py_word_char, split_sentences};
 use crate::handling::{
-    canonical_lang, inline_lang_spans, is_js_space, js_collapse_spaces, js_trim, prepare_text,
+    canonical_lang, inline_lang_spans, is_js_space, js_collapse_spaces, js_trim, prepare,
     strip_emoji, strip_silent_separator_tokens, tag_latin_runs,
 };
 use crate::ipa::normalize_ipa_with;
@@ -169,6 +169,9 @@ pub struct Phonemizer {
     target_speaker: u8,
     /// (language, input, output) of every native G2P call, when tracing.
     trace: Option<Vec<(String, String, String)>>,
+    /// The bot rules of BlueV3 `site_flow.py` before and after
+    /// `prepareText` ([`crate::handling::prepare`]); on by default.
+    bot_rules: bool,
 }
 
 impl Phonemizer {
@@ -234,7 +237,20 @@ impl Phonemizer {
             speaker: 0,
             target_speaker: 0,
             trace: None,
+            bot_rules: true,
         })
+    }
+
+    /// Turn the bot rules ([`crate::handling::prepare`]) off to read text
+    /// exactly as the BlueTTS site does, or back on (the default).
+    pub fn set_bot_rules(&mut self, on: bool) {
+        self.bot_rules = on;
+    }
+
+    /// The text the G2P reads: [`crate::handling::prepare`] with this
+    /// phonemizer's bot rules.
+    pub fn prepare(&self, text: &str, language: Language) -> String {
+        prepare(text, language.code(), self.bot_rules)
     }
 
     /// Set RenikudPlus speaker conditioning (0=unknown, 1=male, 2=female).
@@ -318,7 +334,7 @@ impl Phonemizer {
     /// [`crate::BlueTts::create`] and the language detection of the callers
     /// read. Empty when there is nothing to phonemize.
     pub fn g2p(&mut self, text: &str, language: Language) -> Result<String> {
-        let prepared = prepare_text(text, language.code());
+        let prepared = self.prepare(text, language);
         let ipa = self
             .phonemize_units(&prepared, language)?
             .into_iter()
@@ -334,7 +350,7 @@ impl Phonemizer {
 
     /// The G2P units of prepared text, phonemized: the whole text, or for
     /// Russian a sentence each (the site's `makeChunker` units).
-    pub(crate) fn phonemize_units(
+    pub fn phonemize_units(
         &mut self,
         prepared: &str,
         language: Language,
@@ -546,8 +562,12 @@ mod polyg2p_tests {
             .g2p("<ES>Hola</ES> mundo.", Language::Spanish)
             .unwrap();
         assert_eq!(tagged, plain);
-        // Any `<x>…</x>` pair is a language span on the site; one in a
-        // language it has no G2P for passes through as written.
+        // A tag that names no language is dropped (a bot rule)...
+        let ipa = phonemizer.g2p("<b>Hola</b> mundo.", Language::Spanish).unwrap();
+        assert_eq!(ipa, plain);
+        // ...where on the site any `<x>…</x>` pair is a language span, and
+        // one in a language it has no G2P for passes through as written.
+        phonemizer.set_bot_rules(false);
         let ipa = phonemizer.g2p("<b>Hola</b> mundo.", Language::Spanish).unwrap();
         assert_eq!(ipa, "<es>Hola mˈundo.</es>");
     }

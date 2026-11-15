@@ -88,6 +88,228 @@ pub fn prepare_text(text: &str, lang: &str) -> String {
     }
 }
 
+/// The text a language's G2P reads, with or without the bot rules
+/// (BlueV3 `site_flow.py`, `SiteFrontEnd.plan`): with them, pictographs
+/// out, tags flattened and a one-line Hebrew list broken into lines before
+/// [`prepare_text`], then phone numbers spelled and e-mail addresses read
+/// in English after it. Without them, [`prepare_text`] alone: the site
+/// exactly.
+pub fn prepare(text: &str, lang: &str, bot_rules: bool) -> String {
+    if !bot_rules {
+        return prepare_text(text, lang);
+    }
+    let text = break_inline_lists(&flatten_tags(&strip_pictographs(text)), lang);
+    let prepared = prepare_text(&text, lang);
+    tag_emails(&spell_phone_numbers(&prepared, lang), lang)
+}
+
+// ── the bot rules (NOT the site's; BlueV3 site_flow.py, tests/golden) ───────
+
+/// The model's language for a tag name or request code (`model_lang`),
+/// or `None`.
+fn model_lang(lang: &str) -> Option<&'static str> {
+    match lang.trim().to_lowercase().as_str() {
+        "he" => Some("he"),
+        "en" | "en-us" => Some("en"),
+        "es" => Some("es"),
+        "de" | "ge" => Some("de"),
+        "it" => Some("it"),
+        "ru" | "ru-ru" => Some("ru"),
+        _ => None,
+    }
+}
+
+/// `strip_pictographs`: what the site's `EMOJI_RE` misses. Every emoji
+/// presentation character, a pictograph followed by U+FE0F, the variation
+/// selectors, the zero-width joiner, the keycap mark and the tag characters
+/// (subdivision flags) are removed; a run of them with the spaces and tabs
+/// around it becomes one space. The vocab has none of them: each was a pad
+/// id in the middle of a chunk.
+pub fn strip_pictographs(text: &str) -> String {
+    let re = fregex!({
+        let p = r"\p{Emoji_Presentation}|\p{Extended_Pictographic}(?=\x{FE0F})|[\x{FE0E}\x{FE0F}\x{200D}\x{20E3}]|[\x{E0020}-\x{E007F}]";
+        format!(r"[ \t]*(?:{p})(?:[ \t]*(?:{p}))*[ \t]*")
+    });
+    freplace_all(re, text, |_| " ".into())
+}
+
+/// `flatten_tags`: inline tags made flat before anything reads them. A tag
+/// that names no language (`<b>`) is dropped; nested language spans
+/// (`<en>a <he>b</he> c</en>`) become a flat run of spans, each piece of
+/// text inside its innermost language; each tag becomes one space; a `<`
+/// or `>` that is not part of a tag (`3 < 5`) becomes a space.
+pub fn flatten_tags(text: &str) -> String {
+    let mut stack: Vec<&'static str> = Vec::new();
+    let mut out = String::with_capacity(text.len());
+    let emit = |piece: &str, stack: &[&str], out: &mut String| {
+        let piece = piece.replace(['<', '>'], " ");
+        if piece.is_empty() {
+            return;
+        }
+        match stack.last() {
+            Some(top) if !piece.trim().is_empty() => {
+                out.push_str(&format!("<{top}>{piece}</{top}>"));
+            }
+            _ => out.push_str(&piece),
+        }
+    };
+    let mut last = 0;
+    for caps in regex!(r"</?([A-Za-z][A-Za-z0-9_-]*)>").captures_iter(text) {
+        let m = caps.get(0).expect("whole match");
+        emit(&text[last..m.start()], &stack, &mut out);
+        last = m.end();
+        let Some(code) = model_lang(&caps[1]) else {
+            continue; // not a language: dropped
+        };
+        if m.as_str().starts_with("</") {
+            if let Some(at) = stack.iter().rposition(|&open| open == code) {
+                stack.truncate(at);
+            } else {
+                // A mismatched closer (`<he>…</en>`) closes the open span.
+                stack.pop();
+            }
+        } else {
+            stack.push(code);
+        }
+        out.push(' ');
+    }
+    emit(&text[last..], &stack, &mut out);
+    out
+}
+
+/// `break_inline_lists`: a numbered list written on one line in Hebrew
+/// (`1. קמח 2. סוכר 3. ביצים`) is put one item a line. heb-tts-normalizer
+/// drops a list number at the start of a line but reads the later ones
+/// inline, glued to the item before. Only markers numbered exactly 1, 2,
+/// 3… (at least two) are touched.
+pub fn break_inline_lists(text: &str, lang: &str) -> String {
+    if canonical_lang(lang) != "he" {
+        return text.to_owned();
+    }
+    let marks: Vec<(usize, u32)> = fregex!(r"(?m)(?:^|(?<=[ \t]))([0-9]{1,2})\.[ \t]+(?=[א-ת])")
+        .captures_iter(text)
+        .filter_map(Result::ok)
+        .map(|caps| {
+            let start = caps.get(0).expect("whole match").start();
+            (start, caps[1].parse().unwrap_or(0))
+        })
+        .collect();
+    if marks.len() < 2 || marks.iter().zip(1..).any(|(&(_, n), k)| n != k) {
+        return text.to_owned();
+    }
+    let mut out = String::with_capacity(text.len() + marks.len());
+    let mut last = 0;
+    for &(start, _) in &marks {
+        let before = text[last..start].trim_end_matches([' ', '\t']);
+        out.push_str(before);
+        if !before.is_empty() && !before.ends_with('\n') {
+            out.push('\n');
+        }
+        last = start;
+    }
+    out.push_str(&text[last..]);
+    out
+}
+
+/// `f` over the text outside `<xx>…</xx>` spans and stray tags.
+fn outside_spans(text: &str, mut f: impl FnMut(&str) -> String) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut last = 0;
+    for m in span_or_tag_re().find_iter(text).filter_map(Result::ok) {
+        out.push_str(&f(&text[last..m.start()]));
+        out.push_str(m.as_str());
+        last = m.end();
+    }
+    out.push_str(&f(&text[last..]));
+    out
+}
+
+/// The languages whose phone numbers are read digit by digit, and the word
+/// for a leading `+` in each.
+fn plus_word(lang: &str) -> Option<&'static str> {
+    match lang {
+        "en" | "de" => Some("plus"),
+        "es" => Some("más"),
+        "it" => Some("più"),
+        _ => None,
+    }
+}
+
+/// `spell_phone_numbers`: in English, German, Spanish and Italian a phone
+/// number is read digit by digit with a pause between its groups
+/// (`555-123-4567` as `5 5 5, 1 2 3, 4 5 6 7`), where polyg2p read three
+/// cardinals. A phone number has 7 to 15 digits in groups split by `-`,
+/// spaces or `( )`, and starts with `+`, `(` or `0` or has three groups or
+/// more; a year range and a thousands-grouped number under nine digits are
+/// not phone numbers. Hebrew's normaliser already reads them digit by
+/// digit; Russian keeps the site's reading.
+pub fn spell_phone_numbers(text: &str, lang: &str) -> String {
+    let code = canonical_lang(lang);
+    let Some(plus_word) = plus_word(&code) else {
+        return text.to_owned();
+    };
+    let re = fregex!(
+        r"(?<![\w+.,/:-])(\+[ ]?)?(?:\([0-9]{1,5}\)[ -]?|[0-9]{1,5}[ -])(?:[0-9]{1,5}[ -]){0,5}[0-9]{2,8}(?![\w/:-]|[.,][0-9])"
+    );
+    let spell = |raw: &str| -> String {
+        let groups: Vec<&str> = regex!(r"[0-9]+").find_iter(raw).map(|m| m.as_str()).collect();
+        let digits: usize = groups.iter().map(|g| g.len()).sum();
+        let (plus, paren) = (raw.starts_with('+'), raw.contains('('));
+        if !(7..=15).contains(&digits) {
+            return raw.to_owned();
+        }
+        if !(plus || paren || groups.len() >= 3 || groups[0].starts_with('0')) {
+            return raw.to_owned();
+        }
+        if !plus
+            && !paren
+            && !raw.contains('-')
+            && digits < 9
+            && groups[0].len() <= 3
+            && groups[1..].iter().all(|g| g.len() == 3)
+        {
+            // "1 000 000": thousands-grouped ("612 345 678" is a phone).
+            return raw.to_owned();
+        }
+        let spoken = groups
+            .iter()
+            .map(|g| g.chars().map(String::from).collect::<Vec<_>>().join(" "))
+            .collect::<Vec<_>>()
+            .join(", ");
+        if plus {
+            format!("{plus_word} {spoken}")
+        } else {
+            spoken
+        }
+    };
+    outside_spans(text, |t| freplace_all(re, t, |caps| spell(&caps[0])))
+}
+
+/// `tag_emails`: in Hebrew, English, German, Spanish and Italian an e-mail
+/// address becomes its spoken English reading in `<en>…</en>`
+/// ([`email_to_spoken_english`]), with a space at every digit/digit and
+/// letter/digit boundary so digits are read one by one. Read as written,
+/// Hebrew cut the address at the `@` and polyg2p's `.` split the chunk
+/// inside it. Russian keeps the site's own e-mail reading.
+pub fn tag_emails(text: &str, lang: &str) -> String {
+    if !matches!(canonical_lang(lang).as_str(), "he" | "en" | "de" | "es" | "it") {
+        return text.to_owned();
+    }
+    let re = fregex!(
+        r"(?<![A-Za-z0-9._%+])(?<![A-Za-z0-9]-)[A-Za-z0-9][A-Za-z0-9._%+-]*@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}(?![A-Za-z0-9])"
+    );
+    let spoken = |email: &str| -> String {
+        freplace_all(
+            fregex!(r"(?<=[0-9])(?=[0-9A-Za-z])|(?<=[A-Za-z])(?=[0-9])"),
+            &email_to_spoken_english(email),
+            |_| " ".into(),
+        )
+    };
+    outside_spans(text, |t| {
+        freplace_all(re, t, |caps| format!("<en>{}</en>", spoken(&caps[0])))
+    })
+}
+
 /// heb-tts-normalizer 0.2.0 at its default reading style, the site's
 /// `heNormalize` (its wasm build of the same crate).
 fn hebrew_normalize(text: &str) -> String {
@@ -171,7 +393,7 @@ fn english_run(run: &str) -> String {
 /// `<en>…</en>`, so English polyg2p reads it. Existing spans and stray tags
 /// are left alone, and a run is tagged whether or not the text has a Hebrew
 /// letter. Other languages: as is.
-pub(crate) fn tag_latin_runs(text: &str, lang: &str) -> String {
+pub fn tag_latin_runs(text: &str, lang: &str) -> String {
     if canonical_lang(lang) != "he" {
         return text.to_owned();
     }
