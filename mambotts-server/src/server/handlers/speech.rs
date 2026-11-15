@@ -211,6 +211,7 @@ pub async fn speech(
     }
 
     let speed = resolve_speed(body.speed);
+    let steps = resolve_steps(body.steps);
     let generation = server.begin_generation();
     let cancel = generation.cancel_flag();
     // If this handler is dropped (the connection went away), stop the work.
@@ -232,6 +233,7 @@ pub async fn speech(
                 (!voice.is_empty()).then_some(voice.as_str()),
                 &language,
                 speed,
+                steps,
                 &mut |_, _| cancel.check(),
             )?;
             mambotts_audio::encode(&audio, sample_rate, format)
@@ -330,6 +332,7 @@ fn streaming_wav_response(server: SharedServer, body: SpeechBody) -> Response {
 
     let voice = first_non_empty([body.voice_reference.clone(), body.voice.clone()]);
     let speed = resolve_speed(body.speed);
+    let steps = resolve_steps(body.steps);
     let generation = server.begin_generation();
     let generation_id = generation.id();
     let cancel = generation.cancel_flag();
@@ -367,6 +370,7 @@ fn streaming_wav_response(server: SharedServer, body: SpeechBody) -> Response {
                         voice,
                         &body.language,
                         speed,
+                        steps,
                         &mut send_chunk,
                     )
                 } else {
@@ -375,6 +379,7 @@ fn streaming_wav_response(server: SharedServer, body: SpeechBody) -> Response {
                         voice,
                         &body.language,
                         speed,
+                        steps,
                         &mut send_chunk,
                     )
                 }?;
@@ -463,6 +468,21 @@ fn resolve_speed(requested: f32) -> f32 {
     }
 }
 
+/// The step counts the API accepts. bluetts.com's Quality slider, which the
+/// app copies, offers 5 to 16.
+const MIN_STEPS: u32 = 1;
+const MAX_STEPS: u32 = 32;
+
+/// The step count the runtime gets: the request's, clamped, or zero (the
+/// runtime's default, 8) when the request left it unset.
+fn resolve_steps(requested: u32) -> u32 {
+    if requested == 0 {
+        0
+    } else {
+        requested.clamp(MIN_STEPS, MAX_STEPS)
+    }
+}
+
 fn frame(kind: u8, payload: Vec<u8>) -> Bytes {
     let mut out = Vec::with_capacity(5 + payload.len());
     out.push(kind);
@@ -494,7 +514,15 @@ fn audio_response(data: Vec<u8>, format: AudioFormat) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_speed;
+    use super::{resolve_speed, resolve_steps};
+
+    #[test]
+    fn steps_are_clamped_or_unset() {
+        assert_eq!(resolve_steps(0), 0);
+        assert_eq!(resolve_steps(5), 5);
+        assert_eq!(resolve_steps(16), 16);
+        assert_eq!(resolve_steps(100), 32);
+    }
 
     #[test]
     fn speed_is_the_engine_speed_clamped_or_unset() {

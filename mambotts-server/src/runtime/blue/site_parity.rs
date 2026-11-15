@@ -56,11 +56,14 @@ fn site_parity_dump() {
         }
         let lang = case["lang"].as_str().unwrap();
         let text = case["text"].as_str().unwrap();
+        // The Quality slider's steps, as a request carries them (absent: 8).
+        let steps = case["steps"].as_u64().unwrap_or(0) as u32;
         let plan = runtime.tts.plan_text(&mut runtime.phonemizer, text, lang).unwrap();
-        // The request: no voice, no speed, no niqqud flag (the defaults).
+        // The request: no voice, no speed, no niqqud flag (the defaults), and
+        // the case's steps if it sets them.
         let mut streamed = Vec::new();
         let audio = runtime
-            .synthesize_streaming(text, None, lang, 0.0, &mut |chunk, _| {
+            .synthesize_streaming(text, None, lang, 0.0, steps, &mut |chunk, _| {
                 streamed.push(chunk.len());
                 Ok(())
             })
@@ -96,6 +99,7 @@ fn site_parity_dump() {
             "text": text,
             "voice": mambotts_registry::DEFAULT_BLUE_VOICE,
             "speed": super::effective_speed(0.0, lang),
+            "steps": super::effective_steps(steps),
             "prepared": plan.prepared,
             "units": plan.phonemes,
             "chunks": chunks,

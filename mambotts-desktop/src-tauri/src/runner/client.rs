@@ -186,6 +186,8 @@ pub async fn synthesize_request(
         // The engine's speed, as bluetts.com sends it. Unset is zero, which
         // the server reads as the site's default for the language.
         "speed": request.speed.unwrap_or(0.0),
+        // The Quality slider's step count; zero is the server's default, 8.
+        "steps": request.steps.unwrap_or(0),
     });
     let props = || {
         serde_json::json!({
@@ -194,6 +196,7 @@ pub async fn synthesize_request(
             "language": body["language"].as_str().unwrap_or("auto"),
             "has_voice_reference": has_voice_reference,
             "speed": body["speed"].as_f64().unwrap_or(0.0),
+            "steps": body["steps"].as_u64().unwrap_or(0),
         })
     };
 

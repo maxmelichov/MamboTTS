@@ -69,6 +69,8 @@ class SpeechBody(BaseModel):
     # Pace multiplier, as in the sidecar: 1.0 is the natural pace for the
     # language, and zero means 1.0.
     speed: float | None = Field(None, ge=0, le=2.0)
+    # Flow-matching steps (bluetts.com's Quality slider, 5-16); zero means 8.
+    steps: int = Field(0, ge=0, le=32)
 
 
 class PhonemizeBody(BaseModel):
@@ -144,6 +146,7 @@ def speech(body: SpeechBody) -> Response:
             voice=body.voice or None,
             language=body.language,
             speed=speed,
+            total_step=body.steps or 8,
         )
     except KeyError as err:
         raise HTTPException(400, str(err)) from err

@@ -120,6 +120,13 @@ pub struct SpeechBody {
     /// app's slider offers the site's 0.8 to 1.2.
     #[serde(default)]
     pub speed: f32,
+    /// The number of flow-matching steps, bluetts.com's Quality slider: more
+    /// is slower and cleaner. Zero or absent means the site's default, 8.
+    ///
+    /// The API accepts 1 to 32. The app's slider offers the site's 5 to 16
+    /// (Fast 5-6, Mid 7-9, High 10-12, Best 13-16).
+    #[serde(default)]
+    pub steps: u32,
 }
 
 /// Which generation to stop. Without an id, every running and queued

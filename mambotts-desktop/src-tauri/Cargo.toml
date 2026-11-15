@@ -37,9 +37,11 @@ tar = "0.4"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "rt-multi-thread", "sync", "time"] }
 tauri-plugin-clipboard-manager = "2"
 sysinfo = { version = "0.37", default-features = false, features = ["system"] }
+sha2 = "0.10"
 
 [dev-dependencies]
 tempfile = "3"
+tokio = { version = "1", features = ["net"] }
 
 # A job object is the only reliable way to stop the sidecar outliving this
 # process on Windows; see runner::process::confine_to_job_object.

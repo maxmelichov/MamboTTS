@@ -58,6 +58,9 @@ pub struct SpeechRequest {
     /// than drop them as bluetts.com does with any pointed text.
     pub niqqud: Option<bool>,
     pub speed: Option<f32>,
+    /// The Quality slider's flow-matching steps (bluetts.com's 5 to 16).
+    /// Unset is the server's default, 8.
+    pub steps: Option<u32>,
     /// Chosen by the webview so it can cancel this synthesis by name.
     pub synthesis_id: Option<String>,
 }

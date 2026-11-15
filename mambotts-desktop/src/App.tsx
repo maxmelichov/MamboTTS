@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { motion } from "framer-motion";
 import { Loader2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import "./App.css";
 import { Brand } from "./components/ui";
@@ -10,7 +10,7 @@ import { HomePage } from "./pages/home/HomePage";
 import { OnboardPage } from "./pages/OnboardPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { ModelBundle, StudioState } from "./lib/types";
-import { SPEED_MAX, SPEED_MIN, SPEED_STORAGE_KEY } from "./pages/home/GenerationControls";
+import { SPEED_MAX, SPEED_MIN, SPEED_STORAGE_KEY, STEPS_DEFAULT, STEPS_STORAGE_KEY, clampSteps } from "./pages/home/GenerationControls";
 import { sampleText } from "./lib/constants";
 
 /// The speed someone set on the slider, kept inside its range, or null when
@@ -23,6 +23,16 @@ function storedSpeed(): number | null {
   const speed = Number(raw);
   if (!Number.isFinite(speed) || speed <= 0) return null;
   return Math.min(SPEED_MAX, Math.max(SPEED_MIN, speed));
+}
+
+/// The Quality slider's step count someone set, or the site's default 8.
+function storedSteps(): number {
+  try {
+    const raw = localStorage.getItem(STEPS_STORAGE_KEY);
+    return raw === null ? STEPS_DEFAULT : clampSteps(raw);
+  } catch {
+    return STEPS_DEFAULT;
+  }
 }
 
 function App() {
@@ -46,6 +56,7 @@ function App() {
     targetSpeaker: 0,
     // A speed someone chose once is a preference, so it outlives the session.
     speed: storedSpeed(),
+    steps: storedSteps(),
     audioPath: "",
     streamChunkUrls: [],
     generation: 0,
@@ -78,6 +89,38 @@ function App() {
       cancelled = true;
     };
   }, [location.pathname, navigate]);
+
+  // An install from before the fp32 default runs on int8 and fetches the
+  // machine's RenikudPlus here, in the background, with no onboarding. The
+  // download resumes after a failure (retried with a growing pause) or a
+  // restart; once verified, the new bundle points at fp32 and the next take's
+  // load_model switches to it.
+  const upgradingRef = useRef(false);
+  const pendingUpgrade = bundle?.installed ? bundle.hebrew_g2p_upgrade : null;
+  useEffect(() => {
+    if (!pendingUpgrade || upgradingRef.current) return;
+    upgradingRef.current = true;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const attempt = async (failures: number) => {
+      try {
+        const upgraded = await invoke<ModelBundle>("upgrade_hebrew_g2p");
+        if (!stopped) setBundle(upgraded);
+      } catch {
+        if (stopped) return;
+        const pause = Math.min(10 * 60_000, 15_000 * 2 ** failures);
+        timer = setTimeout(() => attempt(failures + 1), pause);
+        return;
+      }
+      upgradingRef.current = false;
+    };
+    attempt(0);
+    return () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+      upgradingRef.current = false;
+    };
+  }, [pendingUpgrade]);
 
   useEffect(() => {
     // Retired preferences: the Hebrew G2P engine chooser (Hebrew now always uses

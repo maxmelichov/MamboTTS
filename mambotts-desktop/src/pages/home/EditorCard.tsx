@@ -99,8 +99,10 @@ type EditorCardProps = {
   blueVoiceIds: string[];
   speed: number | null;
   languageSpeed: number;
+  steps: number;
   setBlueVoice: (voice: string) => void;
   setSpeed: (speed: number | null) => void;
+  setSteps: (steps: number) => void;
   busy: boolean;
   text: string;
   setText: (text: string) => void;
@@ -154,8 +156,10 @@ export function EditorCard({
   blueVoiceIds,
   speed,
   languageSpeed,
+  steps,
   setBlueVoice,
   setSpeed,
+  setSteps,
 }: EditorCardProps) {
   const diacriticsEnabled = pronunciationEnabled && isHebrew;
   const [selectedTab, setTab] = useState<EditorTab>("text");
@@ -488,8 +492,10 @@ export function EditorCard({
           blueVoiceIds={blueVoiceIds}
           speed={speed}
           languageSpeed={languageSpeed}
+          steps={steps}
           setBlueVoice={setBlueVoice}
           setSpeed={setSpeed}
+          setSteps={setSteps}
         />
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4 text-[10px] font-bold uppercase tracking-[0.2em] text-secondary">

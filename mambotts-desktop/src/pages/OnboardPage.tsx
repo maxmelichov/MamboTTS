@@ -119,7 +119,12 @@ export function OnboardPage({ bundle, setBundle }: PageProps) {
     progress?.stage === "extracting"
       ? "100%"
       : `${progressValue}%`;
-  const stageLabel = progress?.stage === "extracting" ? "Optimizing models..." : "Downloading voice model...";
+  const stageLabel =
+    progress?.stage === "extracting"
+      ? "Optimizing models..."
+      : progress?.stage === "upgrading" || progress?.stage === "upgraded"
+        ? "Upgrading Hebrew model in the background..."
+        : "Downloading voice model...";
 
   return (
     <main className="grid min-h-screen place-items-center bg-background p-6 text-primary sm:p-12">

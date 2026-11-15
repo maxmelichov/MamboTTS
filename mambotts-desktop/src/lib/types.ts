@@ -9,6 +9,10 @@ export type ModelBundle = {
   model_dir: string;
   version: string;
   url: string;
+  /** The RenikudPlus weights `renikud_path` names. */
+  hebrew_g2p?: "fp32" | "int8" | null;
+  /** Set while the machine's own RenikudPlus downloads in the background. */
+  hebrew_g2p_upgrade?: "fp32" | "int8" | null;
 };
 
 export type ModelSourceFile = {
@@ -49,7 +53,7 @@ export type DownloadProgress = {
   downloaded: number;
   total?: number | null;
   progress?: number | null;
-  stage: "downloading" | "extracting";
+  stage: "downloading" | "extracting" | "upgrading" | "upgraded";
 };
 
 export type CreateStep = "idle" | "starting" | "loading" | "creating" | "done";
@@ -70,6 +74,8 @@ export type StudioState = {
   targetSpeaker: number;
   /** The engine speed the slider set, or null for the language default (bluetts.com's). */
   speed: number | null;
+  /** The Quality slider: flow-matching steps, 5 to 16 (bluetts.com's, default 8). */
+  steps: number;
   audioPath: string;
   /** In-memory blob URLs of the streamed chunks, released once the finished WAV takes over. */
   streamChunkUrls: string[];

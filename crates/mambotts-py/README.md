@@ -40,8 +40,8 @@ import mambotts
 # else <model_dir>/renikud-plus.onnx (the int8 export); MAMBOTTS_HEBREW_G2P=int8 prefers int8
 tts = mambotts.BlueTtsEngine("~/…/models/bluev3-3.0.0")
 tts.sample_rate          # 44100
-tts.voices()             # ['Noa', 'Lily', 'Maya', 'Emma', 'Sara', 'Shira', 'Tamar', 'Yael',
-                         #  'Adam', 'Daniel', 'Ariel', 'David', 'Ethan', 'Jonathan', 'Michael']
+tts.voices()             # ['Maya', 'Noa', 'Lily', 'Tamar', 'Shira', 'Yael', 'Emma', 'Sara',
+                         #  'Adam', 'Daniel', 'David', 'Jonathan', 'Ethan', 'Michael', 'Ariel']
 tts.languages()          # ['he', 'en', 'es', 'de', 'it', 'ru']
 tts.phonemize("שלום", "he")   # '<he>ʃalˈom</he>'
 

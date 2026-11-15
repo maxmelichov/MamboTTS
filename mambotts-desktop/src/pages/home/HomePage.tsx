@@ -6,11 +6,12 @@ import { useNavigate } from "react-router-dom";
 import type { EditorInputSource, ModelBundle, RunnerInfo, StudioState } from "../../lib/types";
 import { AppFrame } from "../../components/AppFrame";
 import { CreateStatus } from "../../components/CreateStatus";
+import { HebrewG2pUpgrade } from "../../components/HebrewG2pUpgrade";
 import { ErrorBlock } from "../../components/ui";
 import { WaveformPlayer } from "../../components/WaveformPlayer";
 import { StudioHeader } from "../../components/WorkspaceHeader";
 import { EditorCard } from "./EditorCard";
-import { SPEED_STORAGE_KEY, defaultSpeed } from "./GenerationControls";
+import { SPEED_STORAGE_KEY, STEPS_STORAGE_KEY, clampSteps, defaultSpeed } from "./GenerationControls";
 import { VoiceSettings } from "./VoiceSettings";
 
 const PRONUNCIATION_KEY = "editor-pronunciation";
@@ -74,7 +75,7 @@ type HomePageProps = PageProps & {
 
 export function HomePage({ bundle, setBundle, studio, setStudio }: HomePageProps) {
   const navigate = useNavigate();
-  const { text, phonemes, diacritics, diacriticsSource, languages, language, blueVoice, blueVoiceIds, speaker, targetSpeaker, speed, audioPath, streamChunkUrls, generation, audioAutoplayPending, step, status, busy, error } = studio;
+  const { text, phonemes, diacritics, diacriticsSource, languages, language, blueVoice, blueVoiceIds, speaker, targetSpeaker, speed, steps, audioPath, streamChunkUrls, generation, audioAutoplayPending, step, status, busy, error } = studio;
   const loadingLanguagesRef = useRef(false);
   const [pronunciationEnabled, setPronunciationState] = useState(readPronunciationEnabled);
   function setPronunciationEnabled(enabled: boolean) {
@@ -333,6 +334,8 @@ export function HomePage({ bundle, setBundle, studio, setStudio }: HomePageProps
           niqqud: inputSource === "diacritics",
           // Unset: the server uses the language's default, as the site does.
           speed: speed ?? undefined,
+          // The Quality slider's step count, always sent, as the site does.
+          steps,
           synthesis_id: synthesisId,
         },
         onChunk,
@@ -418,6 +421,16 @@ export function HomePage({ bundle, setBundle, studio, setStudio }: HomePageProps
                 else localStorage.setItem(SPEED_STORAGE_KEY, String(nextSpeed));
                 updateStudio({ speed: nextSpeed });
               }}
+              steps={steps}
+              setSteps={(nextSteps) => {
+                const clamped = clampSteps(nextSteps);
+                try {
+                  localStorage.setItem(STEPS_STORAGE_KEY, String(clamped));
+                } catch {
+                  // Storage can be unavailable; the slider still applies for this session.
+                }
+                updateStudio({ steps: clamped });
+              }}
             />
 
             <AnimatePresence>
@@ -439,6 +452,7 @@ export function HomePage({ bundle, setBundle, studio, setStudio }: HomePageProps
           </div>
 
           <aside className="space-y-6">
+            <HebrewG2pUpgrade bundle={bundle} />
             <VoiceSettings
               busy={busy}
               language={language}

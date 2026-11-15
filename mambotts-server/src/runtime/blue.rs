@@ -192,6 +192,7 @@ impl Runtime for BlueRuntime {
         voice: Option<&str>,
         language: &str,
         speed: f32,
+        steps: u32,
         on_chunk: &mut dyn FnMut(&[f32], u32) -> Result<()>,
     ) -> Result<Vec<f32>> {
         let (_, language_code) = Self::language_for(text, language)?;
@@ -214,6 +215,7 @@ impl Runtime for BlueRuntime {
             SynthesisOptions {
                 lang: language_code.to_owned(),
                 speed: effective_speed(speed, language_code),
+                total_step: effective_steps(steps),
                 ..SynthesisOptions::default()
             },
             |chunk| on_chunk(chunk, sample_rate),
@@ -226,6 +228,7 @@ impl Runtime for BlueRuntime {
         voice: Option<&str>,
         language: &str,
         speed: f32,
+        steps: u32,
         on_chunk: &mut dyn FnMut(&[f32], u32) -> Result<()>,
     ) -> Result<Vec<f32>> {
         let (_, language_code) = Self::phoneme_language_for(phonemes, language)?;
@@ -250,6 +253,7 @@ impl Runtime for BlueRuntime {
             SynthesisOptions {
                 lang: language_code.to_owned(),
                 speed: effective_speed(speed, language_code),
+                total_step: effective_steps(steps),
                 ..SynthesisOptions::default()
             },
             |chunk| on_chunk(chunk, sample_rate),
@@ -271,6 +275,20 @@ fn effective_speed(requested: f32, language_code: &str) -> f32 {
     } else {
         0.95
     }
+}
+
+/// bluetts.com's Quality slider: its step count, 5 to 16, 8 by default.
+pub const DEFAULT_STEPS: u32 = 8;
+
+/// The step count the engine runs: the request's, or the site's default 8
+/// when the request left it unset (zero).
+fn effective_steps(requested: u32) -> usize {
+    let steps = if requested == 0 {
+        DEFAULT_STEPS
+    } else {
+        requested
+    };
+    steps as usize
 }
 
 fn language(name: &str, id: i32) -> RuntimeLanguage {
@@ -298,7 +316,14 @@ mod site_parity;
 
 #[cfg(test)]
 mod tests {
-    use super::{BlueRuntime, strip_language_tags};
+    use super::{BlueRuntime, effective_steps, strip_language_tags};
+
+    #[test]
+    fn unset_steps_are_the_sites_default_eight() {
+        assert_eq!(effective_steps(0), 8);
+        assert_eq!(effective_steps(5), 5);
+        assert_eq!(effective_steps(16), 16);
+    }
 
     #[test]
     fn detects_hebrew_and_rejects_unsupported_languages() {
