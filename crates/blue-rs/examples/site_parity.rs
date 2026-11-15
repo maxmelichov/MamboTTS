@@ -25,8 +25,13 @@ fn main() -> Result<()> {
     };
     let model_dir = PathBuf::from(model_dir);
     let tts = BlueTts::from_dir(&model_dir).context("load model")?;
+    let renikud = ["renikud-plus-fp32.onnx", "renikud-plus.onnx"]
+        .map(|name| model_dir.join(name))
+        .into_iter()
+        .find(|path| path.is_file())
+        .context("no RenikudPlus in the bundle")?;
     let mut phonemizer = Phonemizer::open(
-        Some(model_dir.join("renikud-plus.onnx")),
+        Some(renikud),
         Some(model_dir.join("polyg2p")),
         Language::English,
     )?;

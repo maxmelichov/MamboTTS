@@ -14,6 +14,12 @@ import { SPEED_STORAGE_KEY, defaultSpeed } from "./GenerationControls";
 import { VoiceSettings } from "./VoiceSettings";
 
 const PRONUNCIATION_KEY = "editor-pronunciation";
+
+/** bluetts.com's default voice, Shira, when the bundle has it; else its first. */
+const DEFAULT_VOICE = "Shira";
+function defaultVoice(voiceIds: string[]): string {
+  return voiceIds.includes(DEFAULT_VOICE) ? DEFAULT_VOICE : voiceIds[0];
+}
 /** The two per-layer switches this one setting replaced. */
 const RETIRED_LAYER_KEYS = ["editor-layer-diacritics", "editor-layer-phonemes"];
 
@@ -157,7 +163,7 @@ export function HomePage({ bundle, setBundle, studio, setStudio }: HomePageProps
             // The loaded bundle owns the catalog. A voice held over from an
             // older bundle has to give way, or synthesis fails on a name the
             // engine has never heard of.
-            if (!voiceIds.includes(blueVoice)) nextStudio.blueVoice = voiceIds[0];
+            if (!voiceIds.includes(blueVoice)) nextStudio.blueVoice = defaultVoice(voiceIds);
           }
         } catch {
           // Voice IDs improve the picker, but language loading should still succeed without them.
@@ -196,8 +202,9 @@ export function HomePage({ bundle, setBundle, studio, setStudio }: HomePageProps
   async function convertToPhonemes(freshVocalized?: string) {
     if (!text.trim()) return;
     await ensureModelLoaded();
+    const pointed = freshVocalized || vocalized;
     const output = await invoke<string>("phonemize", {
-      request: { input: freshVocalized || vocalized || text, language },
+      request: { input: pointed || text, language, niqqud: Boolean(pointed) },
     });
     updateStudio({ phonemes: output });
   }
@@ -272,7 +279,7 @@ export function HomePage({ bundle, setBundle, studio, setStudio }: HomePageProps
         const voiceIds = await invoke<string[]>("get_voices");
         if (voiceIds.length) {
           nextStudio.blueVoiceIds = voiceIds;
-          if (!voiceIds.includes(blueVoice)) nextStudio.blueVoice = voiceIds[0];
+          if (!voiceIds.includes(blueVoice)) nextStudio.blueVoice = defaultVoice(voiceIds);
         }
       } catch {
         // Keep synthesis usable even if voice listing is unavailable.
@@ -321,6 +328,9 @@ export function HomePage({ bundle, setBundle, studio, setStudio }: HomePageProps
           voice: synthesisVoice || undefined,
           language: synthesisLanguage,
           input_is_phonemes: inputIsPhonemes,
+          // Points are read only from the niqqud editor's text; pointed text
+          // typed into the editor is read as the site reads it, without them.
+          niqqud: inputSource === "diacritics",
           // Unset: the server uses the language's default, as the site does.
           speed: speed ?? undefined,
           synthesis_id: synthesisId,

@@ -36,7 +36,8 @@ uv run --no-project maturin develop --release
 ```python
 import mambotts
 
-# renikud-plus.onnx defaults to <model_dir>/renikud-plus.onnx
+# RenikudPlus defaults to <model_dir>/renikud-plus-fp32.onnx (as bluetts.com runs it),
+# else <model_dir>/renikud-plus.onnx (the int8 export); MAMBOTTS_HEBREW_G2P=int8 prefers int8
 tts = mambotts.BlueTtsEngine("~/…/models/bluev3-3.0.0")
 tts.sample_rate          # 44100
 tts.voices()             # ['Noa', 'Lily', 'Maya', 'Emma', 'Sara', 'Shira', 'Tamar', 'Yael',

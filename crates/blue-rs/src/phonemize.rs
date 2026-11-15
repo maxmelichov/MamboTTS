@@ -13,13 +13,14 @@ use crate::handling::{
 };
 use crate::ipa::normalize_ipa_with;
 
-/// RenikudPlus as MamboTTS runs it: niqqud in the input is read as evidence
-/// rather than dropped, because the app lets people type and edit the points
-/// and expects them honored. The site strips points first; on unpointed text
-/// (all the site ever reads) the two decode identically.
+/// RenikudPlus as the site and the BlueV3 reference run it: points in the
+/// input are dropped and the bare skeleton is read (`niqqud="strip"`,
+/// js/g2p/hebrew.js `NIKUD_RE`). [`Phonemizer::set_honor_niqqud`] turns on
+/// reading them as constraints instead, for text whose points someone chose
+/// (the app's opt-in niqqud editor); the hatama (U+05AB) is read then too.
 fn hebrew_config() -> G2PConfig {
     G2PConfig {
-        niqqud: NiqqudMode::Use,
+        niqqud: NiqqudMode::Strip,
         ..G2PConfig::default()
     }
 }
@@ -172,6 +173,9 @@ pub struct Phonemizer {
     /// The bot rules of BlueV3 `site_flow.py` before and after
     /// `prepareText` ([`crate::handling::prepare`]); on by default.
     bot_rules: bool,
+    /// Read niqqud in Hebrew input as constraints rather than drop it (the
+    /// site's and the reference's reading); off by default.
+    honor_niqqud: bool,
 }
 
 impl Phonemizer {
@@ -238,6 +242,7 @@ impl Phonemizer {
             target_speaker: 0,
             trace: None,
             bot_rules: true,
+            honor_niqqud: false,
         })
     }
 
@@ -245,6 +250,14 @@ impl Phonemizer {
     /// exactly as the BlueTTS site does, or back on (the default).
     pub fn set_bot_rules(&mut self, on: bool) {
         self.bot_rules = on;
+    }
+
+    /// Read the points of pointed Hebrew as constraints (`true`), or drop
+    /// them and read the skeleton as the site and the reference do (`false`,
+    /// the default). Only text whose points someone chose on purpose, such
+    /// as the app's niqqud editor's, should be read with them.
+    pub fn set_honor_niqqud(&mut self, on: bool) {
+        self.honor_niqqud = on;
     }
 
     /// The text the G2P reads: [`crate::handling::prepare`] with this
@@ -481,15 +494,32 @@ impl Phonemizer {
     }
 
     fn phonemize_renikud(&mut self, text: &str) -> Result<String> {
+        // The site's phonemizeHebrew: the points go first, and what is left
+        // without a Hebrew character comes back as it is.
+        let stripped;
+        let text = if self.honor_niqqud {
+            text
+        } else {
+            stripped = renikud_plus_rs::text::strip_niqqud(text);
+            stripped.as_str()
+        };
         if !contains_hebrew(text) {
             return Ok(text.to_owned());
         }
         let Some(g2p) = self.hebrew.as_mut() else {
             bail!("Hebrew phonemization needs a RenikudPlus model path");
         };
-        let speaker = self.speaker;
-        let target_speaker = self.target_speaker;
-        g2p.phonemize(text, speaker, target_speaker)
+        g2p.phonemize_with(
+            text,
+            &Options {
+                niqqud: Some(if self.honor_niqqud {
+                    NiqqudMode::Use
+                } else {
+                    NiqqudMode::Strip
+                }),
+                ..Options::speakers(self.speaker, self.target_speaker)
+            },
+        )
     }
 }
 
@@ -655,6 +685,14 @@ mod regression_tests {
     fn user_nikud_with_real_model() {
         let model = std::env::var("MAMBOTTS_RENIKUD_PATH").expect("set MAMBOTTS_RENIKUD_PATH");
         let mut phonemizer = Phonemizer::new(Some(model)).unwrap();
+        // By default points are dropped, as on the site: pointed and bare
+        // text read the same.
+        assert_eq!(
+            phonemizer.g2p("שָׁלוֹם עוֹלָם", Language::Hebrew).unwrap(),
+            phonemizer.g2p("שלום עולם", Language::Hebrew).unwrap()
+        );
+        // The niqqud editor's text is read with its points.
+        phonemizer.set_honor_niqqud(true);
         // MamboTTS's own letter-label reading (ב׳ as "bet") is gone with the
         // rest of its Hebrew pass: the site reads ב׳ as RenikudPlus does.
         for (text, expected) in [("אֶן", "en"), ("קֶלְוִין", "kelvin")] {

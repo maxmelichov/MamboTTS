@@ -22,6 +22,9 @@ pub trait Runtime: Send {
     fn diacritize(&mut self, text: &str, stress: bool) -> Result<String>;
     /// Change the RenikudPlus speaker hints without reloading anything.
     fn set_speakers(&mut self, speaker: u8, target_speaker: u8);
+    /// Read the points of pointed Hebrew (`true`) or drop them as the site
+    /// does (`false`, the default), for the requests that follow.
+    fn set_honor_niqqud(&mut self, on: bool);
     fn supported_phonemes(&self) -> Vec<char>;
     fn synthesize_streaming(
         &mut self,

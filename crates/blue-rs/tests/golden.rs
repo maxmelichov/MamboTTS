@@ -15,11 +15,12 @@
 //! polyg2p's data (`BLUEV3_POLYG2P_DATA=<dir>`), both by default from the
 //! bundle in `MAMBOTTS_BLUE_MODEL_DIR` or the installed MamboTTS
 //! `bluev3-3.0.0` bundle. The golden file was made with RenikudPlus's float
-//! `model.onnx` (BlueV3's `renikud.onnx`); the bundle ships the int8 export,
-//! which reads a few words differently. With the bundle's model (no
-//! `BLUEV3_RENIKUD`), a Hebrew case whose first difference is its phonemes is
-//! reported as int8 drift rather than failed; point `BLUEV3_RENIKUD` at the
-//! float model for the strict check. A case whose G2P is not found is skipped
+//! `model.onnx` (BlueV3's `renikud.onnx`), which a bundle holds as
+//! `renikud-plus-fp32.onnx` on machines with more than 4 GB of memory; small
+//! machines hold the int8 export (`renikud-plus.onnx`), which reads a few
+//! words differently. With that one, a Hebrew case whose first difference is
+//! its phonemes is reported as int8 drift rather than failed; the float
+//! model gets the strict check. A case whose G2P is not found is skipped
 //! and counted.
 
 use std::path::{Path, PathBuf};
@@ -102,14 +103,18 @@ fn golden_cases() {
     }
     let encoder = TokenEncoder::from_json(vendored("vocab.json")).expect("vocab.json");
 
-    let renikud = model_path("BLUEV3_RENIKUD", "renikud-plus.onnx");
+    let renikud = model_path("BLUEV3_RENIKUD", "renikud-plus-fp32.onnx")
+        .or_else(|| model_path("BLUEV3_RENIKUD", "renikud-plus.onnx"));
     let poly_data = model_path("BLUEV3_POLYG2P_DATA", "polyg2p");
     eprintln!("renikud: {renikud:?}\npolyg2p: {poly_data:?}");
     let mut phonemizer =
         Phonemizer::open(renikud.as_deref(), poly_data.as_deref(), Language::Hebrew)
             .expect("phonemizer");
-    // The bundle's int8 RenikudPlus is not the golden file's float model.
-    let int8_renikud = std::env::var_os("BLUEV3_RENIKUD").is_none();
+    // A bundle's int8 RenikudPlus is not the golden file's float model.
+    let int8_renikud = std::env::var_os("BLUEV3_RENIKUD").is_none()
+        && renikud
+            .as_deref()
+            .is_some_and(|path| path.ends_with("renikud-plus.onnx"));
     let have = |g2p: &str| match g2p {
         "renikud" => renikud.is_some(),
         "polyg2p" => poly_data.is_some(),

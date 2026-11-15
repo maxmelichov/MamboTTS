@@ -85,7 +85,7 @@ Use this when you are not introducing a new engine. Examples:
 
 ### BlueTTS bundle expectations today
 
-Registered Blue files are the BlueV3 ONNX pipeline (`duration_predictor_style`, `text_encoder`, `vector_estimator`, `vocoder`), `vocab.json`, `tts.json`, voice styles under `voices/`, polyg2p's lexicons under `polyg2p/` for English, German, Italian and Russian, and `renikud-plus.onnx` for Hebrew G2P and diacritization. Every URL names a pinned revision, never `main`, so an installed app keeps getting the files it was built for.
+Registered Blue files are the BlueV3 ONNX pipeline (`duration_predictor_style`, `text_encoder`, `vector_estimator`, `vocoder`), `vocab.json`, `tts.json`, voice styles under `voices/`, polyg2p's lexicons under `polyg2p/` for English, German, Italian and Russian, and one RenikudPlus file for Hebrew G2P and diacritization (`hebrew_g2p: true`: fp32 `renikud-plus-fp32.onnx` by default, int8 `renikud-plus.onnx` on machines with 4 GB of memory or less, as bluetts.com picks them). Every URL names a pinned revision, never `main`, so an installed app keeps getting the files it was built for.
 
 If your change breaks the existing Blue IO contract, treat it as a new runtime (Option B) or a major version bump of the Blue directory name (for example a new `directory` / `version` so old and new installs do not collide).
 
@@ -133,7 +133,7 @@ Update [`POST /v1/models/load`](../mambotts-server/src/server/handlers/load.rs) 
 
 If you introduce a Rust crate for the engine (like `crates/blue-rs`), keep ONNX / native deps explicit and document packaging needs for `scripts/pre_build.py`. Prefer engines that link a prebuilt runtime over ones that compile a native inference stack from source, since a from-source build has to work on every platform the app ships to.
 
-Remember that the text front end is part of the model. Blue reads IPA rather than Hebrew script, which is why `renikud-plus.onnx` is in its `required_files` and a missing G2P model fails at load time instead of at the first Hebrew request. If your checkpoint has the same shape, declare its front end the same way.
+Remember that the text front end is part of the model. Blue reads IPA rather than Hebrew script, which is why its manifest declares a RenikudPlus file (`hebrew_g2p`) and a missing G2P model fails at load time instead of at the first Hebrew request. If your checkpoint has the same shape, declare its front end the same way.
 
 ### 3. Desktop download and load wiring
 

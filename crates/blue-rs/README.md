@@ -23,7 +23,13 @@ The `smoke` example takes IPA instead of text and needs only the graphs.
 The front end reproduces BlueV3's reference `site_flow.py`, including its bot
 rules (pictographs, flattened tags, one-line Hebrew lists, phone numbers digit
 by digit, e-mail addresses read in English, the early clause cut).
-`Phonemizer::set_bot_rules(false)` reads text exactly as the BlueTTS site does.
+bluetts.com applies the same rules (LightBlue-site `golden-parity`);
+`Phonemizer::set_bot_rules(false)` reads text as the site did before them.
+
+Pointed Hebrew is read as the site and the reference read it: the points are
+dropped and RenikudPlus reads the bare letters. `Phonemizer::set_honor_niqqud(true)`
+reads them as constraints instead, for text whose points were chosen on
+purpose (the app's niqqud editor sends `"niqqud": true`).
 
 `tests/golden.rs` checks every case of `tests/golden/cases.jsonl`, stage by
 stage. It is vendored, with `vocab.json`, from BlueV3 `tests/golden/`: after the
@@ -37,5 +43,6 @@ BLUEV3_RENIKUD=<BlueV3>/renikud.onnx cargo test -p blue-rs --test golden -- --no
 The G2Ps come from `MAMBOTTS_BLUE_MODEL_DIR` or the installed `bluev3-3.0.0`
 bundle (`BLUEV3_RENIKUD`, `BLUEV3_POLYG2P_DATA` override them); cases whose G2P
 is missing are skipped. The golden file was made with RenikudPlus's float
-model; with the bundle's int8 export a Hebrew case that differs only in its
-phonemes is reported as drift, not failed.
+model, the bundle's `renikud-plus-fp32.onnx`; with the int8 export
+(`renikud-plus.onnx`, what machines with 4 GB of memory or less get) a Hebrew
+case that differs only in its phonemes is reported as drift, not failed.

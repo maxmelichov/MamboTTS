@@ -24,7 +24,12 @@ fn main() -> Result<()> {
 
     let started = Instant::now();
     let mut tts = BlueTts::from_dir(&model_dir).context("load model")?;
-    let renikud = model_dir.join("renikud-plus.onnx");
+    // The bundle's RenikudPlus: fp32 where it is installed, else int8.
+    let renikud = ["renikud-plus-fp32.onnx", "renikud-plus.onnx"]
+        .map(|name| model_dir.join(name))
+        .into_iter()
+        .find(|path| path.is_file())
+        .unwrap_or_else(|| model_dir.join("renikud-plus-fp32.onnx"));
     let mut phonemizer = Phonemizer::open(
         renikud.is_file().then_some(&renikud),
         Some(model_dir.join("polyg2p")),

@@ -13,7 +13,10 @@ use blue_rs::{
     phonemize::{Language, Phonemizer},
     BlueTts, SynthesisOptions, VoiceStyle,
 };
-use mambotts_registry::{blue_voice_name, BLUE_POLYG2P_DIR, BLUE_VOICES, DEFAULT_BLUE_VOICE};
+use mambotts_registry::{
+    blue_voice_name, hebrew_g2p_path, hebrew_g2p_variant, BLUE_POLYG2P_DIR, BLUE_VOICES,
+    DEFAULT_BLUE_VOICE,
+};
 use pyo3::exceptions::{PyKeyError, PyValueError};
 use pyo3::prelude::*;
 
@@ -42,7 +45,14 @@ impl BlueTtsEngine {
     #[pyo3(signature = (model_dir, renikud_path = None))]
     fn new(model_dir: PathBuf, renikud_path: Option<PathBuf>) -> PyResult<Self> {
         let tts = BlueTts::from_dir(&model_dir).map_err(to_py_err)?;
-        let renikud = renikud_path.unwrap_or_else(|| model_dir.join("renikud-plus.onnx"));
+        // The bundle's RenikudPlus: fp32 as bluetts.com runs it on a computer
+        // (`MAMBOTTS_HEBREW_G2P=int8` prefers the int8 file), else the one
+        // that is there.
+        let preferred = hebrew_g2p_variant(
+            None,
+            std::env::var("MAMBOTTS_HEBREW_G2P").ok().as_deref(),
+        );
+        let renikud = renikud_path.unwrap_or_else(|| hebrew_g2p_path(&model_dir, preferred));
         // polyg2p's lexicons are part of the bundle; Hebrew additionally
         // needs the RenikudPlus model.
         let phonemizer = Phonemizer::open(

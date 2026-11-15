@@ -39,7 +39,29 @@ pub struct RuntimeManifest {
     pub install_kind: InstallKind,
     pub files: &'static [ModelFile],
     pub required_files: &'static [&'static str],
+    /// The bundle also needs one RenikudPlus file ([`HebrewG2pVariant`]),
+    /// which `files` leaves out because the machine decides which.
+    pub hebrew_g2p: bool,
     pub capabilities: RuntimeCapabilities,
+}
+
+impl RuntimeManifest {
+    /// Every file to download, the RenikudPlus variant included.
+    pub fn files_for(&self, variant: HebrewG2pVariant) -> Vec<ModelFile> {
+        let mut files = self.files.to_vec();
+        if self.hebrew_g2p {
+            files.push(variant.model_file());
+        }
+        files
+    }
+
+    /// The download size label for a variant.
+    pub fn size_for(&self, variant: HebrewG2pVariant) -> &'static str {
+        match (self.hebrew_g2p, variant) {
+            (true, HebrewG2pVariant::Fp32) => "~1.7 GB",
+            _ => self.size,
+        }
+    }
 }
 
 // BlueV3 v3.0.0, pinned to the commit the release's `v3.0.0` tag names, so a
@@ -62,21 +84,97 @@ macro_rules! blue_file {
     };
 }
 
-// RenikudPlus 0.5.0, the Hebrew G2P of the release, at the revision the
-// release names. The int8 export, not the float model the release ships. It
-// is a quarter of the size (312 MB against 1.23 GB), holds 368 MB resident
-// against 1287 MB, and runs inference twice as fast. Quantization leaves the
-// metadata the port reads intact: every key is present and semantically
-// identical, so exact-MAP decode still runs rather than falling back to greedy.
-//
-// On the 327-text parity corpus in plans/renikud-parity it disagrees with the
-// float model on 1 to 2% of words (1.56% of phonemize words, 1.20% of vocalize
-// words). Reading those disagreements by hand, int8 is right about twice as
-// often as it is wrong. The one place it is worse is that a handful of its
-// misses delete a segment rather than swap a vowel colour - שעות as ʃʔˈot,
-// הדוח as hadˈoχ - and a dropped segment is more audible than a patah for a
-// segol. That is the trade for the float model being most of the download.
-const RENIKUD_URL: &str = "https://huggingface.co/notmax123/RenikudPlus/resolve/679c56ca449d41873fb8ff7711ddf7563d28198f/model_int8.onnx";
+// RenikudPlus, the Hebrew G2P, at the Hub revision bluetts.com pins
+// (js/g2p/hebrew.js REVISION): the decode reads cascade-conditioning
+// matrices from the model's metadata, which earlier revisions do not carry.
+// The revision has two official weight files, and the app picks between them
+// as the site does (backend-policy.js hebrewG2PVariant): the float model on
+// computers, the int8 export only where memory is short.
+/// One of the two RenikudPlus weight files of the pinned revision.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HebrewG2pVariant {
+    /// `model.onnx`, 1.23 GB, ~1.3 GB resident: what RenikudPlus itself
+    /// loads, what the BlueV3 golden cases were made with, and what the site
+    /// runs on computers.
+    Fp32,
+    /// `model_int8.onnx`, 312 MB, ~0.4 GB resident: dynamic quantization. It
+    /// reads 1 to 2% of words differently from fp32 (3 of the 116 BlueV3
+    /// golden cases), so it is the low-memory fallback only.
+    Int8,
+}
+
+impl HebrewG2pVariant {
+    /// The file name inside the bundle directory.
+    pub fn file_name(self) -> &'static str {
+        match self {
+            // The int8 file keeps the name installs have always had.
+            Self::Fp32 => "renikud-plus-fp32.onnx",
+            Self::Int8 => "renikud-plus.onnx",
+        }
+    }
+
+    pub fn model_file(self) -> ModelFile {
+        match self {
+            Self::Fp32 => ModelFile {
+                name: "renikud-plus-fp32.onnx",
+                url: "https://huggingface.co/notmax123/RenikudPlus/resolve/679c56ca449d41873fb8ff7711ddf7563d28198f/model.onnx",
+            },
+            Self::Int8 => ModelFile {
+                name: "renikud-plus.onnx",
+                url: "https://huggingface.co/notmax123/RenikudPlus/resolve/679c56ca449d41873fb8ff7711ddf7563d28198f/model_int8.onnx",
+            },
+        }
+    }
+
+    pub fn other(self) -> Self {
+        match self {
+            Self::Fp32 => Self::Int8,
+            Self::Int8 => Self::Fp32,
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "fp32" | "float" | "float32" => Some(Self::Fp32),
+            "int8" | "quantized" => Some(Self::Int8),
+            _ => None,
+        }
+    }
+}
+
+/// Machines with this much memory or less get the int8 RenikudPlus, as
+/// devices reporting 4 GB or less do on the site.
+pub const HEBREW_G2P_INT8_MAX_MEMORY: u64 = 4 * 1024 * 1024 * 1024;
+
+/// The site's `hebrewG2PVariant` for a computer: fp32, unless the machine
+/// has 4 GB of memory or less. `override_` (the `MAMBOTTS_HEBREW_G2P`
+/// setting: `fp32` or `int8`) wins over the measurement; an unknown memory
+/// size is a computer's, so fp32.
+pub fn hebrew_g2p_variant(total_memory: Option<u64>, override_: Option<&str>) -> HebrewG2pVariant {
+    if let Some(variant) = override_.and_then(HebrewG2pVariant::parse) {
+        return variant;
+    }
+    match total_memory {
+        Some(bytes) if bytes > 0 && bytes <= HEBREW_G2P_INT8_MAX_MEMORY => HebrewG2pVariant::Int8,
+        _ => HebrewG2pVariant::Fp32,
+    }
+}
+
+/// The RenikudPlus file to load from a bundle directory: the preferred
+/// variant when it is there, else the other one, else the preferred path
+/// (which fails to load with a clear message).
+pub fn hebrew_g2p_path(dir: &std::path::Path, preferred: HebrewG2pVariant) -> std::path::PathBuf {
+    let present = |variant: HebrewG2pVariant| {
+        let path = dir.join(variant.file_name());
+        std::fs::metadata(&path)
+            .is_ok_and(|metadata| metadata.is_file() && metadata.len() > 0)
+            .then_some(path)
+    };
+    present(preferred)
+        .or_else(|| present(preferred.other()))
+        .unwrap_or_else(|| dir.join(preferred.file_name()))
+}
 
 // The graphs, the voices, and the text front end: polyg2p's lexicons for
 // English, German, Italian and Russian (Spanish is rules alone) with their
@@ -131,10 +229,6 @@ const BLUE_FILES: &[ModelFile] = &[
     ),
     blue_file!("polyg2p/LICENSE", "frontend/polyg2p_data/LICENSE"),
     blue_file!("polyg2p/NOTICE", "frontend/polyg2p_data/NOTICE"),
-    ModelFile {
-        name: "renikud-plus.onnx",
-        url: RENIKUD_URL,
-    },
 ];
 
 const BLUE_REQUIRED_FILES: &[&str] = &[
@@ -171,7 +265,6 @@ const BLUE_REQUIRED_FILES: &[&str] = &[
     "polyg2p/ru_yo_homographs.lex",
     "polyg2p/LICENSE",
     "polyg2p/NOTICE",
-    "renikud-plus.onnx",
 ];
 
 /// Where polyg2p's data sits inside the bundle directory.
@@ -189,6 +282,7 @@ const BLUE: RuntimeManifest = RuntimeManifest {
     install_kind: InstallKind::Files,
     files: BLUE_FILES,
     required_files: BLUE_REQUIRED_FILES,
+    hebrew_g2p: true,
     capabilities: RuntimeCapabilities {
         hebrew: true,
         streaming: true,
@@ -270,7 +364,8 @@ pub const BLUE_VOICES: &[BlueVoice] = &[
     },
 ];
 
-pub const DEFAULT_BLUE_VOICE: &str = "Noa";
+/// The voice a request without one gets: bluetts.com's default, Shira.
+pub const DEFAULT_BLUE_VOICE: &str = "Shira";
 
 /// File stems the 2.5 bundle named its four voices by. A caller that pinned
 /// one keeps landing on the voice of the same name.
@@ -366,10 +461,45 @@ mod tests {
                 "{} would change under an installed app",
                 file.name
             );
-            if file.name != "renikud-plus.onnx" {
-                assert!(file.url.starts_with(blue_model_base_url()), "{}", file.url);
-            }
+            assert!(file.url.starts_with(blue_model_base_url()), "{}", file.url);
         }
+        for variant in [HebrewG2pVariant::Fp32, HebrewG2pVariant::Int8] {
+            let file = variant.model_file();
+            assert!(
+                file.url.contains("/RenikudPlus/resolve/679c56ca449d41873fb8ff7711ddf7563d28198f/"),
+                "{}",
+                file.url
+            );
+            assert_eq!(file.name, variant.file_name());
+        }
+    }
+
+    #[test]
+    fn hebrew_g2p_follows_the_sites_policy() {
+        const GB: u64 = 1024 * 1024 * 1024;
+        assert_eq!(hebrew_g2p_variant(Some(16 * GB), None), HebrewG2pVariant::Fp32);
+        assert_eq!(hebrew_g2p_variant(Some(8 * GB), None), HebrewG2pVariant::Fp32);
+        assert_eq!(hebrew_g2p_variant(Some(4 * GB), None), HebrewG2pVariant::Int8);
+        assert_eq!(hebrew_g2p_variant(Some(2 * GB), None), HebrewG2pVariant::Int8);
+        assert_eq!(hebrew_g2p_variant(None, None), HebrewG2pVariant::Fp32);
+        assert_eq!(hebrew_g2p_variant(Some(16 * GB), Some("int8")), HebrewG2pVariant::Int8);
+        assert_eq!(hebrew_g2p_variant(Some(2 * GB), Some("fp32")), HebrewG2pVariant::Fp32);
+        assert_eq!(hebrew_g2p_variant(Some(2 * GB), Some("bogus")), HebrewG2pVariant::Int8);
+    }
+
+    #[test]
+    fn hebrew_g2p_path_falls_back_to_the_installed_variant() {
+        let dir = std::env::temp_dir().join(format!("mambotts-g2p-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fp32 = dir.join(HebrewG2pVariant::Fp32.file_name());
+        let int8 = dir.join(HebrewG2pVariant::Int8.file_name());
+        assert_eq!(hebrew_g2p_path(&dir, HebrewG2pVariant::Fp32), fp32);
+        std::fs::write(&int8, b"x").unwrap();
+        assert_eq!(hebrew_g2p_path(&dir, HebrewG2pVariant::Fp32), int8);
+        std::fs::write(&fp32, b"x").unwrap();
+        assert_eq!(hebrew_g2p_path(&dir, HebrewG2pVariant::Fp32), fp32);
+        assert_eq!(hebrew_g2p_path(&dir, HebrewG2pVariant::Int8), int8);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -391,7 +521,12 @@ mod tests {
     fn blue_manifest_has_the_complete_hebrew_bundle() {
         let blue = runtime(DEFAULT_RUNTIME_ID).expect("Blue manifest");
         assert!(blue.capabilities.hebrew);
-        assert!(blue.required_files.contains(&"renikud-plus.onnx"));
+        assert!(blue.hebrew_g2p);
         assert_eq!(blue.files.len(), blue.required_files.len());
+        for variant in [HebrewG2pVariant::Fp32, HebrewG2pVariant::Int8] {
+            let files = blue.files_for(variant);
+            assert_eq!(files.len(), blue.files.len() + 1);
+            assert_eq!(files.last().unwrap().name, variant.file_name());
+        }
     }
 }

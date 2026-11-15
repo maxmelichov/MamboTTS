@@ -5,7 +5,18 @@ use tauri::{Emitter, Manager};
 use tokio::io::AsyncWriteExt;
 
 use crate::analytics;
-use mambotts_registry::runtimes;
+use mambotts_registry::{HebrewG2pVariant, hebrew_g2p_variant, runtimes};
+
+/// The RenikudPlus weights this machine runs, by bluetts.com's policy
+/// (backend-policy.js `hebrewG2PVariant`): fp32 on a computer, int8 when it
+/// has 4 GB of memory or less. `MAMBOTTS_HEBREW_G2P=fp32|int8` overrides it.
+pub fn hebrew_g2p_for_this_machine() -> HebrewG2pVariant {
+    let mut system = sysinfo::System::new();
+    system.refresh_memory();
+    let total = system.total_memory();
+    let setting = std::env::var("MAMBOTTS_HEBREW_G2P").ok();
+    hebrew_g2p_variant((total > 0).then_some(total), setting.as_deref())
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ModelBundle {
@@ -127,7 +138,7 @@ pub fn model_bundle_for_runtime(
 fn blue_bundle(app: &tauri::AppHandle) -> Result<ModelBundle, String> {
     let source = runtime_source("blue").ok_or_else(|| "missing Blue source".to_string())?;
     let dir = models_root(app)?.join(&source.directory);
-    let renikud_path = dir.join("renikud-plus.onnx");
+    let renikud_path = dir.join(hebrew_g2p_for_this_machine().file_name());
     // Drop the old thewh1teagle Renikud file so we never load or re-count it.
     let legacy_renikud = dir.join("renikud.onnx");
     if legacy_renikud.is_file() {
@@ -135,7 +146,10 @@ fn blue_bundle(app: &tauri::AppHandle) -> Result<ModelBundle, String> {
     }
     Ok(ModelBundle {
         // Follow the manifest rather than a second copy of the file list, so
-        // a bundle change cannot leave the installed check behind.
+        // a bundle change cannot leave the installed check behind. The list
+        // holds this machine's RenikudPlus variant: an install from before
+        // the fp32 default holds only the int8 file and downloads the fp32
+        // one (the other files are kept when their sizes match).
         installed: source
             .files
             .iter()
@@ -156,6 +170,7 @@ fn blue_bundle(app: &tauri::AppHandle) -> Result<ModelBundle, String> {
 }
 
 fn model_sources() -> ModelSources {
+    let variant = hebrew_g2p_for_this_machine();
     ModelSources {
         runtimes: runtimes()
             .iter()
@@ -163,10 +178,10 @@ fn model_sources() -> ModelSources {
                 id: runtime.id.into(),
                 name: runtime.name.into(),
                 version: runtime.version.into(),
-                size: runtime.size.into(),
+                size: runtime.size_for(variant).into(),
                 description: runtime.description.into(),
                 files: runtime
-                    .files
+                    .files_for(variant)
                     .iter()
                     .map(|file| ModelSourceFile {
                         name: file.name.into(),
@@ -290,6 +305,13 @@ async fn download_runtime_bundle(
         return Err(format!(
             "`{runtime}` download completed, but required files are missing"
         ));
+    }
+    // One RenikudPlus is enough on disk: the variant this machine does not
+    // run goes once the one it runs is in place (the site releases the other
+    // variant the same way).
+    let unused = dir.join(hebrew_g2p_for_this_machine().other().file_name());
+    if unused.is_file() {
+        let _ = tokio::fs::remove_file(&unused).await;
     }
     Ok(bundle)
 }

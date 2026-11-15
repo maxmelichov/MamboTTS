@@ -84,7 +84,8 @@ pub struct SpeechBody {
     #[serde(default)]
     pub voice_reference: String,
     /// A voice from /v1/voices, in any letter case (`Noa`, `noa`). Older ids
-    /// such as `libri_male_6209` still resolve. Empty means `Noa`.
+    /// such as `libri_male_6209` still resolve. Empty means `Shira`, the
+    /// default voice of bluetts.com.
     #[serde(default)]
     pub voice: String,
     /// `wav` (the default) or `mp3` (128 kbps mono). Streamed responses are
@@ -105,6 +106,12 @@ pub struct SpeechBody {
     /// Requires `stream: true`.
     #[serde(default)]
     pub input_is_phonemes: bool,
+    /// The input is pointed Hebrew whose points were chosen on purpose (the
+    /// app's niqqud editor): RenikudPlus reads them. Off by default, where
+    /// points are dropped and the bare letters read, as bluetts.com and the
+    /// BlueV3 reference read any pointed text.
+    #[serde(default)]
+    pub niqqud: bool,
     /// The engine's speed, as bluetts.com sends it: 1.0 is the release's own
     /// pace, below one is slower. Zero or absent means the site's default for
     /// the language: 0.9 for Hebrew, 0.95 for the others.
@@ -137,6 +144,12 @@ pub struct PhonemizeBody {
     /// Same values as the speech request's `language`.
     #[serde(default)]
     pub language: String,
+    /// The input is pointed Hebrew whose points were chosen on purpose (the
+    /// app's niqqud editor): RenikudPlus reads them. Off by default, where
+    /// points are dropped and the bare letters read, as bluetts.com and the
+    /// BlueV3 reference read any pointed text.
+    #[serde(default)]
+    pub niqqud: bool,
 }
 
 /// Diacritization only ever applies to Hebrew, so unlike [`PhonemizeBody`]

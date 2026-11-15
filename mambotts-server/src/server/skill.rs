@@ -18,7 +18,7 @@ Recommended flow:
 1. Call GET /health.
 2. If loaded=false, call GET /v1/models/sources to discover runtimes, model download URLs, and default MamboTTS Desktop model locations.
 3. Check whether the model files already exist in MamboTTS Desktop's default model directory.
-4. Call POST /v1/models/load with `runtime`, `model_path`, and `renikud_path` pointing at `renikud-plus.onnx`. Optional: `speaker`, `target_speaker`.
+4. Call POST /v1/models/load with `runtime`, `model_path`, and `renikud_path` pointing at the bundle's RenikudPlus (`renikud-plus-fp32.onnx`, or the int8 `renikud-plus.onnx` on small machines). Optional: `speaker`, `target_speaker`.
 5. Optional IPA preview: POST /v1/phonemize, then edit phonemes client-side.
 6. Call POST /v1/audio/speech to synthesize speech. For edited IPA, set `input_is_phonemes: true` and `stream: true` (phoneme input requires streaming), and send the IPA's language: IPA has no script to detect, so with `auto` only a leading `<xx>` tag (for example `<he>ʃalˈom</he>`) identifies it, and untagged IPA is read as English.
 7. Non-streaming responses return a standalone WAV (`stream: false`). Streaming responses use MamboTTS binary frames.
@@ -35,7 +35,7 @@ curl {{base_url}}/v1/models/sources
 
 curl -X POST {{base_url}}/v1/models/load \
   -H 'Content-Type: application/json' \
-  -d '{"runtime":"blue","model_path":"/path/to/bluev3-3.0.0","renikud_path":"/path/to/bluev3-3.0.0/renikud-plus.onnx","speaker":0,"target_speaker":0}'
+  -d '{"runtime":"blue","model_path":"/path/to/bluev3-3.0.0","renikud_path":"/path/to/bluev3-3.0.0/renikud-plus-fp32.onnx","speaker":0,"target_speaker":0}'
 
 curl -X POST {{base_url}}/v1/phonemize \
   -H 'Content-Type: application/json' \
@@ -44,13 +44,13 @@ curl -X POST {{base_url}}/v1/phonemize \
 curl -X POST {{base_url}}/v1/audio/speech \
   -H 'Content-Type: application/json' \
   -o speech.wav \
-  -d '{"input":"שלום מממבו רמבו","language":"auto","voice":"Noa","response_format":"wav","stream":false}'
+  -d '{"input":"שלום מממבו רמבו","language":"auto","voice":"Shira","response_format":"wav","stream":false}'
 
 # Same, as a 128 kbps MP3 (about a quarter of the WAV size; not for stream=true)
 curl -X POST {{base_url}}/v1/audio/speech \
   -H 'Content-Type: application/json' \
   -o speech.mp3 \
-  -d '{"input":"שלום מממבו רמבו","language":"auto","voice":"Noa","response_format":"mp3"}'
+  -d '{"input":"שלום מממבו רמבו","language":"auto","voice":"Shira","response_format":"mp3"}'
 ~~~
 
 Useful endpoints for the desktop Phoneme editor:

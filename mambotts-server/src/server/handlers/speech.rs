@@ -66,9 +66,12 @@ pub async fn phonemize(
         Ok(language) => language,
         Err(response) => return *response,
     };
-    let PhonemizeBody { input, .. } = body;
+    let PhonemizeBody { input, niqqud, .. } = body;
     match server
-        .with_engine(move |ctx| ctx.phonemize(&input, &language))
+        .with_engine(move |ctx| {
+            ctx.set_honor_niqqud(niqqud);
+            ctx.phonemize(&input, &language)
+        })
         .await
     {
         Ok(phonemes) => Json(PhonemizeResponse { phonemes }).into_response(),
@@ -213,12 +216,16 @@ pub async fn speech(
     // If this handler is dropped (the connection went away), stop the work.
     let _cancel_on_drop = cancel.cancel_on_drop();
     let SpeechBody {
-        input, language, ..
+        input,
+        language,
+        niqqud,
+        ..
     } = body;
     let result = server
         .with_engine(move |ctx| {
             let _generation = generation;
             cancel.check()?;
+            ctx.set_honor_niqqud(niqqud);
             let sample_rate = ctx.sample_rate();
             let audio = ctx.synthesize_streaming(
                 &input,
@@ -353,6 +360,7 @@ fn streaming_wav_response(server: SharedServer, body: SpeechBody) -> Response {
                         .map_err(|_| anyhow::Error::from(Cancelled))
                 };
                 let voice = (!voice.is_empty()).then_some(voice.as_str());
+                ctx.set_honor_niqqud(body.niqqud);
                 let audio = if body.input_is_phonemes {
                     ctx.synthesize_phonemes_streaming(
                         &body.input,
