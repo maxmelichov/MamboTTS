@@ -26,10 +26,16 @@
  * encode, and the int16 WAV itself against MamboTTS's float audio encoded the
  * page's way).
  *
- * Russian: the site reads Russian with its own Russian-G2P port, MamboTTS
- * with polyg2p's Russian (the BlueV3 reference's); the phonemes differ by
- * design, so a Russian case compares the prepared text and its sentence
- * units only.
+ * Russian: MamboTTS reads Russian with polyg2p's Russian (the BlueV3
+ * reference's). A site that does too (its worker loads polyg2p's ru_*.lex
+ * tiers and js/g2p/russian.js, its older Russian-G2P port, is gone) is
+ * compared at every stage like the other languages. Against an older site the
+ * phonemes differ by design, so a Russian case compares the prepared text and
+ * its sentence units only, and says so. SITE_RU=polyg2p|legacy overrides the
+ * detection.
+ *
+ * Steps: a case may set "steps" (the Quality slider, 5-16); both sides run
+ * that many flow steps (default 8).
  *
  * Usage (from the repo root):
  *   BLUETTS_SITE=<LightBlue-site checkout> \
@@ -98,6 +104,11 @@ const pick = (re, what) => {
 };
 const ORT_URL_VERSION = pick(/const ORT_VERSION = '([^']+)'/, 'ORT_VERSION');
 const MODEL_REV = pick(/const MODEL_REV = '([0-9a-f]+)'/, 'MODEL_REV');
+// Which Russian G2P the site runs (see the header).
+const SITE_RU_POLYG2P = process.env.SITE_RU
+    ? process.env.SITE_RU === 'polyg2p'
+    : !fs.existsSync(path.join(SITE, 'js', 'g2p', 'russian.js')) && workerSrc.includes('ru_accents.lex');
+console.log(`site-parity: the site reads Russian with ${SITE_RU_POLYG2P ? "polyg2p's Russian: compared at every stage" : 'its own Russian-G2P port: prepared text and sentence units only'}`);
 const { HEBREW_MODELS } = await import(pathToFileURL(path.join(SITE, 'js', 'g2p', 'hebrew.js')).href);
 if (fs.statSync(RENIKUD).size !== HEBREW_MODELS.fp32.bytes) {
     throw new Error(`site-parity: ${RENIKUD} is not the site's fp32 RenikudPlus (${HEBREW_MODELS.fp32.bytes} bytes)`);
@@ -192,7 +203,11 @@ if (mambo.renikud && ready.env && ready.env.hebrewG2P && ready.env.hebrewG2P.var
 
 // The page's request (js/script.js snapshotRequest, js/browser-tts.js synthesize).
 const DEFAULT_SPEED = { he: 0.9 };
-const VOICE_MAP = { Shira: 'shira', Tamar: 'tamar', Daniel: 'daniel', Adam: 'adam', Noa: 'shira', Lily: 'tamar' };
+// The release's fifteen voices, each its own file (no aliases).
+const VOICE_MAP = Object.fromEntries(
+    ['Maya', 'Noa', 'Lily', 'Tamar', 'Shira', 'Yael', 'Emma', 'Sara', 'Adam', 'Daniel', 'David', 'Jonathan', 'Ethan', 'Michael', 'Ariel']
+        .map((name) => [name, name.toLowerCase()]),
+);
 
 // ── compare ─────────────────────────────────────────────────────────────────
 
@@ -232,16 +247,16 @@ for (const m of mambo.cases.filter((c) => c.id.includes(filter))) {
     const heNormalize = lang === 'he' ? async (t) => (await hebnorm()).normalize(t) : null;
     const prepared = await Text.prepareText(m.text, lang, heNormalize);
     if (prepared !== m.prepared) fail(`prepared:\n       mambo ${JSON.stringify(m.prepared)}\n       site  ${JSON.stringify(prepared)}`);
-    if (lang === 'ru') {
+    if (lang === 'ru' && !SITE_RU_POLYG2P) {
         const units = Text.splitSentences(prepared);
         if (units.length !== m.units.length) fail(`Russian sentence units: MamboTTS ${m.units.length}, site ${units.length}`);
-        lines.push('  note Russian: G2P differs by design (site Russian-G2P, MamboTTS polyg2p ru); prepared text and sentence units compared');
+        lines.push('  note Russian: the site still has its own Russian-G2P (MamboTTS polyg2p ru); prepared text and sentence units compared only');
         report.push({ id: m.id, ok: !lines.some((l) => l.includes('FAIL')), lines });
         if (lines.some((l) => l.includes('FAIL'))) failures++;
         continue;
     }
     const { msg, chunks: streamed } = await call('synthesize', {
-        text: m.text, lang, voice: VOICE_MAP[m.voice], steps: 8, speed, cfgScale: 4.0, stream: true,
+        text: m.text, lang, voice: VOICE_MAP[m.voice], steps: m.steps ?? 8, speed, cfgScale: 4.0, stream: true,
     }, ['audio']);
     const sc = msg.chunks;
     if (sc.length !== m.chunks.length) fail(`chunk count: MamboTTS ${m.chunks.length}, site ${sc.length}`);
@@ -274,7 +289,7 @@ for (const m of mambo.cases.filter((c) => c.id.includes(filter))) {
     else fail(`WAV length: site ${wav.length}, MamboTTS ${audio.length}`);
     if (pcmDiff > Math.ceil(MAX_ABS * 32767)) fail(`int16 WAV: max |diff| ${pcmDiff} LSB`);
     const durs = m.chunks.map((c) => c.duration.toFixed(3)).join(' + ');
-    lines.unshift(`  ${n} chunk(s), durations ${durs} s, ${audio.length} samples, audio max |diff| ${Number.isFinite(d.maxAbs) ? d.maxAbs : 'n/a'}`);
+    lines.unshift(`  ${m.steps ?? 8} steps, ${n} chunk(s), durations ${durs} s, ${audio.length} samples, audio max |diff| ${Number.isFinite(d.maxAbs) ? d.maxAbs : 'n/a'}`);
     const ok = !lines.some((l) => l.includes('FAIL'));
     if (!ok) failures++;
     report.push({ id: m.id, ok, lines });
