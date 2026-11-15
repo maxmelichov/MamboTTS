@@ -113,16 +113,16 @@ impl BlueTtsEngine {
 
     /// Synthesizes text, returning mono `f32` samples.
     ///
-    /// `speed` is a pace multiplier, as in the desktop app: 1.0 is the
-    /// natural pace for the language, below one is slower.
-    #[pyo3(signature = (text, voice = None, language = "auto", speed = 1.0, cfg_scale = 4.0, total_step = 8))]
+    /// `speed` is the engine's speed, as on bluetts.com; `None` is the
+    /// site's default for the language (0.9 Hebrew, 0.95 the others).
+    #[pyo3(signature = (text, voice = None, language = "auto", speed = None, cfg_scale = 4.0, total_step = 8))]
     fn synthesize(
         &self,
         py: Python<'_>,
         text: &str,
         voice: Option<&str>,
         language: &str,
-        speed: f32,
+        speed: Option<f32>,
         cfg_scale: f32,
         total_step: usize,
     ) -> PyResult<Vec<f32>> {
@@ -143,14 +143,14 @@ impl BlueTtsEngine {
     ///
     /// With `language="auto"` the language comes from a leading tag such as
     /// `<he>`, which is how `phonemize` returns its output, else English.
-    #[pyo3(signature = (phonemes, voice = None, language = "auto", speed = 1.0, cfg_scale = 4.0, total_step = 8))]
+    #[pyo3(signature = (phonemes, voice = None, language = "auto", speed = None, cfg_scale = 4.0, total_step = 8))]
     fn synthesize_phonemes(
         &self,
         py: Python<'_>,
         phonemes: &str,
         voice: Option<&str>,
         language: &str,
-        speed: f32,
+        speed: Option<f32>,
         cfg_scale: f32,
         total_step: usize,
     ) -> PyResult<Vec<f32>> {
@@ -201,14 +201,16 @@ impl Engine {
 
 fn options(
     language: &str,
-    speed: f32,
+    speed: Option<f32>,
     cfg_scale: f32,
     total_step: usize,
 ) -> PyResult<SynthesisOptions> {
-    if !(speed.is_finite() && speed > 0.0) {
-        return Err(PyValueError::new_err(format!(
-            "speed must be a positive number, got {speed}"
-        )));
+    if let Some(speed) = speed {
+        if !(speed.is_finite() && speed > 0.0) {
+            return Err(PyValueError::new_err(format!(
+                "speed must be a positive number, got {speed}"
+            )));
+        }
     }
     if total_step == 0 {
         return Err(PyValueError::new_err("total_step must be at least 1"));
@@ -217,13 +219,14 @@ fn options(
         lang: language.to_owned(),
         total_step,
         cfg_scale,
-        speed: speed * natural_pace(language),
+        speed: speed.unwrap_or_else(|| default_speed(language)),
     })
 }
 
-/// What a speed of 1.0 means for a language, matching the desktop sidecar:
-/// the release's own 1.0 reads a little fast, Hebrew most of all.
-fn natural_pace(language: &str) -> f32 {
+/// bluetts.com's default speed for a language, used when none is given: the
+/// release's own 1.0 reads a little fast, Hebrew most of all. A given speed
+/// is the engine's speed as it is, as on the site.
+fn default_speed(language: &str) -> f32 {
     if language == "he" {
         0.9
     } else {

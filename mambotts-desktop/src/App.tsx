@@ -10,14 +10,18 @@ import { HomePage } from "./pages/home/HomePage";
 import { OnboardPage } from "./pages/OnboardPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { ModelBundle, StudioState } from "./lib/types";
-import { SPEED_MAX, SPEED_MIN } from "./pages/home/GenerationControls";
+import { SPEED_MAX, SPEED_MIN, SPEED_STORAGE_KEY } from "./pages/home/GenerationControls";
 import { sampleText } from "./lib/constants";
 
-/// Keeps a stored speed inside the range the slider offers. The bounds have
-/// moved once already, and a value saved under the old ones would otherwise
-/// outlive them and keep asking for a pace the app no longer has.
-function clampSpeed(speed: number): number {
-  if (!Number.isFinite(speed)) return 1;
+/// The speed someone set on the slider, kept inside its range, or null when
+/// they never moved it (the language's default then, as on bluetts.com).
+/// "speech-speed" held a multiplier on top of that default and is not read:
+/// carried over, 0.95 would have meant 0.855 for Hebrew.
+function storedSpeed(): number | null {
+  const raw = localStorage.getItem(SPEED_STORAGE_KEY);
+  if (raw === null) return null;
+  const speed = Number(raw);
+  if (!Number.isFinite(speed) || speed <= 0) return null;
   return Math.min(SPEED_MAX, Math.max(SPEED_MIN, speed));
 }
 
@@ -40,11 +44,8 @@ function App() {
     blueVoiceIds: [],
     speaker: 0,
     targetSpeaker: 0,
-    // A pace someone chose once is a preference, not a per-utterance
-    // choice, so it outlives the session. 1.0 is the shipped pace.
-    // A speed saved under the older, wider slider would otherwise outlive it and
-    // keep asking for a pace the app no longer offers.
-    speed: clampSpeed(Number(localStorage.getItem("speech-speed")) || 1),
+    // A speed someone chose once is a preference, so it outlives the session.
+    speed: storedSpeed(),
     audioPath: "",
     streamChunkUrls: [],
     generation: 0,

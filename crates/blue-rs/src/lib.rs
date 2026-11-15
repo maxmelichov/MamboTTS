@@ -5,8 +5,8 @@
 //! step: the text prepared as the site prepares it, G2P over the whole text
 //! (Russian a sentence at a time), the phonemes cut into chunks of at most
 //! 300 ids a sentence each, ids wrapped in language tags, the predicted
-//! duration (blended toward a fixed pace only for inline `<xx>` spans)
-//! divided by the speed in float32, the latent length and mask as the site
+//! duration as it is (no pace blend, inline `<xx>` spans included) divided
+//! by the speed in float32, the latent length and mask as the site
 //! rounds them, numpy's `default_rng(42)` noise for every chunk, classifier
 //! free guidance inside the vector estimator, the vocoder fed the normalised
 //! latent, a peak limit of 0.95 per chunk, 0.1 s between chunks and no trim.
@@ -37,7 +37,7 @@ use serde_json::Value;
 
 use crate::{
     chunking::{pack_chunks, silence_samples},
-    handling::{has_inline_lang, prepare_text},
+    handling::prepare_text,
     phonemize::{Language, Phonemizer, strip_lang_tags},
     text::Tokenizer,
 };
@@ -49,11 +49,6 @@ const DEFAULT_LATENT_DIM: usize = 24;
 /// The noise seed of every chunk: the site (and blue_onnx) start each
 /// chunk's flow from a fresh `np.random.default_rng(42)`.
 pub const SEED: u64 = 42;
-/// blue_onnx's mixed-language pace blend: applied when the prepared text has
-/// inline `<xx>…</xx>` spans, 0 otherwise.
-const DEFAULT_MIXED_PACE_BLEND: f64 = 0.25;
-/// The fixed pace (seconds a token) that blend pulls toward.
-const DURATION_PACE_DPT_REF: f64 = 0.0625;
 
 #[derive(Clone, Debug)]
 pub struct SynthesisOptions {
@@ -150,7 +145,7 @@ pub struct ChunkInfo {
     pub tokens: usize,
     /// The duration predictor's seconds.
     pub raw_duration: f32,
-    /// Seconds after the pace blend and the speed.
+    /// Seconds after the speed.
     pub duration: f32,
     /// Latent frames (`tLat`).
     pub frames: usize,
@@ -169,8 +164,6 @@ pub struct TextPlan {
     pub phonemes: Vec<String>,
     /// The chunks, each at most the release's token budget.
     pub chunks: Vec<String>,
-    /// The pace blend every chunk gets (0.25 with inline spans, else 0).
-    pub pace_blend: f64,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -307,7 +300,7 @@ impl BlueTts {
 
     /// Phonemes a caller wrote: any routing tags dropped (the chunk is
     /// tagged with the request's language), then cut into chunks as the text
-    /// path cuts its phonemes. No pace blend, as the site's phoneme path.
+    /// path cuts its phonemes.
     fn create_seeded_streaming<F>(
         &mut self,
         phonemes: &str,
@@ -322,12 +315,12 @@ impl BlueTts {
         let opts = canonical_options(opts)?;
         let phonemes = strip_lang_tags(phonemes);
         let chunks = pack_chunks([phonemes.as_str()], &opts.lang, self.release.max_chunk_tokens);
-        self.speak_chunks(&chunks, style, &opts, 0.0, seed, on_chunk)
+        self.speak_chunks(&chunks, style, &opts, seed, on_chunk)
     }
 
     /// The site's front end over `text`: `prepareText`, G2P over the whole
     /// prepared text (Russian a sentence at a time), the phonemes cut into
-    /// chunks, and the pace blend the request gets.
+    /// chunks.
     pub fn plan_text(
         &self,
         phonemizer: &mut Phonemizer,
@@ -336,12 +329,6 @@ impl BlueTts {
     ) -> Result<TextPlan> {
         let language = Language::try_from(lang)?;
         let prepared = prepare_text(text, language.code());
-        // Decided on the text as prepared, as blue_onnx decides it.
-        let pace_blend = if has_inline_lang(&prepared) {
-            DEFAULT_MIXED_PACE_BLEND
-        } else {
-            0.0
-        };
         let phonemes = phonemizer.phonemize_units(&prepared, language)?;
         if phonemes.iter().all(String::is_empty) && prepared.chars().any(char::is_alphabetic) {
             // Letters that came back as nothing are a G2P failure, not
@@ -360,7 +347,6 @@ impl BlueTts {
             prepared,
             phonemes,
             chunks,
-            pace_blend,
         })
     }
 
@@ -408,7 +394,7 @@ impl BlueTts {
     {
         let opts = canonical_options(opts)?;
         let plan = self.plan_text(phonemizer, text, &opts.lang)?;
-        self.speak_chunks(&plan.chunks, style, &opts, plan.pace_blend, SEED, on_chunk)
+        self.speak_chunks(&plan.chunks, style, &opts, SEED, on_chunk)
     }
 
     /// Every chunk through the graphs, in order, each after the join
@@ -418,7 +404,6 @@ impl BlueTts {
         chunks: &[String],
         style: &VoiceStyle,
         opts: &SynthesisOptions,
-        pace_blend: f64,
         seed: u64,
         mut on_chunk: F,
     ) -> Result<Vec<f32>>
@@ -435,7 +420,7 @@ impl BlueTts {
             if idx != 0 {
                 piece.resize(gap, 0.0);
             }
-            let spoken = self.synthesize_chunk(chunk, style, opts, pace_blend, seed)?;
+            let spoken = self.synthesize_chunk(chunk, style, opts, seed)?;
             ledger.spoken_chunk(spoken.requested_samples, spoken.samples.len());
             piece.extend(spoken.samples);
             on_chunk(&piece)?;
@@ -452,7 +437,6 @@ impl BlueTts {
         phonemes: &str,
         style: &VoiceStyle,
         opts: &SynthesisOptions,
-        pace_blend: f64,
         seed: u64,
     ) -> Result<ChunkAudio> {
         let (text_ids, text_mask) = self.tokenizer.encode_batch(&[phonemes], &[&opts.lang])?;
@@ -474,7 +458,7 @@ impl BlueTts {
         if !raw_duration.is_finite() {
             bail!("the duration predictor returned {raw_duration} s for this text");
         }
-        let duration = chunk_duration(raw_duration, n_text, pace_blend, opts.speed);
+        let duration = chunk_duration(raw_duration, opts.speed);
 
         let text_emb = {
             let out = self.text_encoder.run(ort::inputs! {
@@ -561,17 +545,11 @@ impl BlueTts {
     }
 }
 
-/// `blend_duration_pace` and the speed, as the site computes them: seconds
-/// a token pulled part of the way toward a fixed pace (float64, then
-/// float32), then divided by the speed in float32.
-fn chunk_duration(raw: f32, tokens: usize, pace_blend: f64, speed: f32) -> f32 {
-    let mut duration = raw;
-    if pace_blend > 0.0 {
-        let b = pace_blend.clamp(0.0, 1.0);
-        let n = tokens as f64;
-        duration = (((1.0 - b) * (f64::from(raw) / n) + b * DURATION_PACE_DPT_REF) * n) as f32;
-    }
-    duration / speed.max(1e-6)
+/// The model's own duration divided by the speed in float32, as the site's
+/// `chunkFront` computes it: release bundles blend no pace, inline
+/// `<xx>…</xx>` spans included (BlueTTS a6cc157).
+fn chunk_duration(raw: f32, speed: f32) -> f32 {
+    raw / speed.max(1e-6)
 }
 
 /// `opts` with its language code made canonical (`ge` is `de`, `EN` is
@@ -902,10 +880,10 @@ mod tests {
     }
 
     #[test]
-    fn the_duration_is_blended_only_when_asked_and_divided_in_float32() {
-        assert_eq!(chunk_duration(2.0, 40, 0.0, 0.9), 2.0f32 / 0.9f32);
-        // 0.75 * 2.0 + 0.25 * 0.0625 * 40 = 2.125
-        assert_eq!(chunk_duration(2.0, 40, 0.25, 1.0), 2.125);
+    fn the_duration_is_the_models_divided_by_speed_in_float32() {
+        assert_eq!(chunk_duration(2.0, 0.9), 2.0f32 / 0.9f32);
+        assert_eq!(chunk_duration(2.0, 1.0), 2.0);
+        assert_eq!(chunk_duration(2.0, 0.0), 2.0f32 / 1e-6f32);
     }
 
     #[test]

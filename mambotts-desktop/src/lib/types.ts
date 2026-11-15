@@ -68,7 +68,8 @@ export type StudioState = {
   blueVoiceIds: string[];
   speaker: number;
   targetSpeaker: number;
-  speed: number;
+  /** The engine speed the slider set, or null for the language default (bluetts.com's). */
+  speed: number | null;
   audioPath: string;
   /** In-memory blob URLs of the streamed chunks, released once the finished WAV takes over. */
   streamChunkUrls: string[];

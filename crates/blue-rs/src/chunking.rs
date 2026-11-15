@@ -7,6 +7,10 @@ use crate::phonemize::strip_lang_tags;
 
 /// A sentence of fewer words than this is merged into the next one.
 pub(crate) const FRAGMENT_WORDS: usize = 3;
+/// `chunk_text`'s `max_len`: a chunk's code points, tags not counted.
+pub(crate) const MAX_CHUNK_CHARS: usize = 300;
+/// `_CUT_MARKS`: where a sentence too long for a chunk is cut first.
+const CUT_MARKS: &str = ",;:";
 
 /// Samples of `seconds` of silence, as the site counts a pause
 /// (`Math.trunc(seconds * sampleRate)`).
@@ -14,7 +18,7 @@ pub(crate) fn silence_samples(sample_rate: u32, seconds: f64) -> usize {
     (seconds.max(0.0) * f64::from(sample_rate)).trunc() as usize
 }
 
-fn is_py_word_char(c: char) -> bool {
+pub(crate) fn is_py_word_char(c: char) -> bool {
     let mut buf = [0u8; 4];
     regex!(r"^[\p{L}\p{N}_]$").is_match(c.encode_utf8(&mut buf))
 }
@@ -82,8 +86,8 @@ pub(crate) fn tagged_length(ipa: &str, lang: &str) -> usize {
 
 /// `ChunkPacker` in `sentence` mode: one sentence a chunk; a sentence of
 /// fewer than [`FRAGMENT_WORDS`] words ("Hi.") joins the next one when both
-/// fit. A sentence too long alone is cut at its last comma that fits, else
-/// its last space, else at the last code point that fits.
+/// fit. A sentence too long alone is cut as `chunk_text` cuts it
+/// ([`ChunkPacker::cut`]).
 pub(crate) struct ChunkPacker {
     lang: String,
     max_ids: usize,
@@ -99,30 +103,39 @@ impl ChunkPacker {
         }
     }
 
+    /// `chunk_text`'s `ok()`: at most [`MAX_CHUNK_CHARS`] code points, and
+    /// its ids within the window.
     fn fits(&self, s: &str) -> bool {
-        tagged_length(s, &self.lang) <= self.max_ids
+        s.chars().count() <= MAX_CHUNK_CHARS && tagged_length(s, &self.lang) <= self.max_ids
     }
 
-    /// A sentence longer than the window, in pieces that fit.
+    /// A sentence longer than the window, in pieces that fit (`_cut_sentence`,
+    /// BlueTTS a6cc157): after the last comma, semicolon or colon whose piece
+    /// fits, else at the last space whose piece fits, past a quarter of what
+    /// is left; failing that the same before the quarter; failing that at the
+    /// last code point that fits. A mark stays with its piece, a space goes.
     fn cut(&self, s: &str) -> Vec<String> {
         let mut out = Vec::new();
         let mut cps: Vec<char> = js_trim(s).chars().collect();
         let joined = |cps: &[char]| cps.iter().collect::<String>();
         while !cps.is_empty() && !self.fits(&joined(&cps)) {
             let lo = cps.len() / 4;
-            let at = |ch: char| -> Option<usize> {
-                for k in (lo + 1..cps.len()).rev() {
-                    if cps[k] != ch {
+            let last = |marks: &str, floor: usize| -> Option<usize> {
+                for k in (floor + 1..cps.len()).rev() {
+                    if !marks.contains(cps[k]) {
                         continue;
                     }
-                    let n = if ch == ',' { k + 1 } else { k };
+                    let n = if cps[k] == ' ' { k } else { k + 1 };
                     if self.fits(&joined(&cps[..n])) {
                         return Some(n);
                     }
                 }
                 None
             };
-            let n = match at(',').or_else(|| at(' ')) {
+            let found = [(CUT_MARKS, lo), (" ", lo), (CUT_MARKS, 0), (" ", 0)]
+                .into_iter()
+                .find_map(|(marks, floor)| last(marks, floor));
+            let n = match found {
                 Some(n) => n,
                 None => {
                     let mut n = cps.len() - 1;
@@ -262,6 +275,26 @@ mod tests {
             assert!(tagged_length(chunk, "en") <= 300, "{chunk}");
         }
         assert!(chunks[0].ends_with(','), "{chunks:?}");
+    }
+
+    #[test]
+    fn a_long_sentence_is_cut_after_a_semicolon_or_colon_past_a_quarter() {
+        let long = format!("{}; {}: {}.", "a ".repeat(60).trim(), "b ".repeat(60).trim(), "c ".repeat(60).trim());
+        let chunks = pack_chunks([long.as_str()], "en", 300);
+        assert_eq!(chunks.len(), 2, "{chunks:?}");
+        assert!(chunks[0].ends_with(':'), "{chunks:?}");
+        assert!(chunks[1].starts_with('c'), "{chunks:?}");
+    }
+
+    #[test]
+    fn a_chunk_holds_at_most_300_code_points() {
+        // Few ids would fit, but not in 300 code points.
+        let long = "a ".repeat(200);
+        let chunks = pack_chunks([long.trim()], "en", 10_000);
+        assert!(chunks.len() >= 2, "{chunks:?}");
+        for chunk in &chunks {
+            assert!(chunk.chars().count() <= MAX_CHUNK_CHARS, "{chunk}");
+        }
     }
 
     #[test]

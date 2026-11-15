@@ -121,10 +121,76 @@ pub(crate) fn inline_lang_spans(text: &str) -> Vec<InlineSpan> {
         .collect()
 }
 
-/// `hasInlineLang`: the text has an inline `<xx>…</xx>` span, which turns on
-/// blue_onnx's mixed-language pace blend.
+/// `hasInlineLang`: the text has an inline `<xx>…</xx>` span, which
+/// `phonemize` reads span by span.
 pub fn has_inline_lang(text: &str) -> bool {
     !inline_lang_spans(text).is_empty()
+}
+
+// ── tag_latin_runs (blue_onnx/ipa_text.py, BlueTTS a6cc157) ─────────────────
+
+/// Python's `\d`: any decimal digit.
+const PY_D: &str = r"\p{Nd}";
+/// Python's `\s` (`str.isspace`), as the site spells it.
+const PY_S: &str = r"[\t\n\x0B\x0C\r \x1C-\x1F\x{85}\x{a0}\x{1680}\x{2000}-\x{200a}\x{2028}\x{2029}\x{202f}\x{205f}\x{3000}]";
+/// Latin letters, with the Latin-1 and Extended-A/B accented ones.
+const LATIN_L: &str = r"A-Za-z\x{c0}-\x{d6}\x{d8}-\x{f6}\x{f8}-\x{24f}";
+
+/// `LATIN_RUN_RE`: a Latin-script word (apostrophes, hyphens and dots
+/// inside it, digits glued on), then the words and numbers after it across
+/// whitespace.
+fn latin_run_re() -> &'static fancy_regex::Regex {
+    fregex!({
+        let word = format!(
+            r"{PY_D}*[{LATIN_L}][{LATIN_L}{PY_D}]*(?:['’.\-][{LATIN_L}{PY_D}]+)*"
+        );
+        format!(
+            r"{word}(?:{PY_S}+(?:{word}|{PY_D}+(?:[.,]{PY_D}+)*(?![{LATIN_L}{PY_D}])))*"
+        )
+    })
+}
+
+/// `SPAN_OR_TAG_RE`: a tag pair (kept whole) or a stray tag.
+fn span_or_tag_re() -> &'static fancy_regex::Regex {
+    fregex!(format!(r"<([{PY_W}]+)>[\s\S]*?</\1>|</?[{PY_W}]+>"))
+}
+
+/// `englishRun`: a Latin run as English polyg2p reads it, accents dropped
+/// ("café" as "cafe") and an all-capitals tail after a lower-case letter
+/// apart ("BlueTTS" as "Blue TTS", "ChatGPT" as "Chat GPT").
+fn english_run(run: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    let decomposed: String = run.nfd().collect();
+    let bare = regex!(r"\p{Mn}").replace_all(&decomposed, "");
+    fregex!(r"(?<=[a-z])(?=[A-Z]{2,}(?![A-Za-z]))")
+        .replace_all(&bare, " ")
+        .into_owned()
+}
+
+/// `tagLatinRuns`: in Hebrew text each run of Latin-script words goes in
+/// `<en>…</en>`, so English polyg2p reads it. Existing spans and stray tags
+/// are left alone, and a run is tagged whether or not the text has a Hebrew
+/// letter. Other languages: as is.
+pub(crate) fn tag_latin_runs(text: &str, lang: &str) -> String {
+    if canonical_lang(lang) != "he" {
+        return text.to_owned();
+    }
+    let tag = |t: &str| -> String {
+        latin_run_re()
+            .replace_all(t, |caps: &fancy_regex::Captures| {
+                format!("<en>{}</en>", english_run(&caps[0]))
+            })
+            .into_owned()
+    };
+    let mut out = String::new();
+    let mut last = 0;
+    for m in span_or_tag_re().find_iter(text).filter_map(Result::ok) {
+        out.push_str(&tag(&text[last..m.start()]));
+        out.push_str(m.as_str());
+        last = m.end();
+    }
+    out.push_str(&tag(&text[last..]));
+    out
 }
 
 // ── prepareTextForSynthesis (text_norm.py), for Russian ─────────────────────
@@ -821,5 +887,25 @@ mod tests {
         assert!(has_inline_lang("<b>bold</b>"));
         assert!(!has_inline_lang("<en>hello</he>"));
         assert!(!has_inline_lang("a < b > c"));
+    }
+
+    #[test]
+    fn latin_runs_in_hebrew_are_tagged_as_the_site_tags_them() {
+        for (text, expected) in [
+            ("אני משתמש ב-ChatGPT כל יום", "אני משתמש ב-<en>Chat GPT</en> כל יום"),
+            ("קניתי iPhone 15 Pro חדש", "קניתי <en>iPhone 15 Pro</en> חדש"),
+            ("יש Wi-Fi בבית", "יש <en>Wi-Fi</en> בבית"),
+            ("שתיתי café הבוקר", "שתיתי <en>cafe</en> הבוקר"),
+            ("נסו את BlueTTS.", "נסו את <en>Blue TTS</en>."),
+            ("גלשו ל-www.google.com עכשיו", "גלשו ל-<en>www.google.com</en> עכשיו"),
+            ("קובץ MP3 ו-GPT-4", "קובץ <en>MP3</en> ו-<en>GPT-4</en>"),
+            ("Hello world.", "<en>Hello world</en>."),
+            ("גרסה v2 1.5x", "גרסה <en>v2 1</en>.<en>5x</en>"),
+            ("הוא אמר <en>hello there</en> ואז OK", "הוא אמר <en>hello there</en> ואז <en>OK</en>"),
+            ("<b>bold</b> text", "<b>bold</b> <en>text</en>"),
+        ] {
+            assert_eq!(tag_latin_runs(text, "he"), expected, "{text}");
+        }
+        assert_eq!(tag_latin_runs("Hello world.", "en"), "Hello world.");
     }
 }

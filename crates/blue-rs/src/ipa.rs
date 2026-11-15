@@ -109,6 +109,13 @@ pub(crate) fn strip_language_tags(ipa: &str) -> String {
 /// affricate ligatures, and a final `.` when the text has no closing mark.
 /// Hebrew writes `r` as `ʁ`, `g` as `ɡ` and keeps /ts/ as two letters.
 pub(crate) fn normalize_ipa(text: &str, lang: &str) -> String {
+    normalize_ipa_with(text, lang, true)
+}
+
+/// [`normalize_ipa`], with the final `.` only when `final_period` (the
+/// site's `normalizeIpa(text, lang, finalPeriod)`; an inline span's IPA view
+/// is taken without it).
+pub(crate) fn normalize_ipa_with(text: &str, lang: &str, final_period: bool) -> String {
     let mut text: String = text.trim_matches(is_python_space).nfd().collect();
     text = emoji().replace_all(&text, "").into_owned();
     for (from, to) in [
@@ -155,7 +162,7 @@ pub(crate) fn normalize_ipa(text: &str, lang: &str) -> String {
         .replace_all(&text, " ")
         .trim_matches(is_python_space)
         .to_owned();
-    if !text.chars().next_back().is_some_and(is_terminal) {
+    if final_period && !text.chars().next_back().is_some_and(is_terminal) {
         text.push('.');
     }
     text
@@ -207,6 +214,12 @@ mod tests {
         ] {
             assert_eq!(normalize_ipa(input, lang), expected, "{lang}: {input}");
         }
+    }
+
+    #[test]
+    fn a_span_view_has_no_final_period() {
+        assert_eq!(normalize_ipa_with("həlˈoʊ ,  wˈɜːld", "en", false), "həlˈoʊ, wˈɜːld");
+        assert_eq!(normalize_ipa_with("kˈæts", "he", false), "kˈæts");
     }
 
     #[test]

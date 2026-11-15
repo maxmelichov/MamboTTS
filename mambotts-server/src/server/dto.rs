@@ -105,13 +105,12 @@ pub struct SpeechBody {
     /// Requires `stream: true`.
     #[serde(default)]
     pub input_is_phonemes: bool,
-    /// Pace multiplier. 1.0 is the app's normal pace for the language; below
-    /// one is slower, above one is faster. Zero or absent means 1.0.
+    /// The engine's speed, as bluetts.com sends it: 1.0 is the release's own
+    /// pace, below one is slower. Zero or absent means the site's default for
+    /// the language: 0.9 for Hebrew, 0.95 for the others.
     ///
     /// The API accepts 0.5 to 2.0, which only guards against nonsense. The
-    /// app's own slider offers 0.9 to 1.1, because further out the model
-    /// spreads the text over a canvas it cannot fill and the take stops
-    /// sounding like the same voice at a different pace.
+    /// app's slider offers the site's 0.8 to 1.2.
     #[serde(default)]
     pub speed: f32,
 }

@@ -10,6 +10,7 @@ import { ErrorBlock } from "../../components/ui";
 import { WaveformPlayer } from "../../components/WaveformPlayer";
 import { StudioHeader } from "../../components/WorkspaceHeader";
 import { EditorCard } from "./EditorCard";
+import { SPEED_STORAGE_KEY, defaultSpeed } from "./GenerationControls";
 import { VoiceSettings } from "./VoiceSettings";
 
 const PRONUNCIATION_KEY = "editor-pronunciation";
@@ -320,7 +321,8 @@ export function HomePage({ bundle, setBundle, studio, setStudio }: HomePageProps
           voice: synthesisVoice || undefined,
           language: synthesisLanguage,
           input_is_phonemes: inputIsPhonemes,
-          speed,
+          // Unset: the server uses the language's default, as the site does.
+          speed: speed ?? undefined,
           synthesis_id: synthesisId,
         },
         onChunk,
@@ -399,9 +401,11 @@ export function HomePage({ bundle, setBundle, studio, setStudio }: HomePageProps
               blueVoice={blueVoice}
               blueVoiceIds={blueVoiceIds}
               speed={speed}
+              languageSpeed={defaultSpeed(isHebrew)}
               setBlueVoice={(nextVoice) => updateStudio({ blueVoice: nextVoice })}
               setSpeed={(nextSpeed) => {
-                localStorage.setItem("speech-speed", String(nextSpeed));
+                if (nextSpeed === null) localStorage.removeItem(SPEED_STORAGE_KEY);
+                else localStorage.setItem(SPEED_STORAGE_KEY, String(nextSpeed));
                 updateStudio({ speed: nextSpeed });
               }}
             />

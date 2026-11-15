@@ -68,7 +68,7 @@ class SpeechBody(BaseModel):
     input_is_phonemes: bool = False
     # Pace multiplier, as in the sidecar: 1.0 is the natural pace for the
     # language, and zero means 1.0.
-    speed: float = Field(1.0, ge=0, le=2.0)
+    speed: float | None = Field(None, ge=0, le=2.0)
 
 
 class PhonemizeBody(BaseModel):
@@ -130,8 +130,8 @@ def speech(body: SpeechBody) -> Response:
         raise HTTPException(400, "request body must contain input")
     if body.response_format and body.response_format != "wav":
         raise HTTPException(400, "only wav response_format is supported")
-    speed = body.speed or 1.0
-    if speed < 0.5:
+    speed = body.speed or None
+    if speed is not None and speed < 0.5:
         raise HTTPException(400, "speed must be between 0.5 and 2.0")
 
     tts = engine()

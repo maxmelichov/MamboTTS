@@ -441,17 +441,18 @@ fn send_final_wav(tx: &tokio::sync::mpsc::Sender<Result<Bytes, std::io::Error>>,
 const MIN_SPEED: f32 = 0.5;
 const MAX_SPEED: f32 = 2.0;
 
-/// The pace multiplier the runtime gets.
-///
-/// The request carries a multiplier, not an engine value: the runtime owns what
-/// 1.0 sounds like for each language (`natural_pace` in the Blue runtime), so
-/// no baseline is applied here as well. Applying one in both places slowed
-/// every take a second time.
+/// The speed the runtime gets: the engine's speed as bluetts.com sends it,
+/// clamped, or zero when the request left it unset. The runtime turns zero
+/// into the site's default for the language (0.9 Hebrew, 0.95 the others)
+/// and never applies that default on top of a chosen speed.
 fn resolve_speed(requested: f32) -> f32 {
-    // Absent, zero and negative all mean "unspecified" here, because serde
+    // Absent, zero and negative all mean "unspecified", because serde
     // defaults a missing float to zero and no caller means to ask for silence.
-    let multiplier = if requested > 0.0 { requested } else { 1.0 };
-    multiplier.clamp(MIN_SPEED, MAX_SPEED)
+    if requested > 0.0 {
+        requested.clamp(MIN_SPEED, MAX_SPEED)
+    } else {
+        0.0
+    }
 }
 
 fn frame(kind: u8, payload: Vec<u8>) -> Bytes {
@@ -488,12 +489,12 @@ mod tests {
     use super::resolve_speed;
 
     #[test]
-    fn speed_is_a_plain_clamped_multiplier() {
-        // The runtime applies the per-language pace for 1.0; the handler must
-        // not scale it again.
+    fn speed_is_the_engine_speed_clamped_or_unset() {
+        // Zero tells the runtime to use the language's default; a chosen
+        // speed is passed through as it is.
         assert_eq!(resolve_speed(1.0), 1.0);
-        assert_eq!(resolve_speed(0.0), 1.0);
-        assert_eq!(resolve_speed(-3.0), 1.0);
+        assert_eq!(resolve_speed(0.0), 0.0);
+        assert_eq!(resolve_speed(-3.0), 0.0);
         assert_eq!(resolve_speed(1.1), 1.1);
         assert_eq!(resolve_speed(0.1), 0.5);
         assert_eq!(resolve_speed(9.0), 2.0);

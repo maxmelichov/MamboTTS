@@ -50,9 +50,9 @@ samples = tts.synthesize("Привет, как дела?", voice="Adam")  # auto
 
 `synthesize` returns mono `f32` samples in `[-1, 1]`; writing a WAV is the
 caller's job. `language="auto"` picks Hebrew for Hebrew letters, Russian
-for Cyrillic, and English otherwise. `speed` is the desktop app's pace
-multiplier: 1.0 is the natural pace for the language, below one is
-slower.
+for Cyrillic, and English otherwise. `speed` is the engine's speed, as on
+bluetts.com; left out, it is the site's default for the language (0.9 for
+Hebrew, 0.95 for the others).
 
 `synthesize_phonemes` takes IPA directly for text that was phonemized
 elsewhere. With `language="auto"` it reads the language from a leading tag

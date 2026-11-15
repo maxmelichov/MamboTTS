@@ -5,7 +5,7 @@
 //!
 //! `cases.json` is `[{"lang": "he", "text": "…"}, …]`. For each case the
 //! output has the prepared text, the phonemized G2P units, the chunks, each
-//! chunk's ids, the pace blend, and every Hebrew/Russian G2P call (the site
+//! chunk's ids, and every Hebrew/Russian G2P call (the site
 //! runs its own copies of those models, so the comparison feeds it these).
 
 use std::{fs, path::PathBuf};
@@ -54,7 +54,6 @@ fn main() -> Result<()> {
             "phonemes": plan.phonemes,
             "chunks": plan.chunks,
             "ids": ids,
-            "paceBlend": plan.pace_blend,
             "native": native,
         }));
     }

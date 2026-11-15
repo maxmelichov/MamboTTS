@@ -97,9 +97,10 @@ const surface = "w-full resize-none bg-white p-8 text-start text-lg font-medium 
 type EditorCardProps = {
   blueVoice: string;
   blueVoiceIds: string[];
-  speed: number;
+  speed: number | null;
+  languageSpeed: number;
   setBlueVoice: (voice: string) => void;
-  setSpeed: (speed: number) => void;
+  setSpeed: (speed: number | null) => void;
   busy: boolean;
   text: string;
   setText: (text: string) => void;
@@ -152,6 +153,7 @@ export function EditorCard({
   blueVoice,
   blueVoiceIds,
   speed,
+  languageSpeed,
   setBlueVoice,
   setSpeed,
 }: EditorCardProps) {
@@ -485,6 +487,7 @@ export function EditorCard({
           blueVoice={blueVoice}
           blueVoiceIds={blueVoiceIds}
           speed={speed}
+          languageSpeed={languageSpeed}
           setBlueVoice={setBlueVoice}
           setSpeed={setSpeed}
         />

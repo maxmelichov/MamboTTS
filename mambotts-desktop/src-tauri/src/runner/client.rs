@@ -181,9 +181,9 @@ pub async fn synthesize_request(
         "language": language,
         "stream": true,
         "input_is_phonemes": request.input_is_phonemes.unwrap_or(false),
-        // A multiplier, not an engine value: 1.0 is the pace every previous
-        // version produced. The server clamps it and applies the baseline.
-        "speed": request.speed.unwrap_or(1.0),
+        // The engine's speed, as bluetts.com sends it. Unset is zero, which
+        // the server reads as the site's default for the language.
+        "speed": request.speed.unwrap_or(0.0),
     });
     let props = || {
         serde_json::json!({
@@ -191,7 +191,7 @@ pub async fn synthesize_request(
             "voice": body["voice"].as_str().unwrap_or_default(),
             "language": body["language"].as_str().unwrap_or("auto"),
             "has_voice_reference": has_voice_reference,
-            "speed": body["speed"].as_f64().unwrap_or(1.0),
+            "speed": body["speed"].as_f64().unwrap_or(0.0),
         })
     };
 

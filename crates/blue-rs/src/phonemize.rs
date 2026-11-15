@@ -6,11 +6,12 @@ use ort::session::Session;
 use renikud_plus_rs::lexicon::{ForceLexicon, OnInvalidEntry};
 use renikud_plus_rs::{G2P, G2PConfig, NiqqudMode, Options};
 
-use crate::chunking::split_sentences;
+use crate::chunking::{is_py_word_char, split_sentences};
 use crate::handling::{
-    canonical_lang, inline_lang_spans, js_collapse_spaces, js_trim, prepare_text,
-    strip_emoji, strip_silent_separator_tokens,
+    canonical_lang, inline_lang_spans, is_js_space, js_collapse_spaces, js_trim, prepare_text,
+    strip_emoji, strip_silent_separator_tokens, tag_latin_runs,
 };
+use crate::ipa::normalize_ipa_with;
 
 /// RenikudPlus as MamboTTS runs it: niqqud in the input is read as evidence
 /// rather than dropped, because the app lets people type and edit the points
@@ -349,58 +350,64 @@ impl Phonemizer {
             .collect()
     }
 
-    /// `Text.phonemize(text, lang, g2p)`: inline `<xx>…</xx>` spans keep their
-    /// own G2P; the result is one tag-free IPA string.
+    /// `Text.phonemize(text, lang, g2p)` with a release bundle: Hebrew text
+    /// first gets its Latin runs tagged ([`tag_latin_runs`]). With inline
+    /// `<xx>…</xx>` spans (`_phonemize_mixed_release`, BlueTTS a6cc157) each
+    /// piece is read by its own language's G2P and given that language's IPA
+    /// view without a final `.`; a piece's `.` goes too when it is not the
+    /// last and its source ends in a word character; pieces with no letter or
+    /// digit stay as written, without double quotes. The result is one
+    /// tag-free IPA string.
     pub(crate) fn phonemize_prepared(&mut self, text: &str, lang: &str) -> Result<String> {
         let lang = canonical_lang(lang);
-        let mut pieces = Vec::new();
+        let text = tag_latin_runs(text, &lang);
+        let clean = |s: &str| -> String {
+            let s = regex!(r"</?[A-Za-z0-9_]+>").replace_all(s, " ");
+            js_trim(&js_collapse_spaces(&s)).to_owned()
+        };
+        let spans = inline_lang_spans(&text);
+        if spans.is_empty() {
+            return Ok(clean(&self.phonemize_segment(&text, &lang)?));
+        }
+        let mut segs: Vec<(String, &str)> = Vec::new();
         let mut last = 0;
-        for span in inline_lang_spans(text) {
-            if span.start > last {
-                pieces.push(self.phonemize_span(&text[last..span.start], &lang)?);
-            }
-            let content = &text[span.content.0..span.content.1];
-            pieces.push(self.phonemize_span(content, &canonical_lang(&span.name))?);
+        for span in &spans {
+            segs.push((lang.clone(), &text[last..span.start]));
+            segs.push((canonical_lang(&span.name), &text[span.content.0..span.content.1]));
             last = span.end;
         }
-        if last < text.len() {
-            pieces.push(self.phonemize_span(&text[last..], &lang)?);
-        }
-        let joined = pieces
+        segs.push((lang.clone(), &text[last..]));
+        let live: Vec<(String, &str)> = segs
             .into_iter()
-            .filter(|p| !p.is_empty())
+            .map(|(lg, t)| (lg, js_trim(t)))
+            .filter(|(_, t)| !t.is_empty())
+            .collect();
+        let alnum = regex!(r"[\p{L}\p{N}]");
+        let double_quotes = regex!(r#"["“”„]"#);
+        let mut parts = Vec::new();
+        for (k, (lg, src)) in live.iter().enumerate() {
+            if !alnum.is_match(src) {
+                parts.push(double_quotes.replace_all(src, "").into_owned());
+                continue;
+            }
+            let ipa = strip_lang_tags(&self.phonemize_segment(src, lg)?);
+            let mut ipa = normalize_ipa_with(&ipa, lg, false);
+            if k + 1 < live.len()
+                && ipa.ends_with('.')
+                && !ipa.ends_with("..")
+                && src.chars().next_back().is_some_and(is_py_word_char)
+            {
+                ipa.pop();
+                ipa = ipa.trim_end_matches(is_js_space).to_owned();
+            }
+            parts.push(ipa);
+        }
+        let joined = parts
+            .into_iter()
+            .filter(|p| !js_trim(p).is_empty())
             .collect::<Vec<_>>()
             .join(" ");
-        Ok(js_trim(&js_collapse_spaces(&strip_lang_tags(&joined))).to_owned())
-    }
-
-    /// `phonemizeSpan`: Hebrew with Latin words in it is split, each part to
-    /// its own G2P.
-    fn phonemize_span(&mut self, content: &str, lang: &str) -> Result<String> {
-        if !has_mixed_hebrew_latin(content, lang) {
-            return self.phonemize_segment(content, lang);
-        }
-        let mut pieces = Vec::new();
-        let mut last = 0;
-        let spans: Vec<(usize, usize)> = mixed_en_segment()
-            .find_iter(content)
-            .map(|m| (m.start(), m.end()))
-            .collect();
-        for (start, end) in spans {
-            if start > last {
-                pieces.push(self.phonemize_segment(&content[last..start], lang)?);
-            }
-            pieces.push(self.phonemize_segment(&content[start..end], "en")?);
-            last = end;
-        }
-        if last < content.len() {
-            pieces.push(self.phonemize_segment(&content[last..], lang)?);
-        }
-        Ok(pieces
-            .into_iter()
-            .filter(|p| !p.is_empty())
-            .collect::<Vec<_>>()
-            .join(" "))
+        Ok(clean(&joined))
     }
 
     /// `phonemizeSegment` with the release G2Ps.
@@ -475,16 +482,6 @@ pub fn phonemize(text: &str, renikud_model: Option<impl AsRef<Path>>) -> Result<
     phonemizer.phonemize(text)
 }
 
-/// `hasMixedHebrewLatin`.
-fn has_mixed_hebrew_latin(text: &str, lang: &str) -> bool {
-    lang == "he" && contains_hebrew(text) && mixed_en_segment().is_match(text)
-}
-
-/// `MIXED_EN_SEGMENT_RE` (also the site's `LATIN_ALNUM_RE`).
-fn mixed_en_segment() -> &'static regex::Regex {
-    regex!(r"[0-9]+[A-Za-z]+|[A-Za-z]+(?:[.'’-][A-Za-z0-9]+)*")
-}
-
 fn bracketed_spans() -> &'static regex::Regex {
     regex!(&format!(
         r"{}*\[[^\]]*\]{}*",
@@ -556,12 +553,13 @@ mod polyg2p_tests {
     }
 
     #[test]
-    fn latin_text_in_a_hebrew_request_with_no_hebrew_passes_through() {
+    fn latin_text_in_a_hebrew_request_is_read_as_english_span_by_span() {
         let mut phonemizer = Phonemizer::with_language(None::<&str>, Language::Hebrew).unwrap();
-        assert_eq!(
-            phonemizer.phonemize_prepared("hello PDF, world.", "he").unwrap(),
-            "hello PDF, world."
-        );
+        let ipa = phonemizer.phonemize_prepared("hello PDF, world.", "he").unwrap();
+        // Each run through English G2P without its '.', the marks between
+        // and after them kept as written.
+        assert!(!ipa.contains("hello") && !ipa.contains('<'), "{ipa}");
+        assert!(ipa.contains(" , ") && ipa.ends_with(" ."), "{ipa}");
     }
 
     #[test]

@@ -23,13 +23,17 @@ const voiceLabels: Record<string, string> = {
   Michael: "Michael · masculine",
 };
 
-// 0.75 was measured as the point where the pace still changes cleanly, but in
-// use it does not hold up: the model spreads the text over a canvas it cannot
-// fill and the take comes back indistinct rather than merely slow. The far end
-// has the same problem in reverse. The slider now offers only the range that
-// sounds like the same voice at a different pace.
-export const SPEED_MIN = 0.9;
-export const SPEED_MAX = 1.1;
+// The slider is bluetts.com's: the engine's speed itself, 0.8 to 1.2, and until
+// someone moves it, the site's default for the language (0.9 Hebrew, 0.95 the
+// others). Nothing is applied on top of it.
+export const SPEED_MIN = 0.8;
+export const SPEED_MAX = 1.2;
+export const SPEED_STORAGE_KEY = "speech-speed-engine";
+
+/// bluetts.com's default speed for a language.
+export function defaultSpeed(isHebrew: boolean): number {
+  return isHebrew ? 0.9 : 0.95;
+}
 
 /// The two choices that decide how a take sounds. They sit with the text and
 /// the Generate button because they get changed between takes, unlike the
@@ -38,17 +42,20 @@ export function GenerationControls({
   busy,
   blueVoice,
   blueVoiceIds,
-  speed,
+  speed: chosenSpeed,
+  languageSpeed,
   setBlueVoice,
   setSpeed,
 }: {
   busy: boolean;
   blueVoice: string;
   blueVoiceIds: string[];
-  speed: number;
+  speed: number | null;
+  languageSpeed: number;
   setBlueVoice: (voice: string) => void;
-  setSpeed: (speed: number) => void;
+  setSpeed: (speed: number | null) => void;
 }) {
+  const speed = chosenSpeed ?? languageSpeed;
   const speedFill = ((speed - SPEED_MIN) / (SPEED_MAX - SPEED_MIN)) * 100;
   const selectClass =
     "h-10 w-full appearance-none rounded-lg border border-border/40 bg-white pl-9 pr-9 text-xs font-bold tracking-tight text-primary outline-none transition-all hover:border-border focus:border-primary focus:ring-4 focus:ring-primary/5 disabled:cursor-not-allowed disabled:opacity-50";
@@ -93,9 +100,9 @@ export function GenerationControls({
         />
         <button
           type="button"
-          onClick={() => setSpeed(1)}
+          onClick={() => setSpeed(null)}
           disabled={busy}
-          title="Reset to normal speed"
+          title="Reset to the language's default speed"
           className="shrink-0 rounded-md bg-background px-2 py-1 text-[11px] font-bold tabular-nums text-primary transition-colors hover:bg-accent disabled:cursor-not-allowed"
         >
           {speed.toFixed(2)}×

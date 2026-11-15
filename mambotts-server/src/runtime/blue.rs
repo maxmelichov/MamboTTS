@@ -209,7 +209,7 @@ impl Runtime for BlueRuntime {
             style,
             SynthesisOptions {
                 lang: language_code.to_owned(),
-                speed: speed * natural_pace(language_code),
+                speed: effective_speed(speed, language_code),
                 ..SynthesisOptions::default()
             },
             |chunk| on_chunk(chunk, sample_rate),
@@ -245,7 +245,7 @@ impl Runtime for BlueRuntime {
             style,
             SynthesisOptions {
                 lang: language_code.to_owned(),
-                speed: speed * natural_pace(language_code),
+                speed: effective_speed(speed, language_code),
                 ..SynthesisOptions::default()
             },
             |chunk| on_chunk(chunk, sample_rate),
@@ -253,14 +253,20 @@ impl Runtime for BlueRuntime {
     }
 }
 
-/// What a requested speed of 1.0 means for a language.
+/// The speed the engine runs at, as bluetts.com sets it.
 ///
-/// At the release's own 1.0 the model reads a sentence a little fast, Hebrew
-/// most of all, so the app's normal pace sits just under it: 0.9 for Hebrew
-/// and 0.95 for the other languages, the defaults the BlueV3 web demo settled
-/// on. The request's speed scales from there.
-fn natural_pace(language_code: &str) -> f32 {
-    if language_code == "he" { 0.9 } else { 0.95 }
+/// A request's speed is the engine's speed, exactly as the site's slider
+/// sends it. Unset (zero) means the site's default for the language: 0.9 for
+/// Hebrew, 0.95 for the others, where the release's own 1.0 reads a little
+/// fast. The default is never applied on top of a chosen speed.
+fn effective_speed(requested: f32, language_code: &str) -> f32 {
+    if requested > 0.0 {
+        requested
+    } else if language_code == "he" {
+        0.9
+    } else {
+        0.95
+    }
 }
 
 fn language(name: &str, id: i32) -> RuntimeLanguage {
