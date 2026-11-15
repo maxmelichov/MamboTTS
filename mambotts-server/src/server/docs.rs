@@ -9,7 +9,7 @@ use super::{
     },
     errors::{ErrorBody, ErrorDetail},
     handlers,
-    sources::{ModelSource, ModelSourceFile, ModelSourcesResponse},
+    sources::{HebrewG2pPolicy, HebrewG2pSource, ModelSource, ModelSourceFile, ModelSourcesResponse},
 };
 use crate::runtime::Language;
 
@@ -56,6 +56,8 @@ use crate::runtime::Language;
         PhonemeInventoryResponse,
         Language,
         ModelSourceFile,
+        HebrewG2pSource,
+        HebrewG2pPolicy,
         ModelSource,
         ModelSourcesResponse,
     ))

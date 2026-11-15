@@ -1,4 +1,6 @@
-use mambotts_registry::{RuntimeManifest, runtimes};
+use mambotts_registry::{
+    HEBREW_G2P_INT8_MAX_MEMORY, HebrewG2pVariant, ModelFile, RuntimeManifest, runtimes,
+};
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -6,6 +8,45 @@ use utoipa::ToSchema;
 pub struct ModelSourceFile {
     name: String,
     url: String,
+    /// Exact size in bytes.
+    size: u64,
+    /// Lowercase hex SHA-256.
+    sha256: String,
+}
+
+impl From<&ModelFile> for ModelSourceFile {
+    fn from(file: &ModelFile) -> Self {
+        Self {
+            name: file.name.into(),
+            url: file.url.into(),
+            size: file.size,
+            sha256: file.sha256.into(),
+        }
+    }
+}
+
+/// One RenikudPlus weight file; a bundle needs exactly one of them, which
+/// `files` leaves out because the machine decides which.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct HebrewG2pSource {
+    /// `fp32` or `int8`.
+    #[schema(value_type = String)]
+    variant: HebrewG2pVariant,
+    #[serde(flatten)]
+    file: ModelSourceFile,
+}
+
+/// bluetts.com's choice between the variants: fp32, unless the machine has
+/// `int8_max_memory` bytes of memory or less; `MAMBOTTS_HEBREW_G2P=fp32|int8`
+/// overrides it.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct HebrewG2pPolicy {
+    #[schema(value_type = String)]
+    default: HebrewG2pVariant,
+    #[schema(value_type = String)]
+    low_memory: HebrewG2pVariant,
+    int8_max_memory: u64,
+    override_env: &'static str,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -24,6 +65,9 @@ pub struct ModelSource {
     size: String,
     description: String,
     files: Vec<ModelSourceFile>,
+    /// The RenikudPlus variants, empty for a runtime without Hebrew G2P.
+    hebrew_g2p: Vec<HebrewG2pSource>,
+    hebrew_g2p_policy: Option<HebrewG2pPolicy>,
     directory: String,
     capabilities: RuntimeCapabilitiesResponse,
 }
@@ -54,14 +98,24 @@ fn source_from_manifest(manifest: &RuntimeManifest) -> ModelSource {
         version: manifest.version.into(),
         size: manifest.size.into(),
         description: manifest.description.into(),
-        files: manifest
-            .files
-            .iter()
-            .map(|file| ModelSourceFile {
-                name: file.name.into(),
-                url: file.url.into(),
-            })
-            .collect(),
+        files: manifest.files.iter().map(ModelSourceFile::from).collect(),
+        hebrew_g2p: if manifest.hebrew_g2p {
+            [HebrewG2pVariant::Fp32, HebrewG2pVariant::Int8]
+                .into_iter()
+                .map(|variant| HebrewG2pSource {
+                    variant,
+                    file: ModelSourceFile::from(&variant.model_file()),
+                })
+                .collect()
+        } else {
+            Vec::new()
+        },
+        hebrew_g2p_policy: manifest.hebrew_g2p.then_some(HebrewG2pPolicy {
+            default: HebrewG2pVariant::Fp32,
+            low_memory: HebrewG2pVariant::Int8,
+            int8_max_memory: HEBREW_G2P_INT8_MAX_MEMORY,
+            override_env: "MAMBOTTS_HEBREW_G2P",
+        }),
         directory: manifest.directory.into(),
         capabilities: RuntimeCapabilitiesResponse {
             hebrew: manifest.capabilities.hebrew,
@@ -85,6 +139,18 @@ mod tests {
     }
 
     #[test]
+    fn the_hebrew_g2p_variants_are_listed_with_their_file_names() {
+        let json = serde_json::to_value(model_sources()).unwrap();
+        let blue = &json["runtimes"][0];
+        assert_eq!(blue["hebrew_g2p"][0]["variant"], "fp32");
+        assert_eq!(blue["hebrew_g2p"][0]["name"], "renikud-plus-fp32.onnx");
+        assert_eq!(blue["hebrew_g2p"][1]["variant"], "int8");
+        assert_eq!(blue["hebrew_g2p"][1]["name"], "renikud-plus.onnx");
+        assert_eq!(blue["hebrew_g2p_policy"]["int8_max_memory"], 4u64 << 30);
+        assert_eq!(blue["files"][0]["sha256"].as_str().unwrap().len(), 64);
+    }
+
+    #[test]
     fn each_source_is_its_registry_manifest() {
         for (source, manifest) in model_sources()
             .runtimes
@@ -98,10 +164,19 @@ mod tests {
             assert_eq!(source.files.len(), manifest.files.len());
             for (file, expected) in source.files.iter().zip(manifest.files) {
                 assert_eq!(
-                    (file.name.as_str(), file.url.as_str()),
-                    (expected.name, expected.url)
+                    (
+                        file.name.as_str(),
+                        file.url.as_str(),
+                        file.size,
+                        file.sha256.as_str()
+                    ),
+                    (expected.name, expected.url, expected.size, expected.sha256)
                 );
             }
+            assert_eq!(
+                source.hebrew_g2p.len(),
+                if manifest.hebrew_g2p { 2 } else { 0 }
+            );
             assert_eq!(
                 source.capabilities.voice_reference,
                 manifest.capabilities.voice_reference

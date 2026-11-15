@@ -12,14 +12,20 @@
 
     Models are not downloaded here. The desktop app fetches them itself the first
     time you open it, through its onboarding screen, into its own application
-    data directory. That is around 580 MB and it only happens once. Downloading
-    them from this script as well would put a second copy of the same 580 MB
-    somewhere the app never looks.
+    data directory: the BlueV3 bundle (about 740 MB) and the Hebrew G2P
+    RenikudPlus, 1.2 GB in full precision on most computers or 312 MB as int8 on
+    machines with 4 GB of memory or less. It only happens once. Downloading them
+    from this script as well would put a second copy somewhere the app never
+    looks.
 
     With -Server the script does something different and older: it installs the
     headless server instead, which is the HTTP API on its own with Swagger docs
     at /docs, no window, and the model files downloaded next to it. That mode
-    exists for machines that want the API and nothing else.
+    exists for machines that want the API and nothing else. The files and the
+    RenikudPlus choice are exactly the desktop app's: the registry compiled into
+    the server lists them (with their sizes and SHA-256), fp32 RenikudPlus
+    unless the machine has 4 GB of memory or less, and MAMBOTTS_HEBREW_G2P=fp32
+    or int8 overrides that.
 
     Run it with:
         irm https://github.com/maxmelichov/MamboTTS/releases/latest/download/install.ps1 | iex
@@ -30,7 +36,8 @@
 
     Running it a second time is safe. In desktop mode the NSIS installer upgrades
     the existing install in place; in server mode the server is replaced and any
-    model file that already downloaded correctly is kept.
+    model file that already downloaded correctly (right size and SHA-256) is
+    kept.
 
 .PARAMETER Version
     Install a specific release, for example 1.3.1. Defaults to the newest
@@ -81,33 +88,64 @@ $TagPrefix = 'mambotts-desktop-'
 # shared address that a hard failure would be the wrong default. Keep this in
 # step with the newest published desktop release.
 $FallbackVersion = '1.3.7'
-$ModelSubDir = 'models\bluetts-2.5'
+# The registry's directory for this bundle (RuntimeManifest.directory).
+$ModelSubDir = 'models\bluev3-3.0.0'
 
 function Write-Step { param([string] $Message) Write-Host "==> $Message" -ForegroundColor Cyan }
 function Write-Detail { param([string] $Message) Write-Host "    $Message" }
 function Write-Warn { param([string] $Message) Write-Warning $Message }
 
 # The registry in crates/mambotts-registry/src/lib.rs is the single source of
-# truth for these URLs, and the running server publishes it at
+# truth for these files, and the running server publishes it at
 # /v1/models/sources. The script asks the server it just unpacked rather than
-# keeping a second copy of the list. This array is only the parachute for when
-# that query fails, so a network hiccup does not leave a half installed tree.
+# keeping a second copy of the list. These arrays are only the parachute for
+# when that query fails, so a network hiccup does not leave a half installed
+# tree. They are the registry's BlueV3 v3.0.0 files at BlueV3-onnx fb3dc38 (the
+# commit the v3.0.0 tag names) and RenikudPlus 679c56c, with the registry's
+# sizes and SHA-256; keep them in step with it.
+$BlueBase = 'https://huggingface.co/notmax123/BlueV3-onnx/resolve/fb3dc3862557b8fad913a5c66ec9dfb5c9bbbf86'
 $FallbackModelFiles = @(
-    @{ name = 'duration_predictor.onnx';       url = 'https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main/duration_predictor.onnx' },
-    @{ name = 'duration_predictor_style.onnx'; url = 'https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main/duration_predictor_style.onnx' },
-    @{ name = 'text_encoder.onnx';             url = 'https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main/text_encoder.onnx' },
-    @{ name = 'vector_estimator.onnx';         url = 'https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main/vector_estimator.onnx' },
-    @{ name = 'vocoder.onnx';                  url = 'https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main/vocoder.onnx' },
-    @{ name = 'stats.npz';                     url = 'https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main/stats.npz' },
-    @{ name = 'uncond.npz';                    url = 'https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main/uncond.npz' },
-    @{ name = 'vocab.json';                    url = 'https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main/vocab.json' },
-    @{ name = 'tts.json';                      url = 'https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main/tts.json' },
-    @{ name = 'voices/libri_female_1088.json'; url = 'https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main/voices/libri_female_1088.json' },
-    @{ name = 'voices/libri_female_6147.json'; url = 'https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main/voices/libri_female_6147.json' },
-    @{ name = 'voices/libri_male_6209.json';   url = 'https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main/voices/libri_male_6209.json' },
-    @{ name = 'voices/libri_male_8088.json';   url = 'https://huggingface.co/notmax123/BlueTTS2.5-onnx/resolve/main/voices/libri_male_8088.json' },
-    @{ name = 'renikud-plus.onnx';             url = 'https://huggingface.co/notmax123/RenikudPlus/resolve/main/model_int8.onnx' }
+    @{ name = 'duration_predictor_style.onnx'; size =   1524267; sha256 = '9aa8951637c7de4c2f6d43296af6394f4527a810fe8ba56df5aeedc2cec7247b'; url = "$BlueBase/onnx/duration_predictor_style.onnx" },
+    @{ name = 'text_encoder.onnx';             size =  27951369; sha256 = '288d48053d82f12fb4b7319ea0a5c8c669c4e87ade983c695666fa9e346408c1'; url = "$BlueBase/onnx/text_encoder.onnx" },
+    @{ name = 'vector_estimator.onnx';         size = 256556761; sha256 = '46abc33ac65e24cb5331b6d29ec4520b9a33a4a86a7723b5e44677af10d5b584'; url = "$BlueBase/onnx/vector_estimator.onnx" },
+    @{ name = 'vocoder.onnx';                  size = 101428551; sha256 = '054a700e9ef17d43de203212dca335fa2cd000cd9ca7701df49fcc544b49ccbe'; url = "$BlueBase/onnx/vocoder.onnx" },
+    @{ name = 'vocab.json';                    size =      3382; sha256 = '9cf96e595f62ea8a36d3be6724b06fb821614c2938d0724852d1a25feff5bad5'; url = "$BlueBase/onnx/vocab.json" },
+    @{ name = 'tts.json';                      size =      8509; sha256 = '35af77b0634c2d4be4eb2faeeabdb364ad6bf80302202f6b5952e83984326eea'; url = "$BlueBase/onnx/tts.json" },
+    @{ name = 'voices/noa.json';               size =    287857; sha256 = 'd392adf5542220ca57841308ffd7ac76f013025b624efd8f43a8f53a799e4638'; url = "$BlueBase/voices/noa.json" },
+    @{ name = 'voices/lily.json';              size =    288281; sha256 = '7d1b9f54d4a6797b31e997f59a55399e3daf73782aa2a477721afd963ca59969'; url = "$BlueBase/voices/lily.json" },
+    @{ name = 'voices/maya.json';              size =    288203; sha256 = '83a9f7303c954951677fc0db17e58bfeee8064553f67f3991b7c7d0ed4c8f8ce'; url = "$BlueBase/voices/maya.json" },
+    @{ name = 'voices/emma.json';              size =    288397; sha256 = '46cedaaa14f68dc9017e8c0fac94b21ba615845c1f7981cb5bfe3740cf4a2365'; url = "$BlueBase/voices/emma.json" },
+    @{ name = 'voices/sara.json';              size =    288277; sha256 = 'dc43188552dfede47f9450104cce931ae356e8896f1b9b093317d4dff4fc6863'; url = "$BlueBase/voices/sara.json" },
+    @{ name = 'voices/shira.json';             size =    288019; sha256 = '19611940a2cdc1b90ce70b13b12682c3c2b1ef6be14a78907c4fb8228a913ca3'; url = "$BlueBase/voices/shira.json" },
+    @{ name = 'voices/tamar.json';             size =    288114; sha256 = '09026d10ef83b9e7e490b68f17ef7fb54e80940bf6321990b53a5a7340c79987'; url = "$BlueBase/voices/tamar.json" },
+    @{ name = 'voices/yael.json';              size =    288145; sha256 = '3c82bf087ce6831b75c2755741dc519ebe87a58cc1e02e36f4cfa7ca35650501'; url = "$BlueBase/voices/yael.json" },
+    @{ name = 'voices/adam.json';              size =    288210; sha256 = '9daa9a234c5a4a36cab1d02c527c307a8a0058a3f806b316af01150a98604d22'; url = "$BlueBase/voices/adam.json" },
+    @{ name = 'voices/daniel.json';            size =    288828; sha256 = 'c8a6dd2a63259f686230cf3fd55e28906a158c9363cd33cb374a02201b862f5f'; url = "$BlueBase/voices/daniel.json" },
+    @{ name = 'voices/ariel.json';             size =    288672; sha256 = '67cc2e5c2f5c582d120aee4c5cd65b4ab21c4a4d89a0fe81ef1938a1d9f266cc'; url = "$BlueBase/voices/ariel.json" },
+    @{ name = 'voices/david.json';             size =    288598; sha256 = '6e51be7341233ce360659031f0ab4c01e6829de845cd3ccf1e9a1a5cde370109'; url = "$BlueBase/voices/david.json" },
+    @{ name = 'voices/ethan.json';             size =    288591; sha256 = '802e09b837dc8ff8bf2023ea0d9a89b845b5385b5312d00d95734ca40c840b20'; url = "$BlueBase/voices/ethan.json" },
+    @{ name = 'voices/jonathan.json';          size =    288406; sha256 = '7af846f12fb30ba29dcf5047e04ce2f9d0f6d4164cd31109220cb03d744a52ff'; url = "$BlueBase/voices/jonathan.json" },
+    @{ name = 'voices/michael.json';           size =    288215; sha256 = '2018e228025313923abec2bc6b468db2e4a98ef916fea40d5501c0ec6fb3f335'; url = "$BlueBase/voices/michael.json" },
+    @{ name = 'polyg2p/en.lex';                size =   2759393; sha256 = '713aaed9ce1891e111eab2d213df560f043947b9268c6411b26a8c756ea99d32'; url = "$BlueBase/frontend/polyg2p_data/en.lex" },
+    @{ name = 'polyg2p/en-large.g2p';          size =   4880559; sha256 = 'a119ddaabc98ceb2696f2d9af52cfc0733388286d489b175c43129365ea15c4b'; url = "$BlueBase/frontend/polyg2p_data/en-large.g2p" },
+    @{ name = 'polyg2p/en.g2p';                size =   1780155; sha256 = '2f638c5358a2a90075a575024d747931d1d92160e18ce0f9ed7176894a366808'; url = "$BlueBase/frontend/polyg2p_data/en.g2p" },
+    @{ name = 'polyg2p/de.lex';                size =  17815772; sha256 = 'eeb7df564ef1bc894bf7cc39f0f054f5c516d38c2119922ac69ff8c31681594c'; url = "$BlueBase/frontend/polyg2p_data/de.lex" },
+    @{ name = 'polyg2p/it.lex';                size =    516990; sha256 = '9f7e3363abe1beaeb6eab1d5393388d9f91b877491ade9841f47a27a871554f7'; url = "$BlueBase/frontend/polyg2p_data/it.lex" },
+    @{ name = 'polyg2p/ru_accents.lex';        size =   5529194; sha256 = '505e3235f41a61fb54af70fb0a426f6ae68bb75e4d422841f4063a08865c8b07'; url = "$BlueBase/frontend/polyg2p_data/ru_accents.lex" },
+    @{ name = 'polyg2p/ru_homographs.lex';     size =     82364; sha256 = '27a3bb226121130717c7e44fb21a25b826e1e5b77900f0a151bdf560bbaaa9e0'; url = "$BlueBase/frontend/polyg2p_data/ru_homographs.lex" },
+    @{ name = 'polyg2p/ru_suffix.lex';         size =    399562; sha256 = '139cf5af5174d9408b27c428be5b341aaeeac144f3dd23bed0ab740a2b871ea6'; url = "$BlueBase/frontend/polyg2p_data/ru_suffix.lex" },
+    @{ name = 'polyg2p/ru_yo.lex';             size =   2163336; sha256 = '16dbb14ea719a5f8562f64a41873e701c6163737cb03af55efa038c07b112165'; url = "$BlueBase/frontend/polyg2p_data/ru_yo.lex" },
+    @{ name = 'polyg2p/ru_yo_homographs.lex';  size =     19043; sha256 = '057cddf02713732706127274c796a6f418ad7096679ac532f7c31cf7c9266064'; url = "$BlueBase/frontend/polyg2p_data/ru_yo_homographs.lex" },
+    @{ name = 'polyg2p/LICENSE';               size =     11357; sha256 = 'c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4'; url = "$BlueBase/frontend/polyg2p_data/LICENSE" },
+    @{ name = 'polyg2p/NOTICE';                size =      2734; sha256 = '1a5544c762f18316b934e03db8ced24931f752f5332aa70c3bb15ca1ba92a114'; url = "$BlueBase/frontend/polyg2p_data/NOTICE" }
 )
+$RenikudBase = 'https://huggingface.co/notmax123/RenikudPlus/resolve/679c56ca449d41873fb8ff7711ddf7563d28198f'
+$FallbackHebrewG2p = @(
+    @{ variant = 'fp32'; name = 'renikud-plus-fp32.onnx'; size = 1234209530; sha256 = 'c3a2bdc35afbf53f28cdece4672dcca9b530dfa43a0d65b4c5bbc47150b32d0d'; url = "$RenikudBase/model.onnx" },
+    @{ variant = 'int8'; name = 'renikud-plus.onnx';      size =  311605741; sha256 = '0337468fad56eadf5ecc7becfdf21648a4d668de41de5bc27e860141b5afcadd'; url = "$RenikudBase/model_int8.onnx" }
+)
+# HEBREW_G2P_INT8_MAX_MEMORY: at or below this much memory, int8.
+$FallbackInt8MaxMemory = [long]4 * 1024 * 1024 * 1024
 
 function Assert-Supported {
     if (-not $env:LOCALAPPDATA) {
@@ -181,6 +219,11 @@ function Get-Verified {
         [string] $Uri,
         [string] $OutFile,
         [long]   $MinimumBytes = 1,
+        [long]   $ExpectedBytes = 0,
+        [string] $Sha256 = '',
+        # 0 is no limit: the fp32 RenikudPlus is 1.2 GB, and on PowerShell 7
+        # the timeout covers the whole transfer.
+        [int]    $TimeoutSec = 600,
         [switch] $MustBeExecutable
     )
     $dir = Split-Path -Parent $OutFile
@@ -190,7 +233,7 @@ function Get-Verified {
 
     try {
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        Invoke-WebRequest -Uri $Uri -OutFile $temp -UseBasicParsing -TimeoutSec 600
+        Invoke-WebRequest -Uri $Uri -OutFile $temp -UseBasicParsing -TimeoutSec $TimeoutSec
     } catch {
         if (Test-Path $temp) { Remove-Item $temp -Force }
         throw "Download failed for $Uri : $($_.Exception.Message)"
@@ -201,6 +244,17 @@ function Get-Verified {
     if ($size -lt $MinimumBytes) {
         Remove-Item $temp -Force
         throw "The download from $Uri is only $size bytes, which is too small to be the real file."
+    }
+    if ($ExpectedBytes -gt 0 -and $size -ne $ExpectedBytes) {
+        Remove-Item $temp -Force
+        throw "The download from $Uri is $size bytes, but the registry says $ExpectedBytes."
+    }
+    if ($Sha256) {
+        $actual = (Get-FileHash -Path $temp -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actual -ne $Sha256.ToLowerInvariant()) {
+            Remove-Item $temp -Force
+            throw "The download from $Uri failed verification: SHA-256 $actual, expected $Sha256."
+        }
     }
     if ($MustBeExecutable -and -not (Test-PortableExecutable -Path $temp)) {
         Remove-Item $temp -Force
@@ -325,7 +379,8 @@ function Install-Server {
 }
 
 # Starts the freshly unpacked server with no model loaded, asks it for the
-# download list it was compiled with, and stops it again.
+# download list it was compiled with, and stops it again. Returns the bundle's
+# files, the RenikudPlus variants and the memory threshold between them.
 function Get-ModelFileList {
     param([string] $Exe)
 
@@ -341,9 +396,16 @@ function Get-ModelFileList {
             try {
                 $sources = Invoke-RestMethod -Uri "http://127.0.0.1:$probePort/v1/models/sources" -TimeoutSec 5
                 $blue = $sources.runtimes | Where-Object { $_.id -eq 'blue' } | Select-Object -First 1
-                if ($blue -and $blue.files) {
-                    Write-Detail "$($blue.files.Count) files listed by the server itself."
-                    return $blue.files
+                # A server from before the registry carried sizes, hashes and
+                # the RenikudPlus variants cannot describe this bundle.
+                $hasG2p = $blue -and ($blue.PSObject.Properties.Name -contains 'hebrew_g2p') -and @($blue.hebrew_g2p).Count -gt 0
+                if ($blue -and $blue.files -and $hasG2p -and $blue.directory -eq ($ModelSubDir -replace '^models\\', '')) {
+                    Write-Detail "$(@($blue.files).Count) files and $(@($blue.hebrew_g2p).Count) RenikudPlus variants listed by the server itself."
+                    return @{
+                        Files = @($blue.files)
+                        HebrewG2p = @($blue.hebrew_g2p)
+                        Int8MaxMemory = [long]$blue.hebrew_g2p_policy.int8_max_memory
+                    }
                 }
             } catch {
                 # Not up yet. Keep waiting.
@@ -357,42 +419,84 @@ function Get-ModelFileList {
             Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
         }
     }
-    return $FallbackModelFiles
+    return @{ Files = $FallbackModelFiles; HebrewG2p = $FallbackHebrewG2p; Int8MaxMemory = $FallbackInt8MaxMemory }
+}
+
+# The desktop app's choice (registry hebrew_g2p_variant, bluetts.com's
+# hebrewG2PVariant): fp32 unless the machine has the threshold or less of
+# memory; MAMBOTTS_HEBREW_G2P=fp32|int8 wins, and an unknown size is fp32.
+function Select-HebrewG2pVariant {
+    param([long] $Int8MaxMemory)
+
+    switch -Regex (("$env:MAMBOTTS_HEBREW_G2P").Trim().ToLowerInvariant()) {
+        '^(fp32|float|float32)$' { return 'fp32' }
+        '^(int8|quantized)$' { return 'int8' }
+    }
+    $memory = [long]0
+    try {
+        $memory = [long](Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop).TotalPhysicalMemory
+    } catch {
+        $memory = 0
+    }
+    if ($memory -gt 0 -and $memory -le $Int8MaxMemory) { return 'int8' }
+    return 'fp32'
+}
+
+function Test-ModelFile {
+    param([string] $Path, $File)
+    if (-not (Test-Path $Path)) { return $false }
+    if ((Get-Item $Path).Length -ne [long]$File.size) { return $false }
+    $actual = (Get-FileHash -Path $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+    return ($actual -eq ([string]$File.sha256).ToLowerInvariant())
 }
 
 function Install-Models {
-    param($Files)
+    param($List)
 
     $modelDir = Join-Path $InstallDir $ModelSubDir
+    $variant = Select-HebrewG2pVariant -Int8MaxMemory $List.Int8MaxMemory
+    $g2p = $List.HebrewG2p | Where-Object { $_.variant -eq $variant } | Select-Object -First 1
+    if (-not $g2p) { throw "No RenikudPlus file for the $variant variant in the file list." }
+    $files = @($List.Files) + @($g2p)
+
     Write-Step "Downloading the BlueTTS model into $modelDir"
-    # renikud-plus.onnx is about 310 MB of that; the BlueTTS ONNX files are
-    # most of the rest.
-    Write-Detail 'This is around 600 MB and only happens once.'
+    $bytes = [long]0
+    foreach ($file in $files) { $bytes += [long]$file.size }
+    Write-Detail "RenikudPlus $variant ($($g2p.name)). About $([math]::Round($bytes / 1MB)) MB in all; it only happens once."
     New-Item -ItemType Directory -Path $modelDir -Force | Out-Null
 
     $index = 0
-    $total = @($Files).Count
-    foreach ($file in $Files) {
+    $total = $files.Count
+    foreach ($file in $files) {
         $index++
         $relative = ($file.name -replace '/', '\')
         $dest = Join-Path $modelDir $relative
-        if ((Test-Path $dest) -and ((Get-Item $dest).Length -gt 0)) {
-            Write-Detail "[$index/$total] $($file.name) is already here, keeping it."
+        if (Test-ModelFile -Path $dest -File $file) {
+            Write-Detail "[$index/$total] $($file.name) is already here and verified, keeping it."
             continue
         }
         Write-Detail "[$index/$total] $($file.name)"
-        Get-Verified -Uri $file.url -OutFile $dest -MinimumBytes 1 | Out-Null
+        Get-Verified -Uri $file.url -OutFile $dest -ExpectedBytes ([long]$file.size) -Sha256 $file.sha256 -TimeoutSec 0 | Out-Null
     }
 
-    $renikud = Join-Path $modelDir 'renikud-plus.onnx'
-    if (-not (Test-Path $renikud)) {
-        throw "renikud-plus.onnx is missing from $modelDir, so Hebrew phonemization would fail."
+    # One RenikudPlus on disk, as in the desktop app: the variant this machine
+    # does not run goes once its own is in place.
+    foreach ($other in $List.HebrewG2p) {
+        if ($other.name -ne $g2p.name) {
+            Remove-Item (Join-Path $modelDir $other.name) -Force -ErrorAction SilentlyContinue
+        }
     }
-    return $modelDir
+    # The 2.5 bundle's directory: nothing reads it any more.
+    $stale = Join-Path $InstallDir 'models\bluetts-2.5'
+    if (Test-Path $stale) {
+        Write-Detail 'Removing the BlueTTS 2.5 model directory, which this release no longer reads.'
+        Remove-Item $stale -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    return @{ ModelDir = $modelDir; Renikud = $g2p.name }
 }
 
 function Write-Launcher {
-    param([string] $ModelDir)
+    param([string] $Renikud)
 
     $launcher = Join-Path $InstallDir 'MamboTTS-Server.cmd'
     Write-Step "Writing the launcher at $launcher"
@@ -407,7 +511,7 @@ function Write-Launcher {
         "set `"PORT=$Port`"",
         'echo Starting the MamboTTS server on http://127.0.0.1:%PORT%',
         'echo Loading the BlueTTS model takes a few seconds on first start.',
-        'start "MamboTTS server" /min "%ROOT%mambotts-server.exe" serve --host 127.0.0.1 --port %PORT% --model-dir "%ROOT%models\bluetts-2.5" --renikud "%ROOT%models\bluetts-2.5\renikud-plus.onnx" --exit-with-parent false',
+        "start `"MamboTTS server`" /min `"%ROOT%mambotts-server.exe`" serve --host 127.0.0.1 --port %PORT% --model-dir `"%ROOT%$ModelSubDir`" --renikud `"%ROOT%$ModelSubDir\$Renikud`" --exit-with-parent false",
         'set "READY="',
         'REM curl.exe ships with Windows 10 1803 and later. Where it is missing,',
         'REM fall back to a flat wait rather than looping on a command that is',
@@ -475,8 +579,8 @@ function Install-DesktopMode {
     Write-Host 'MamboTTS installer for Windows'
     Write-Host ''
     Write-Host 'This downloads the MamboTTS desktop app and runs its installer. The app'
-    Write-Host 'downloads its voices and models itself the first time you open it, which'
-    Write-Host 'is around 600 MB, so this part is quick.'
+    Write-Host 'downloads its voices and models itself the first time you open it (about'
+    Write-Host '1.7 GB, or 1 GB on machines with 4 GB of memory or less), so this part is quick.'
     Write-Host ''
     Write-Host 'If you only want the HTTP API and no window, run this again with -Server.'
     Write-Host ''
@@ -504,7 +608,7 @@ function Install-DesktopMode {
     }
     Write-Host ''
     Write-Host 'The first launch opens an onboarding screen that downloads the BlueTTS'
-    Write-Host 'model and the Hebrew phonemizer, around 600 MB, into the app data folder.'
+    Write-Host 'model and the Hebrew phonemizer, about 1.7 GB, into the app data folder.'
     Write-Host 'Leave it running until it finishes; after that it starts straight up.'
     Write-Host ''
     Write-Host 'To remove it later: Settings, Installed apps, MamboTTS.'
@@ -521,9 +625,10 @@ function Install-ServerMode {
     Assert-Supported
     $resolvedVersion = Resolve-Version
     $exe = Install-Server -ReleaseVersion $resolvedVersion
-    $files = Get-ModelFileList -Exe $exe
-    $modelDir = Install-Models -Files $files
-    $launcher = Write-Launcher -ModelDir $modelDir
+    $list = Get-ModelFileList -Exe $exe
+    $models = Install-Models -List $list
+    $modelDir = $models.ModelDir
+    $launcher = Write-Launcher -Renikud $models.Renikud
     $shortcut = Add-StartMenuShortcut -Launcher $launcher
 
     Write-Host ''
