@@ -26,14 +26,14 @@ pub trait Runtime: Send {
     /// does (`false`, the default), for the requests that follow.
     fn set_honor_niqqud(&mut self, on: bool);
     fn supported_phonemes(&self) -> Vec<char>;
-    /// `speed` zero is the language's default speed; `steps` zero is the
+    /// `speed` zero is the default speed (1.0); `steps` zero is the
     /// default step count (bluetts.com's Quality slider at 8).
     fn synthesize_streaming(
         &mut self,
         text: &str,
         voice: Option<&str>,
         language: &str,
-        speed: f32,
+        speed: f64,
         steps: u32,
         on_chunk: &mut dyn FnMut(&[f32], u32) -> Result<()>,
     ) -> Result<Vec<f32>>;
@@ -42,7 +42,7 @@ pub trait Runtime: Send {
         phonemes: &str,
         voice: Option<&str>,
         language: &str,
-        speed: f32,
+        speed: f64,
         steps: u32,
         on_chunk: &mut dyn FnMut(&[f32], u32) -> Result<()>,
     ) -> Result<Vec<f32>>;

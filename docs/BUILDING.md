@@ -249,8 +249,8 @@ The tests that need real model files are `#[ignore]`d. Run them with the
 downloaded bundle:
 
 ```console
-MAMBOTTS_BLUE_MODEL_DIR=/path/to/models/bluev3-3.0.0 \
-MAMBOTTS_RENIKUD_PATH=/path/to/models/bluev3-3.0.0/renikud-plus.onnx \
+MAMBOTTS_BLUE_MODEL_DIR=/path/to/models/bluev3-3.0.1 \
+MAMBOTTS_RENIKUD_PATH=/path/to/models/bluev3-3.0.1/renikud-plus.onnx \
   cargo test -p blue-rs -p renikud-plus-rs -- --ignored
 ```
 
@@ -263,7 +263,7 @@ on `DYLD_LIBRARY_PATH` (macOS) or `LD_LIBRARY_PATH` (Linux) to run the tests.
 To hear the engine without the app, speak a line straight from a bundle:
 
 ```console
-cargo run -p blue-rs --example speak -- /path/to/models/bluev3-3.0.0 noa en "Hello there." out.wav
+cargo run -p blue-rs --example speak -- /path/to/models/bluev3-3.0.1 noa en "Hello there." out.wav
 ```
 
 ### Validate on Windows

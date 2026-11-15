@@ -89,7 +89,7 @@ $TagPrefix = 'mambotts-desktop-'
 # step with the newest published desktop release.
 $FallbackVersion = '1.3.7'
 # The registry's directory for this bundle (RuntimeManifest.directory).
-$ModelSubDir = 'models\bluev3-3.0.0'
+$ModelSubDir = 'models\bluev3-3.0.1'
 
 function Write-Step { param([string] $Message) Write-Host "==> $Message" -ForegroundColor Cyan }
 function Write-Detail { param([string] $Message) Write-Host "    $Message" }
@@ -100,32 +100,33 @@ function Write-Warn { param([string] $Message) Write-Warning $Message }
 # /v1/models/sources. The script asks the server it just unpacked rather than
 # keeping a second copy of the list. These arrays are only the parachute for
 # when that query fails, so a network hiccup does not leave a half installed
-# tree. They are the registry's BlueV3 v3.0.0 files at BlueV3-onnx fb3dc38 (the
-# commit the v3.0.0 tag names) and RenikudPlus 679c56c, with the registry's
-# sizes and SHA-256; keep them in step with it.
-$BlueBase = 'https://huggingface.co/notmax123/BlueV3-onnx/resolve/fb3dc3862557b8fad913a5c66ec9dfb5c9bbbf86'
+# tree. They are the registry's BlueV3 v3.0.1 files at BlueV3-onnx d0a0270e (the
+# revision its MANIFEST.json and BlueV3's download_models.py name) and
+# RenikudPlus 679c56c, with the registry's sizes and SHA-256; keep them in step
+# with it.
+$BlueBase = 'https://huggingface.co/notmax123/BlueV3-onnx/resolve/d0a0270e60b96d5066cfe7ebed1f7c2872361c43'
 $FallbackModelFiles = @(
-    @{ name = 'duration_predictor_style.onnx'; size =   1524267; sha256 = '9aa8951637c7de4c2f6d43296af6394f4527a810fe8ba56df5aeedc2cec7247b'; url = "$BlueBase/onnx/duration_predictor_style.onnx" },
-    @{ name = 'text_encoder.onnx';             size =  27951369; sha256 = '288d48053d82f12fb4b7319ea0a5c8c669c4e87ade983c695666fa9e346408c1'; url = "$BlueBase/onnx/text_encoder.onnx" },
-    @{ name = 'vector_estimator.onnx';         size = 256556761; sha256 = '46abc33ac65e24cb5331b6d29ec4520b9a33a4a86a7723b5e44677af10d5b584'; url = "$BlueBase/onnx/vector_estimator.onnx" },
+    @{ name = 'duration_predictor_style.onnx'; size =   1524267; sha256 = '46197a2c10f06e151adc6dd109082889e6aaf903c46ce25d798eebaa7b07e313'; url = "$BlueBase/onnx/duration_predictor_style.onnx" },
+    @{ name = 'text_encoder.onnx';             size =  27951369; sha256 = '9dd84651a48048dce980d9d54c11fd3c04170602fb4f9e66957c08eeee2e55ba'; url = "$BlueBase/onnx/text_encoder.onnx" },
+    @{ name = 'vector_estimator.onnx';         size = 256556761; sha256 = '2f0e4af007f166afdc020331b863b1ea6b93c29258ae3b649f81234c1d7ad7c1'; url = "$BlueBase/onnx/vector_estimator.onnx" },
     @{ name = 'vocoder.onnx';                  size = 101428551; sha256 = '054a700e9ef17d43de203212dca335fa2cd000cd9ca7701df49fcc544b49ccbe'; url = "$BlueBase/onnx/vocoder.onnx" },
     @{ name = 'vocab.json';                    size =      3382; sha256 = '9cf96e595f62ea8a36d3be6724b06fb821614c2938d0724852d1a25feff5bad5'; url = "$BlueBase/onnx/vocab.json" },
-    @{ name = 'tts.json';                      size =      8509; sha256 = '35af77b0634c2d4be4eb2faeeabdb364ad6bf80302202f6b5952e83984326eea'; url = "$BlueBase/onnx/tts.json" },
-    @{ name = 'voices/noa.json';               size =    287857; sha256 = 'd392adf5542220ca57841308ffd7ac76f013025b624efd8f43a8f53a799e4638'; url = "$BlueBase/voices/noa.json" },
-    @{ name = 'voices/lily.json';              size =    288281; sha256 = '7d1b9f54d4a6797b31e997f59a55399e3daf73782aa2a477721afd963ca59969'; url = "$BlueBase/voices/lily.json" },
-    @{ name = 'voices/maya.json';              size =    288203; sha256 = '83a9f7303c954951677fc0db17e58bfeee8064553f67f3991b7c7d0ed4c8f8ce'; url = "$BlueBase/voices/maya.json" },
-    @{ name = 'voices/emma.json';              size =    288397; sha256 = '46cedaaa14f68dc9017e8c0fac94b21ba615845c1f7981cb5bfe3740cf4a2365'; url = "$BlueBase/voices/emma.json" },
-    @{ name = 'voices/sara.json';              size =    288277; sha256 = 'dc43188552dfede47f9450104cce931ae356e8896f1b9b093317d4dff4fc6863'; url = "$BlueBase/voices/sara.json" },
-    @{ name = 'voices/shira.json';             size =    288019; sha256 = '19611940a2cdc1b90ce70b13b12682c3c2b1ef6be14a78907c4fb8228a913ca3'; url = "$BlueBase/voices/shira.json" },
-    @{ name = 'voices/tamar.json';             size =    288114; sha256 = '09026d10ef83b9e7e490b68f17ef7fb54e80940bf6321990b53a5a7340c79987'; url = "$BlueBase/voices/tamar.json" },
-    @{ name = 'voices/yael.json';              size =    288145; sha256 = '3c82bf087ce6831b75c2755741dc519ebe87a58cc1e02e36f4cfa7ca35650501'; url = "$BlueBase/voices/yael.json" },
-    @{ name = 'voices/adam.json';              size =    288210; sha256 = '9daa9a234c5a4a36cab1d02c527c307a8a0058a3f806b316af01150a98604d22'; url = "$BlueBase/voices/adam.json" },
-    @{ name = 'voices/daniel.json';            size =    288828; sha256 = 'c8a6dd2a63259f686230cf3fd55e28906a158c9363cd33cb374a02201b862f5f'; url = "$BlueBase/voices/daniel.json" },
-    @{ name = 'voices/ariel.json';             size =    288672; sha256 = '67cc2e5c2f5c582d120aee4c5cd65b4ab21c4a4d89a0fe81ef1938a1d9f266cc'; url = "$BlueBase/voices/ariel.json" },
-    @{ name = 'voices/david.json';             size =    288598; sha256 = '6e51be7341233ce360659031f0ab4c01e6829de845cd3ccf1e9a1a5cde370109'; url = "$BlueBase/voices/david.json" },
-    @{ name = 'voices/ethan.json';             size =    288591; sha256 = '802e09b837dc8ff8bf2023ea0d9a89b845b5385b5312d00d95734ca40c840b20'; url = "$BlueBase/voices/ethan.json" },
-    @{ name = 'voices/jonathan.json';          size =    288406; sha256 = '7af846f12fb30ba29dcf5047e04ce2f9d0f6d4164cd31109220cb03d744a52ff'; url = "$BlueBase/voices/jonathan.json" },
-    @{ name = 'voices/michael.json';           size =    288215; sha256 = '2018e228025313923abec2bc6b468db2e4a98ef916fea40d5501c0ec6fb3f335'; url = "$BlueBase/voices/michael.json" },
+    @{ name = 'tts.json';                      size =      8654; sha256 = '38c65e35451577954dd94eaf7fc619b8231cc37b3328ffb95556fa821983ef48'; url = "$BlueBase/onnx/tts.json" },
+    @{ name = 'voices/noa.json';               size =    287992; sha256 = '34fea6e7746dc16399640604c8de87564bd759659ee91c536c1d30a3e9bab49d'; url = "$BlueBase/voices/noa.json" },
+    @{ name = 'voices/lily.json';              size =    288400; sha256 = '8e3d320955ff8faf9ee5363111f9883ad476dd60d9919137d2851dd8c1ecefc1'; url = "$BlueBase/voices/lily.json" },
+    @{ name = 'voices/maya.json';              size =    288319; sha256 = 'e0e1ab7de876c6097b2c3e378ed4add4aef2744d98a7755c38e684f2d3760c41'; url = "$BlueBase/voices/maya.json" },
+    @{ name = 'voices/emma.json';              size =    288500; sha256 = 'e547c10547a306d3b81448c56e49a6ab03fababce23f15dc121eee19f4a1e9c4'; url = "$BlueBase/voices/emma.json" },
+    @{ name = 'voices/sara.json';              size =    288412; sha256 = '373ff9b480cc74961c0df98f9c7cfad9feff000b5ab08237d0e22844546c97a4'; url = "$BlueBase/voices/sara.json" },
+    @{ name = 'voices/shira.json';             size =    288188; sha256 = 'b42d26f1cb8d6ae58b0df074eba753442b56291aaf8d6e5ad2ac45ab66efcd53'; url = "$BlueBase/voices/shira.json" },
+    @{ name = 'voices/tamar.json';             size =    288221; sha256 = '2ee2bcce78444da3f29417812695ae54d075b95fafaaa05eab40bb1e7ed19766'; url = "$BlueBase/voices/tamar.json" },
+    @{ name = 'voices/yael.json';              size =    288284; sha256 = 'd8019210bc57798ae03448ecf71e58538d23a69c0c120f7989fa851fc99d1d5a'; url = "$BlueBase/voices/yael.json" },
+    @{ name = 'voices/adam.json';              size =    288306; sha256 = '6b296fe8cb515aca19c5e6accdfc755fe9450867cdd2c4a223414b8e7a734d03'; url = "$BlueBase/voices/adam.json" },
+    @{ name = 'voices/daniel.json';            size =    288934; sha256 = '4114b4183caa2f6336f575d380b877ea23015adc92f8d5184c9fef1b031c143a'; url = "$BlueBase/voices/daniel.json" },
+    @{ name = 'voices/ariel.json';             size =    288782; sha256 = 'ac793ec51a7c4cf9fe4980fe254cbdb04f42ac2fbf37007b6e714a9348b9d6f2'; url = "$BlueBase/voices/ariel.json" },
+    @{ name = 'voices/david.json';             size =    288731; sha256 = '07a2f81ac84142602c1c90dcea254af5c8497c4f116f71b2aaa403764c795945'; url = "$BlueBase/voices/david.json" },
+    @{ name = 'voices/ethan.json';             size =    288722; sha256 = '441e9ed43f163784d435353fe8baca5fb90a978450542eb993d6e656ceef3ab0'; url = "$BlueBase/voices/ethan.json" },
+    @{ name = 'voices/jonathan.json';          size =    288527; sha256 = '90f38ae4f18f585419c2705ed5ce0099a4e591258f75d5e872536318ff16bcd9'; url = "$BlueBase/voices/jonathan.json" },
+    @{ name = 'voices/michael.json';           size =    288321; sha256 = '6ddf319b702b438cc500bee7b85be47cc42d1259282b91428679636e37b2cd91'; url = "$BlueBase/voices/michael.json" },
     @{ name = 'polyg2p/en.lex';                size =   2759393; sha256 = '713aaed9ce1891e111eab2d213df560f043947b9268c6411b26a8c756ea99d32'; url = "$BlueBase/frontend/polyg2p_data/en.lex" },
     @{ name = 'polyg2p/en-large.g2p';          size =   4880559; sha256 = 'a119ddaabc98ceb2696f2d9af52cfc0733388286d489b175c43129365ea15c4b'; url = "$BlueBase/frontend/polyg2p_data/en-large.g2p" },
     @{ name = 'polyg2p/en.g2p';                size =   1780155; sha256 = '2f638c5358a2a90075a575024d747931d1d92160e18ce0f9ed7176894a366808'; url = "$BlueBase/frontend/polyg2p_data/en.g2p" },
@@ -236,6 +237,11 @@ function Get-Verified {
         Invoke-WebRequest -Uri $Uri -OutFile $temp -UseBasicParsing -TimeoutSec $TimeoutSec
     } catch {
         if (Test-Path $temp) { Remove-Item $temp -Force }
+        $status = 0
+        try { $status = [int]$_.Exception.Response.StatusCode } catch { $status = 0 }
+        if ($status -in 401, 403, 404, 410) {
+            throw "$Uri is no longer available (HTTP $status): the pinned model revision is gone or refused. Install the newest MamboTTS release, whose file list points at the current files."
+        }
         throw "Download failed for $Uri : $($_.Exception.Message)"
     }
 
@@ -401,10 +407,22 @@ function Get-ModelFileList {
                 $hasG2p = $blue -and ($blue.PSObject.Properties.Name -contains 'hebrew_g2p') -and @($blue.hebrew_g2p).Count -gt 0
                 if ($blue -and $blue.files -and $hasG2p -and $blue.directory -eq ($ModelSubDir -replace '^models\\', '')) {
                     Write-Detail "$(@($blue.files).Count) files and $(@($blue.hebrew_g2p).Count) RenikudPlus variants listed by the server itself."
+                    # The files the server carries itself (git-stored in the
+                    # model repository, gone from the Hub after a squash) come
+                    # from it, so it stays up until Install-Models is done.
+                    $files = @($blue.files | ForEach-Object {
+                            if ($_.PSObject.Properties.Name -contains 'shipped' -and $_.shipped) {
+                                $_.url = "http://127.0.0.1:$probePort/v1/models/files/$($_.name)"
+                            }
+                            $_
+                        })
+                    $keep = $process
+                    $process = $null
                     return @{
-                        Files = @($blue.files)
+                        Files = $files
                         HebrewG2p = @($blue.hebrew_g2p)
                         Int8MaxMemory = [long]$blue.hebrew_g2p_policy.int8_max_memory
+                        Server = $keep
                     }
                 }
             } catch {
@@ -626,7 +644,13 @@ function Install-ServerMode {
     $resolvedVersion = Resolve-Version
     $exe = Install-Server -ReleaseVersion $resolvedVersion
     $list = Get-ModelFileList -Exe $exe
-    $models = Install-Models -List $list
+    try {
+        $models = Install-Models -List $list
+    } finally {
+        if ($list.Server -and -not $list.Server.HasExited) {
+            Stop-Process -Id $list.Server.Id -Force -ErrorAction SilentlyContinue
+        }
+    }
     $modelDir = $models.ModelDir
     $launcher = Write-Launcher -Renikud $models.Renikud
     $shortcut = Add-StartMenuShortcut -Launcher $launcher

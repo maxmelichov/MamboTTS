@@ -1,0 +1,45 @@
+polyg2p
+Copyright 2026 Maxim Melichov and contributors
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product contains no code or data from eSpeak NG. eSpeak NG (GPL-3.0) was used
+only during development, outside this package, as a benchmark and to match its
+phoneme symbol conventions (which are not copyrightable).
+
+Data files and their sources
+----------------------------
+data/en_func.tsv, data/en_merge.tsv, data/de_func.tsv
+    Short lists of function-word forms written by the polyg2p authors.
+
+en.lex (English lexicon) and en.g2p (English out-of-vocabulary model)
+    Derived from the CMU Pronouncing Dictionary:
+    Copyright (C) 1993-2015 Carnegie Mellon University. All rights reserved.
+    Redistribution and use in source and binary forms, with or without
+    modification, are permitted provided that the following conditions are met:
+    1. Redistributions of source code must retain the above copyright notice,
+       this list of conditions and the following disclaimer. The contents of
+       this file are deemed to be source code.
+    2. Redistributions in binary form must reproduce the above copyright notice,
+       this list of conditions and the following disclaimer in the documentation
+       and/or other materials provided with the distribution.
+    THIS SOFTWARE IS PROVIDED BY CARNEGIE MELLON UNIVERSITY ``AS IS'' AND ANY
+    EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+    DISCLAIMED. IN NO EVENT SHALL CARNEGIE MELLON UNIVERSITY NOR ITS EMPLOYEES BE
+    LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+    CONSEQUENTIAL DAMAGES ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE.
+
+data/it_suffix.tsv, data/it_open.tsv (Italian stress / vowel-openness statistics)
+    Aggregate counts computed from WikiPron's Italian data, which is extracted
+    from Wiktionary (CC BY-SA). The tables hold only per-ending statistics, not
+    pronunciations; see "Data licensing" in README.md before redistributing.
+
+OPTIONAL data packs (not part of the Apache-2.0 distribution)
+    it.lex  - from WikiPron / Wiktionary, CC BY-SA 3.0/4.0
+    de.lex  - from german-ipa-dict (devio-at) via ipa-dict, from Wiktionary, CC BY-SA
+    These must be distributed under their own share-alike terms.
+
+ru_accents.lex, ru_yo.lex, ru_yo_homographs.lex, ru_homographs.lex, ru_suffix.lex (Russian stress and ё)
+    ru_accents / ru_yo / ru_yo_homographs derived from the RUAccent dictionaries
+    (huggingface.co/ruaccent/accentuator, revision b78ae5ea1e62beaf138bed1865cd8c3b0b5ca855), MIT License,
+    Copyright (c) RUAccent authors. ru_homographs / ru_suffix: polyg2p stress tables.

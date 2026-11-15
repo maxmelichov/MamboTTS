@@ -31,6 +31,20 @@ pub struct ModelFile {
     /// Lowercase hex SHA-256 of the file at the pinned revision. A download
     /// takes the file's real name only once its size and hash match.
     pub sha256: &'static str,
+    /// The file's bytes, compiled in, for the files the model repository
+    /// keeps in git rather than LFS (`vocab.json`, `tts.json`, the voices,
+    /// two polyg2p lexicons, the licence): a squash of the Hub history
+    /// deletes git-stored files at old revisions (LFS objects survive), so
+    /// the app ships them instead of fetching `url`. `None`: download `url`.
+    #[serde(skip)]
+    pub shipped: Option<&'static [u8]>,
+}
+
+impl ModelFile {
+    /// Whether the app carries this file itself ([`ModelFile::shipped`]).
+    pub fn is_shipped(&self) -> bool {
+        self.shipped.is_some()
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -44,6 +58,10 @@ pub struct RuntimeManifest {
     pub install_kind: InstallKind,
     pub files: &'static [ModelFile],
     pub required_files: &'static [&'static str],
+    /// Directories of earlier releases of this bundle, newest first. An
+    /// install found in one keeps working while the background upgrade
+    /// fills `directory`, copying every file whose bytes did not change.
+    pub previous_directories: &'static [&'static str],
     /// The bundle also needs one RenikudPlus file ([`HebrewG2pVariant`]),
     /// which `files` leaves out because the machine decides which.
     pub hebrew_g2p: bool,
@@ -69,29 +87,39 @@ impl RuntimeManifest {
     }
 }
 
-// BlueV3 v3.0.0, pinned to the commit the release's `v3.0.0` tag names
-// (fb3dc38), so a bundle is the same files on every install. Pin a tag's
-// commit, not a branch commit: the repository's main history has been
-// squashed more than once (d80497f, then ba91a77), and a squashed-away
-// revision stops resolving. ba91a77 is already half gone: the Hub no longer
-// lists it, and `frontend/polyg2p_data/LICENSE` at it answers 404. Every graph
-// and lexicon is byte-identical between the two; tts.json and the voice files
-// differ only in an added `model` field (the style tensors are equal). Moving
-// to a new release means a new revision here, new sizes and hashes, and, when
-// a file's contract changes, a new `directory`.
+// BlueV3 v3.0.1 (checkpoint 702000), pinned to BlueV3-onnx d0a0270e, the
+// revision its MANIFEST.json (sizes and SHA-256 below) and BlueV3's
+// `download_models.py` name, so a bundle is the same files on every install.
+// The repository's history has been squashed before (d80497f, ba91a77), and a
+// squashed-away revision stops resolving, so pin what the release pins.
+// Against v3.0.0 (fb3dc38, checkpoint 701500) the text encoder, the duration
+// predictor, the vector estimator, tts.json and every voice changed (new
+// weights, a new duration model, and each voice carries `speed_scale`);
+// vocab.json, the vocoder, polyg2p's data and RenikudPlus are byte-identical,
+// so the upgrade from a 3.0.0 install copies them instead of downloading
+// them again. Moving to a new release means a new revision here, new sizes
+// and hashes, a new `directory`, and the old one in `previous_directories`.
 const BLUE_MODEL_BASE_URL: &str =
-    "https://huggingface.co/notmax123/BlueV3-onnx/resolve/fb3dc3862557b8fad913a5c66ec9dfb5c9bbbf86";
+    "https://huggingface.co/notmax123/BlueV3-onnx/resolve/d0a0270e60b96d5066cfe7ebed1f7c2872361c43";
 
 macro_rules! blue_file {
     ($name:literal, $path:literal, $size:literal, $sha256:literal) => {
+        blue_file!(@ $name, $path, $size, $sha256, None)
+    };
+    // A git-stored file of the model repository: shipped from `shipped/`.
+    (shipped $name:literal, $path:literal, $size:literal, $sha256:literal) => {
+        blue_file!(@ $name, $path, $size, $sha256, Some(include_bytes!(concat!("../shipped/", $name))))
+    };
+    (@ $name:literal, $path:literal, $size:literal, $sha256:literal, $shipped:expr) => {
         ModelFile {
             name: $name,
             url: concat!(
-                "https://huggingface.co/notmax123/BlueV3-onnx/resolve/fb3dc3862557b8fad913a5c66ec9dfb5c9bbbf86/",
+                "https://huggingface.co/notmax123/BlueV3-onnx/resolve/d0a0270e60b96d5066cfe7ebed1f7c2872361c43/",
                 $path
             ),
             size: $size,
             sha256: $sha256,
+            shipped: $shipped,
         }
     };
 }
@@ -133,12 +161,14 @@ impl HebrewG2pVariant {
                 url: "https://huggingface.co/notmax123/RenikudPlus/resolve/679c56ca449d41873fb8ff7711ddf7563d28198f/model.onnx",
                 size: 1_234_209_530,
                 sha256: "c3a2bdc35afbf53f28cdece4672dcca9b530dfa43a0d65b4c5bbc47150b32d0d",
+                shipped: None,
             },
             Self::Int8 => ModelFile {
                 name: "renikud-plus.onnx",
                 url: "https://huggingface.co/notmax123/RenikudPlus/resolve/679c56ca449d41873fb8ff7711ddf7563d28198f/model_int8.onnx",
                 size: 311_605_741,
                 sha256: "0337468fad56eadf5ecc7becfdf21648a4d668de41de5bc27e860141b5afcadd",
+                shipped: None,
             },
         }
     }
@@ -253,19 +283,19 @@ const BLUE_FILES: &[ModelFile] = &[
         "duration_predictor_style.onnx",
         "onnx/duration_predictor_style.onnx",
         1_524_267,
-        "9aa8951637c7de4c2f6d43296af6394f4527a810fe8ba56df5aeedc2cec7247b"
+        "46197a2c10f06e151adc6dd109082889e6aaf903c46ce25d798eebaa7b07e313"
     ),
     blue_file!(
         "text_encoder.onnx",
         "onnx/text_encoder.onnx",
         27_951_369,
-        "288d48053d82f12fb4b7319ea0a5c8c669c4e87ade983c695666fa9e346408c1"
+        "9dd84651a48048dce980d9d54c11fd3c04170602fb4f9e66957c08eeee2e55ba"
     ),
     blue_file!(
         "vector_estimator.onnx",
         "onnx/vector_estimator.onnx",
         256_556_761,
-        "46abc33ac65e24cb5331b6d29ec4520b9a33a4a86a7723b5e44677af10d5b584"
+        "2f0e4af007f166afdc020331b863b1ea6b93c29258ae3b649f81234c1d7ad7c1"
     ),
     blue_file!(
         "vocoder.onnx",
@@ -274,106 +304,106 @@ const BLUE_FILES: &[ModelFile] = &[
         "054a700e9ef17d43de203212dca335fa2cd000cd9ca7701df49fcc544b49ccbe"
     ),
     blue_file!(
-        "vocab.json",
+        shipped "vocab.json",
         "onnx/vocab.json",
         3_382,
         "9cf96e595f62ea8a36d3be6724b06fb821614c2938d0724852d1a25feff5bad5"
     ),
     blue_file!(
-        "tts.json",
+        shipped "tts.json",
         "onnx/tts.json",
-        8_509,
-        "35af77b0634c2d4be4eb2faeeabdb364ad6bf80302202f6b5952e83984326eea"
+        8_654,
+        "38c65e35451577954dd94eaf7fc619b8231cc37b3328ffb95556fa821983ef48"
     ),
     blue_file!(
+        shipped "voices/noa.json",
         "voices/noa.json",
-        "voices/noa.json",
-        287_857,
-        "d392adf5542220ca57841308ffd7ac76f013025b624efd8f43a8f53a799e4638"
+        287_992,
+        "34fea6e7746dc16399640604c8de87564bd759659ee91c536c1d30a3e9bab49d"
     ),
     blue_file!(
+        shipped "voices/lily.json",
         "voices/lily.json",
-        "voices/lily.json",
-        288_281,
-        "7d1b9f54d4a6797b31e997f59a55399e3daf73782aa2a477721afd963ca59969"
+        288_400,
+        "8e3d320955ff8faf9ee5363111f9883ad476dd60d9919137d2851dd8c1ecefc1"
     ),
     blue_file!(
+        shipped "voices/maya.json",
         "voices/maya.json",
-        "voices/maya.json",
-        288_203,
-        "83a9f7303c954951677fc0db17e58bfeee8064553f67f3991b7c7d0ed4c8f8ce"
+        288_319,
+        "e0e1ab7de876c6097b2c3e378ed4add4aef2744d98a7755c38e684f2d3760c41"
     ),
     blue_file!(
+        shipped "voices/emma.json",
         "voices/emma.json",
-        "voices/emma.json",
-        288_397,
-        "46cedaaa14f68dc9017e8c0fac94b21ba615845c1f7981cb5bfe3740cf4a2365"
+        288_500,
+        "e547c10547a306d3b81448c56e49a6ab03fababce23f15dc121eee19f4a1e9c4"
     ),
     blue_file!(
+        shipped "voices/sara.json",
         "voices/sara.json",
-        "voices/sara.json",
-        288_277,
-        "dc43188552dfede47f9450104cce931ae356e8896f1b9b093317d4dff4fc6863"
+        288_412,
+        "373ff9b480cc74961c0df98f9c7cfad9feff000b5ab08237d0e22844546c97a4"
     ),
     blue_file!(
+        shipped "voices/shira.json",
         "voices/shira.json",
-        "voices/shira.json",
-        288_019,
-        "19611940a2cdc1b90ce70b13b12682c3c2b1ef6be14a78907c4fb8228a913ca3"
+        288_188,
+        "b42d26f1cb8d6ae58b0df074eba753442b56291aaf8d6e5ad2ac45ab66efcd53"
     ),
     blue_file!(
+        shipped "voices/tamar.json",
         "voices/tamar.json",
-        "voices/tamar.json",
-        288_114,
-        "09026d10ef83b9e7e490b68f17ef7fb54e80940bf6321990b53a5a7340c79987"
+        288_221,
+        "2ee2bcce78444da3f29417812695ae54d075b95fafaaa05eab40bb1e7ed19766"
     ),
     blue_file!(
+        shipped "voices/yael.json",
         "voices/yael.json",
-        "voices/yael.json",
-        288_145,
-        "3c82bf087ce6831b75c2755741dc519ebe87a58cc1e02e36f4cfa7ca35650501"
+        288_284,
+        "d8019210bc57798ae03448ecf71e58538d23a69c0c120f7989fa851fc99d1d5a"
     ),
     blue_file!(
+        shipped "voices/adam.json",
         "voices/adam.json",
-        "voices/adam.json",
-        288_210,
-        "9daa9a234c5a4a36cab1d02c527c307a8a0058a3f806b316af01150a98604d22"
+        288_306,
+        "6b296fe8cb515aca19c5e6accdfc755fe9450867cdd2c4a223414b8e7a734d03"
     ),
     blue_file!(
+        shipped "voices/daniel.json",
         "voices/daniel.json",
-        "voices/daniel.json",
-        288_828,
-        "c8a6dd2a63259f686230cf3fd55e28906a158c9363cd33cb374a02201b862f5f"
+        288_934,
+        "4114b4183caa2f6336f575d380b877ea23015adc92f8d5184c9fef1b031c143a"
     ),
     blue_file!(
+        shipped "voices/ariel.json",
         "voices/ariel.json",
-        "voices/ariel.json",
-        288_672,
-        "67cc2e5c2f5c582d120aee4c5cd65b4ab21c4a4d89a0fe81ef1938a1d9f266cc"
+        288_782,
+        "ac793ec51a7c4cf9fe4980fe254cbdb04f42ac2fbf37007b6e714a9348b9d6f2"
     ),
     blue_file!(
+        shipped "voices/david.json",
         "voices/david.json",
-        "voices/david.json",
-        288_598,
-        "6e51be7341233ce360659031f0ab4c01e6829de845cd3ccf1e9a1a5cde370109"
+        288_731,
+        "07a2f81ac84142602c1c90dcea254af5c8497c4f116f71b2aaa403764c795945"
     ),
     blue_file!(
+        shipped "voices/ethan.json",
         "voices/ethan.json",
-        "voices/ethan.json",
-        288_591,
-        "802e09b837dc8ff8bf2023ea0d9a89b845b5385b5312d00d95734ca40c840b20"
+        288_722,
+        "441e9ed43f163784d435353fe8baca5fb90a978450542eb993d6e656ceef3ab0"
     ),
     blue_file!(
+        shipped "voices/jonathan.json",
         "voices/jonathan.json",
-        "voices/jonathan.json",
-        288_406,
-        "7af846f12fb30ba29dcf5047e04ce2f9d0f6d4164cd31109220cb03d744a52ff"
+        288_527,
+        "90f38ae4f18f585419c2705ed5ce0099a4e591258f75d5e872536318ff16bcd9"
     ),
     blue_file!(
+        shipped "voices/michael.json",
         "voices/michael.json",
-        "voices/michael.json",
-        288_215,
-        "2018e228025313923abec2bc6b468db2e4a98ef916fea40d5501c0ec6fb3f335"
+        288_321,
+        "6ddf319b702b438cc500bee7b85be47cc42d1259282b91428679636e37b2cd91"
     ),
     blue_file!(
         "polyg2p/en.lex",
@@ -412,7 +442,7 @@ const BLUE_FILES: &[ModelFile] = &[
         "505e3235f41a61fb54af70fb0a426f6ae68bb75e4d422841f4063a08865c8b07"
     ),
     blue_file!(
-        "polyg2p/ru_homographs.lex",
+        shipped "polyg2p/ru_homographs.lex",
         "frontend/polyg2p_data/ru_homographs.lex",
         82_364,
         "27a3bb226121130717c7e44fb21a25b826e1e5b77900f0a151bdf560bbaaa9e0"
@@ -430,19 +460,19 @@ const BLUE_FILES: &[ModelFile] = &[
         "16dbb14ea719a5f8562f64a41873e701c6163737cb03af55efa038c07b112165"
     ),
     blue_file!(
-        "polyg2p/ru_yo_homographs.lex",
+        shipped "polyg2p/ru_yo_homographs.lex",
         "frontend/polyg2p_data/ru_yo_homographs.lex",
         19_043,
         "057cddf02713732706127274c796a6f418ad7096679ac532f7c31cf7c9266064"
     ),
     blue_file!(
-        "polyg2p/LICENSE",
+        shipped "polyg2p/LICENSE",
         "frontend/polyg2p_data/LICENSE",
         11_357,
         "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
     ),
     blue_file!(
-        "polyg2p/NOTICE",
+        shipped "polyg2p/NOTICE",
         "frontend/polyg2p_data/NOTICE",
         2_734,
         "1a5544c762f18316b934e03db8ced24931f752f5332aa70c3bb15ca1ba92a114"
@@ -491,15 +521,16 @@ pub const BLUE_POLYG2P_DIR: &str = "polyg2p";
 const BLUE: RuntimeManifest = RuntimeManifest {
     id: DEFAULT_RUNTIME_ID,
     name: "BlueTTS",
-    version: "bluev3-3.0.0",
+    version: "bluev3-3.0.1",
     size: "~740 MB",
     description: "Fast local speech for Hebrew, English, Spanish, German, Italian, and Russian.",
-    // A new directory: BlueV3 has its own graphs, voices and front end, so
-    // it must not land on top of a 2.5 install.
-    directory: "bluev3-3.0.0",
+    // Each release in its own directory: its graphs and voices go together,
+    // so a new release never lands on top of the one the app is running.
+    directory: "bluev3-3.0.1",
     install_kind: InstallKind::Files,
     files: BLUE_FILES,
     required_files: BLUE_REQUIRED_FILES,
+    previous_directories: &["bluev3-3.0.0"],
     hebrew_g2p: true,
     capabilities: RuntimeCapabilities {
         hebrew: true,
@@ -717,6 +748,67 @@ mod tests {
             );
             assert_eq!(file.name, variant.file_name());
         }
+    }
+
+    #[test]
+    fn the_release_is_v3_0_1_and_upgrades_from_v3_0_0() {
+        let blue = runtime(DEFAULT_RUNTIME_ID).expect("Blue manifest");
+        assert_eq!(blue.version, "bluev3-3.0.1");
+        assert_eq!(blue.directory, "bluev3-3.0.1");
+        assert_eq!(blue.previous_directories, ["bluev3-3.0.0"]);
+        assert!(!blue.previous_directories.contains(&blue.directory));
+        assert!(blue_model_base_url().ends_with("/d0a0270e60b96d5066cfe7ebed1f7c2872361c43"));
+        // What v3.0.0 (fb3dc38) shipped and v3.0.1 did not change: the
+        // upgrade takes these from the old directory instead of downloading.
+        let unchanged = [
+            ("vocab.json", "9cf96e595f62ea8a36d3be6724b06fb821614c2938d0724852d1a25feff5bad5"),
+            ("vocoder.onnx", "054a700e9ef17d43de203212dca335fa2cd000cd9ca7701df49fcc544b49ccbe"),
+            ("polyg2p/en.lex", "713aaed9ce1891e111eab2d213df560f043947b9268c6411b26a8c756ea99d32"),
+            ("polyg2p/de.lex", "eeb7df564ef1bc894bf7cc39f0f054f5c516d38c2119922ac69ff8c31681594c"),
+        ];
+        for (name, sha256) in unchanged {
+            let file = blue.files.iter().find(|file| file.name == name).unwrap();
+            assert_eq!(file.sha256, sha256, "{name}");
+        }
+        // ...and what it did change: the graphs the voices belong to.
+        let changed = [
+            ("vector_estimator.onnx", "46abc33ac65e24cb5331b6d29ec4520b9a33a4a86a7723b5e44677af10d5b584"),
+            ("voices/shira.json", "19611940a2cdc1b90ce70b13b12682c3c2b1ef6be14a78907c4fb8228a913ca3"),
+        ];
+        for (name, old) in changed {
+            let file = blue.files.iter().find(|file| file.name == name).unwrap();
+            assert_ne!(file.sha256, old, "{name}");
+        }
+    }
+
+    /// The shipped files are the release's bytes, and exactly the files the
+    /// model repository keeps in git (its tree API at d0a0270e lists every
+    /// other one as LFS).
+    #[test]
+    fn shipped_files_are_the_git_stored_ones_byte_for_byte() {
+        use sha2::{Digest, Sha256};
+        let blue = runtime(DEFAULT_RUNTIME_ID).expect("Blue manifest");
+        let mut shipped: Vec<&str> = Vec::new();
+        for file in blue.files {
+            if let Some(bytes) = file.shipped {
+                assert_eq!(bytes.len() as u64, file.size, "{}", file.name);
+                let hex: String = Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect();
+                assert_eq!(hex, file.sha256, "{}", file.name);
+                shipped.push(file.name);
+            }
+        }
+        let mut expected = vec![
+            "vocab.json",
+            "tts.json",
+            "polyg2p/ru_homographs.lex",
+            "polyg2p/ru_yo_homographs.lex",
+            "polyg2p/LICENSE",
+            "polyg2p/NOTICE",
+        ];
+        expected.extend(BLUE_VOICES.iter().map(|voice| &*Box::leak(format!("voices/{}", voice.file).into_boxed_str())));
+        shipped.sort_unstable();
+        expected.sort_unstable();
+        assert_eq!(shipped, expected);
     }
 
     #[test]

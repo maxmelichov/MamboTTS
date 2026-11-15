@@ -98,7 +98,6 @@ type EditorCardProps = {
   blueVoice: string;
   blueVoiceIds: string[];
   speed: number | null;
-  languageSpeed: number;
   steps: number;
   setBlueVoice: (voice: string) => void;
   setSpeed: (speed: number | null) => void;
@@ -155,7 +154,6 @@ export function EditorCard({
   blueVoice,
   blueVoiceIds,
   speed,
-  languageSpeed,
   steps,
   setBlueVoice,
   setSpeed,
@@ -491,7 +489,6 @@ export function EditorCard({
           blueVoice={blueVoice}
           blueVoiceIds={blueVoiceIds}
           speed={speed}
-          languageSpeed={languageSpeed}
           steps={steps}
           setBlueVoice={setBlueVoice}
           setSpeed={setSpeed}

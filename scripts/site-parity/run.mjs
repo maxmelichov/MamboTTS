@@ -10,7 +10,9 @@
  *   site      js/onnx-web-worker.js itself, loaded in Node and driven through
  *             its message protocol as js/browser-tts.js drives it: init with
  *             the WASM backend, then synthesize { text, lang, voice: 'shira',
- *             steps: 8, speed: the page's default, cfgScale: 4, stream }.
+ *             steps: 8, speed: the page's default (1.0 in every language for
+ *             BlueV3 v3.0.1; SITE_SPEED overrides), cfgScale: 4, stream }.
+ *             Both sides multiply the speed by the voice's speed_scale[lang].
  *             onnxruntime-web is replaced by onnxruntime-node's CPU provider
  *             (the same kernels as ORT's WASM build, natively), the Hub
  *             downloads by the bundle's local files (same sha256), and the
@@ -21,7 +23,8 @@
  *
  * Compared per case: the prepared text, the chunk plan (each chunk's
  * phonemes), its token ids, the duration predictor's seconds and the
- * duration after the speed (float32, exact), latent frames, the samples of
+ * duration after the speed and the voice's speed_scale (float32, exact),
+ * latent frames, the samples of
  * every streamed chunk and the whole clip (float32 before the site's int16
  * encode, and the int16 WAV itself against MamboTTS's float audio encoded the
  * page's way).
@@ -39,14 +42,15 @@
  *
  * Usage (from the repo root):
  *   BLUETTS_SITE=<LightBlue-site checkout> \
- *   MAMBOTTS_BLUE_MODEL_DIR=<installed bluev3-3.0.0 bundle> \
+ *   MAMBOTTS_BLUE_MODEL_DIR=<a bluev3-3.0.1 bundle (BlueV3-onnx d0a0270e)> \
  *   BLUEV3_RENIKUD=<RenikudPlus model.onnx @679c56c, fp32> \
  *   ORT_NODE=<node_modules/onnxruntime-node, 1.23.2> \
  *   node scripts/site-parity/run.mjs [filter]
  *
- *   SITE_TTS_JSON the site revision's tts.json (default: next to BLUEV3_RENIKUD,
- *                 as in a BlueV3 checkout); the geometry and operating point
+ *   SITE_TTS_JSON the site revision's tts.json (default: the bundle's, the
+ *                 same file at d0a0270e); the geometry and operating point
  *                 read from it are checked equal to the bundle's below
+ *   SITE_SPEED    the page's default speed (default 1.0, v3.0.1)
  *   PARITY_OUT    working directory (default: a temp dir)
  *   SKIP_CARGO=1  reuse PARITY_OUT/mambo.json from an earlier run
  *   MAX_ABS       allowed per-sample difference (default 0: bit-identical)
@@ -145,11 +149,11 @@ function localFile(url) {
     if (url === HEBREW_MODELS.fp32.url) return RENIKUD;
     if (url.startsWith(HUB)) {
         const rel = url.slice(HUB.length);
-        // tts.json: the site's revision (ba91a77) carries a longer description
-        // than the bundle's (fb3dc38), with the same geometry and operating
-        // point (blue_release.inference); the site checks the size, so its
-        // own copy is served from the BlueV3 checkout next to RenikudPlus.
-        if (rel === 'onnx/tts.json') return process.env.SITE_TTS_JSON || path.join(path.dirname(RENIKUD), 'tts.json');
+        // tts.json: the site's revision's copy (SITE_TTS_JSON) when given;
+        // otherwise the bundle's, which is the same file when both pin
+        // d0a0270e. The site checks the size, and the geometry and operating
+        // point either side reads are checked equal below.
+        if (rel === 'onnx/tts.json') return process.env.SITE_TTS_JSON || path.join(BUNDLE, 'tts.json');
         if (rel.startsWith('onnx/')) return path.join(BUNDLE, rel.slice(5));
         if (rel.startsWith('frontend/polyg2p_data/')) return path.join(BUNDLE, 'polyg2p', rel.slice('frontend/polyg2p_data/'.length));
     }
@@ -201,8 +205,12 @@ const ready = (await call('init', { options: { prefer: 'wasm', simulate: { g2pHe
 console.log(`site-parity: site ready: backend ${ready.backend} (${ready.reason}), Hebrew G2P ${ready.env && ready.env.hebrewG2P && ready.env.hebrewG2P.variant}`);
 if (mambo.renikud && ready.env && ready.env.hebrewG2P && ready.env.hebrewG2P.variant !== 'fp32') throw new Error('site-parity: the site did not pick fp32 RenikudPlus');
 
-// The page's request (js/script.js snapshotRequest, js/browser-tts.js synthesize).
-const DEFAULT_SPEED = { he: 0.9 };
+// The page's request (js/script.js snapshotRequest, js/browser-tts.js synthesize):
+// BlueV3 v3.0.1's default speed is 1.0 in every language.
+const SITE_SPEED = Number(process.env.SITE_SPEED || 1.0);
+if (MODEL_REV !== 'd0a0270e60b96d5066cfe7ebed1f7c2872361c43') {
+    console.log(`site-parity: WARNING the site's worker pins BlueV3-onnx ${MODEL_REV}, not v3.0.1 (d0a0270e)`);
+}
 // The release's fifteen voices, each its own file (no aliases).
 const VOICE_MAP = Object.fromEntries(
     ['Maya', 'Noa', 'Lily', 'Tamar', 'Shira', 'Yael', 'Emma', 'Sara', 'Adam', 'Daniel', 'David', 'Jonathan', 'Ethan', 'Michael', 'Ariel']
@@ -241,7 +249,7 @@ for (const m of mambo.cases.filter((c) => c.id.includes(filter))) {
     const lines = [];
     const fail = (msg) => { lines.push(`  FAIL ${msg}`); };
     const lang = m.lang;
-    const speed = DEFAULT_SPEED[lang] ?? 0.95;
+    const speed = SITE_SPEED;
     if (Math.abs(m.speed - speed) > 1e-6) fail(`speed: MamboTTS ${m.speed}, site ${speed}`);
     if (VOICE_MAP[m.voice] !== 'shira') fail(`voice: MamboTTS ${m.voice}, site Shira`);
     const heNormalize = lang === 'he' ? async (t) => (await hebnorm()).normalize(t) : null;

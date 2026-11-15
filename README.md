@@ -124,7 +124,7 @@ which is everything the desktop app uses to make audio.
 
 MamboTTS builds on these open-source projects:
 
-- [BlueTTS](https://github.com/maxmelichov/BlueTTS) is the local ONNX text-to-speech runtime, shipped by default. The model is [BlueV3](https://huggingface.co/notmax123/BlueV3-onnx) v3.0.0
+- [BlueTTS](https://github.com/maxmelichov/BlueTTS) is the local ONNX text-to-speech runtime, shipped by default. The model is [BlueV3](https://huggingface.co/notmax123/BlueV3-onnx) v3.0.1
 - [polyg2p](https://github.com/maxmelichov/polyg2p) reads English, Spanish, German, Italian, and Russian text into the phonemes the model was trained on
 - [heb-tts-normalizer](https://github.com/thewh1teagle/heb-tts-normalizer) turns Hebrew numbers, dates, times, currency, and units into spoken Hebrew
 - [RenikudPlus](https://github.com/maxmelichov/RenikudPlus) handles Hebrew grapheme-to-IPA conversion with speaker conditioning, and its predictions also add niqqud (diacritics, with the hatama stress mark) to Hebrew text

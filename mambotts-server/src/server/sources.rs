@@ -12,6 +12,10 @@ pub struct ModelSourceFile {
     size: u64,
     /// Lowercase hex SHA-256.
     sha256: String,
+    /// The server carries this file itself (git-stored in the model
+    /// repository, so gone from the Hub's history after a squash): fetch it
+    /// from `GET /v1/models/files/{name}` rather than `url`.
+    shipped: bool,
 }
 
 impl From<&ModelFile> for ModelSourceFile {
@@ -21,6 +25,7 @@ impl From<&ModelFile> for ModelSourceFile {
             url: file.url.into(),
             size: file.size,
             sha256: file.sha256.into(),
+            shipped: file.is_shipped(),
         }
     }
 }

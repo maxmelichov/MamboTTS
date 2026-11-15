@@ -184,7 +184,7 @@ pub async fn synthesize_request(
         "input_is_phonemes": request.input_is_phonemes.unwrap_or(false),
         "niqqud": request.niqqud.unwrap_or(false),
         // The engine's speed, as bluetts.com sends it. Unset is zero, which
-        // the server reads as the site's default for the language.
+        // the server reads as the release's default, 1.0.
         "speed": request.speed.unwrap_or(0.0),
         // The Quality slider's step count; zero is the server's default, 8.
         "steps": request.steps.unwrap_or(0),

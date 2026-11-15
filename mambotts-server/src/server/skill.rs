@@ -35,7 +35,7 @@ curl {{base_url}}/v1/models/sources
 
 curl -X POST {{base_url}}/v1/models/load \
   -H 'Content-Type: application/json' \
-  -d '{"runtime":"blue","model_path":"/path/to/bluev3-3.0.0","renikud_path":"/path/to/bluev3-3.0.0/renikud-plus-fp32.onnx","speaker":0,"target_speaker":0}'
+  -d '{"runtime":"blue","model_path":"/path/to/bluev3-3.0.1","renikud_path":"/path/to/bluev3-3.0.1/renikud-plus-fp32.onnx","speaker":0,"target_speaker":0}'
 
 curl -X POST {{base_url}}/v1/phonemize \
   -H 'Content-Type: application/json' \
@@ -81,7 +81,7 @@ mod tests {
             assert!(skill.contains(language), "{language}");
         }
         assert!(skill.contains("BlueV3"));
-        assert!(skill.contains("bluev3-3.0.0"));
+        assert!(skill.contains("bluev3-3.0.1"));
         assert!(!skill.contains("bluetts-2.5"));
         assert!(skill.contains("http://127.0.0.1:8791/openapi.json"));
     }

@@ -48,6 +48,7 @@ fn router(server: SharedServer) -> Router {
             get(handlers::models).delete(handlers::model_unload),
         )
         .route("/v1/models/sources", get(handlers::model_sources_handler))
+        .route("/v1/models/files/{*name}", get(handlers::model_file_handler))
         .route("/v1/models/load", post(handlers::model_load))
         .route("/v1/phonemize", post(handlers::phonemize))
         .route("/v1/diacritize", post(handlers::diacritize))

@@ -11,7 +11,7 @@ unchanged:
 
 Run it with the model directory in the environment:
 
-    MAMBOTTS_MODEL_DIR=~/…/models/bluev3-3.0.0 \\
+    MAMBOTTS_MODEL_DIR=~/…/models/bluev3-3.0.1 \\
       uvicorn mambotts_server:app --port 8080
 
 The engine serializes calls internally, so there is no lock around

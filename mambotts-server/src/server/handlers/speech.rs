@@ -451,14 +451,14 @@ fn send_final_wav(tx: &tokio::sync::mpsc::Sender<Result<Bytes, std::io::Error>>,
 /// The app's own slider is much tighter, 0.9 to 1.1, because outside that the
 /// audio loses level and articulation rather than simply changing pace. The
 /// wider clamp is kept for API callers who want to experiment.
-const MIN_SPEED: f32 = 0.5;
-const MAX_SPEED: f32 = 2.0;
+const MIN_SPEED: f64 = 0.5;
+const MAX_SPEED: f64 = 2.0;
 
 /// The speed the runtime gets: the engine's speed as bluetts.com sends it,
 /// clamped, or zero when the request left it unset. The runtime turns zero
-/// into the site's default for the language (0.9 Hebrew, 0.95 the others)
-/// and never applies that default on top of a chosen speed.
-fn resolve_speed(requested: f32) -> f32 {
+/// into the release's default, 1.0, and never applies a default on top of a
+/// chosen speed.
+fn resolve_speed(requested: f64) -> f64 {
     // Absent, zero and negative all mean "unspecified", because serde
     // defaults a missing float to zero and no caller means to ask for silence.
     if requested > 0.0 {

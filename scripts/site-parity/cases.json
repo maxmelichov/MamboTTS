@@ -105,5 +105,25 @@
     "lang": "he",
     "text": "שלום, מה שלומך היום?",
     "steps": 5
+  },
+  {
+    "id": "en-round2",
+    "lang": "en",
+    "text": "Call +44 (0)20 7946 0958 or visit https://www.example.co.uk/help today. The score was 3:1, and 1/2 of the 10-20 km route is done."
+  },
+  {
+    "id": "he-round2",
+    "lang": "he",
+    "text": "פרק 1 מתחיל ב-21/11 בשעה 14:30-16:00, טלפון 03-1234567 ואתר www.example.co.il."
+  },
+  {
+    "id": "ru-round2",
+    "lang": "ru",
+    "text": "15.11.2026 цена была 1 500 ₽, а в 2024 году звонили по номеру +7 495 123-45-67."
+  },
+  {
+    "id": "de-round2",
+    "lang": "de",
+    "text": "Am 2026-11-15 waren es 25°C, und wir sind 3-4 km gelaufen."
   }
 ]

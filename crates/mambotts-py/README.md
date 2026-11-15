@@ -38,7 +38,7 @@ import mambotts
 
 # RenikudPlus defaults to <model_dir>/renikud-plus-fp32.onnx (as bluetts.com runs it),
 # else <model_dir>/renikud-plus.onnx (the int8 export); MAMBOTTS_HEBREW_G2P=int8 prefers int8
-tts = mambotts.BlueTtsEngine("~/…/models/bluev3-3.0.0")
+tts = mambotts.BlueTtsEngine("~/…/models/bluev3-3.0.1")
 tts.sample_rate          # 44100
 tts.voices()             # ['Maya', 'Noa', 'Lily', 'Tamar', 'Shira', 'Yael', 'Emma', 'Sara',
                          #  'Adam', 'Daniel', 'David', 'Jonathan', 'Ethan', 'Michael', 'Ariel']
@@ -52,8 +52,15 @@ samples = tts.synthesize("Привет, как дела?", voice="Adam")  # auto
 `synthesize` returns mono `f32` samples in `[-1, 1]`; writing a WAV is the
 caller's job. `language="auto"` picks Hebrew for Hebrew letters, Russian
 for Cyrillic, and English otherwise. `speed` is the engine's speed, as on
-bluetts.com; left out, it is the site's default for the language (0.9 for
-Hebrew, 0.95 for the others).
+bluetts.com; the voice's `speed_scale` for the language multiplies it
+(BlueV3 v3.0.1), so the default, 1.0 in every language, is each voice's
+natural pace.
+
+The module also names the bundle it reads: `mambotts.BUNDLE_VERSION`
+(`bluev3-3.0.1`), `BUNDLE_DIRECTORY`, `MODEL` (`bluev3-702000`, the
+checkpoint the graphs and every voice are labelled with; a voice of another
+checkpoint is refused) and `BUNDLE_FILES`, each file at the pinned BlueV3-onnx
+revision as `(name, url, size, sha256)`.
 
 `synthesize_phonemes` takes IPA directly for text that was phonemized
 elsewhere. With `language="auto"` it reads the language from a leading tag
@@ -71,7 +78,7 @@ the same routes as the desktop sidecar:
 
 ```console
 pip install dist/mambotts-*.whl fastapi uvicorn
-MAMBOTTS_MODEL_DIR=~/…/models/bluev3-3.0.0 \
+MAMBOTTS_MODEL_DIR=~/…/models/bluev3-3.0.1 \
 MAMBOTTS_RENIKUD_PATH=~/…/renikud-plus.onnx \
   uvicorn mambotts_server:app --port 8080
 ```

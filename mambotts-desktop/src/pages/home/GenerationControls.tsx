@@ -24,11 +24,12 @@ const voiceLabels: Record<string, string> = {
   Ariel: "Ariel · masculine",
 };
 
-// The slider is bluetts.com's: the engine's speed itself, 0.8 to 1.2, and until
-// someone moves it, the site's default for the language (0.9 Hebrew, 0.95 the
-// others). Nothing is applied on top of it.
+// The slider is bluetts.com's: the engine's speed itself, 0.8 to 1.2, 1.0 until
+// someone moves it in every language (BlueV3 v3.0.1: each voice's speed_scale
+// already sets its natural pace per language, and multiplies this speed).
 export const SPEED_MIN = 0.8;
 export const SPEED_MAX = 1.2;
+export const SPEED_DEFAULT = 1.0;
 export const SPEED_STORAGE_KEY = "speech-speed-engine";
 
 // The Quality slider is bluetts.com's: the step count itself, 5 to 16 in
@@ -50,11 +51,6 @@ export function clampSteps(value: unknown): number {
   return Math.min(STEPS_MAX, Math.max(STEPS_MIN, steps));
 }
 
-/// bluetts.com's default speed for a language.
-export function defaultSpeed(isHebrew: boolean): number {
-  return isHebrew ? 0.9 : 0.95;
-}
-
 /// The two choices that decide how a take sounds. They sit with the text and
 /// the Generate button because they get changed between takes, unlike the
 /// language and Hebrew context, which are set once and left alone.
@@ -63,7 +59,6 @@ export function GenerationControls({
   blueVoice,
   blueVoiceIds,
   speed: chosenSpeed,
-  languageSpeed,
   steps,
   setBlueVoice,
   setSpeed,
@@ -73,13 +68,12 @@ export function GenerationControls({
   blueVoice: string;
   blueVoiceIds: string[];
   speed: number | null;
-  languageSpeed: number;
   steps: number;
   setBlueVoice: (voice: string) => void;
   setSpeed: (speed: number | null) => void;
   setSteps: (steps: number) => void;
 }) {
-  const speed = chosenSpeed ?? languageSpeed;
+  const speed = chosenSpeed ?? SPEED_DEFAULT;
   const speedFill = ((speed - SPEED_MIN) / (SPEED_MAX - SPEED_MIN)) * 100;
   const stepsFill = ((steps - STEPS_MIN) / (STEPS_MAX - STEPS_MIN)) * 100;
   const selectClass =
@@ -156,7 +150,7 @@ export function GenerationControls({
           type="button"
           onClick={() => setSpeed(null)}
           disabled={busy}
-          title="Reset to the language's default speed"
+          title="Reset to the natural speed (1.00×)"
           className="shrink-0 rounded-md bg-background px-2 py-1 text-[11px] font-bold tabular-nums text-primary transition-colors hover:bg-accent disabled:cursor-not-allowed"
         >
           {speed.toFixed(2)}×

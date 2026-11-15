@@ -4,7 +4,7 @@ use std::sync::OnceLock;
 use tauri::{Emitter, Manager};
 
 use crate::analytics;
-use crate::download::{fetch_verified, has_expected_size};
+use crate::download::{fetch_verified, has_expected_size, reuse_verified};
 use mambotts_registry::{
     HebrewG2pPlan, HebrewG2pVariant, ModelFile, hebrew_g2p_plan, hebrew_g2p_variant, runtimes,
 };
@@ -46,6 +46,10 @@ pub struct ModelBundle {
     /// from before the fp32 default runs int8 meanwhile, and
     /// `upgrade_hebrew_g2p` fetches fp32 in the background.
     pub hebrew_g2p_upgrade: Option<HebrewG2pVariant>,
+    /// Set while this is an earlier release's bundle (`version` names it):
+    /// the release it is being upgraded to. The app keeps running on this
+    /// one while `upgrade_model_bundle` fills the new directory.
+    pub bundle_upgrade: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -145,6 +149,133 @@ pub async fn upgrade_hebrew_g2p(app: tauri::AppHandle) -> Result<ModelBundle, St
             serde_json::json!({"operation": "upgrade_hebrew_g2p", "runtime": "blue"}),
         )
     })
+}
+
+/// Move an install of an earlier release (BlueV3 3.0.0) to the current one
+/// in the background, while the app keeps running on the old bundle; see
+/// [`ModelBundle::bundle_upgrade`].
+///
+/// Every file whose bytes did not change between the releases (the
+/// vocabulary, the vocoder, polyg2p's data, RenikudPlus) is taken from the
+/// old directory once its SHA-256 matches the registry, as a hard link where
+/// possible; only the changed graphs and voices are downloaded, resumable
+/// and verified like any download. Progress goes out as
+/// `model_download_progress` with stage `upgrading`, then `upgraded`. The
+/// returned bundle points at the new directory only once all of it is in
+/// place and verified, and only then is the old directory removed.
+#[tauri::command]
+pub async fn upgrade_model_bundle(app: tauri::AppHandle) -> Result<ModelBundle, String> {
+    upgrade_model_bundle_inner(&app).await.map_err(|err| {
+        analytics::track_error(
+            &app,
+            analytics::events::ERROR_MODEL_DOWNLOAD_FAILED,
+            err,
+            serde_json::json!({"operation": "upgrade_model_bundle", "runtime": "blue"}),
+        )
+    })
+}
+
+async fn upgrade_model_bundle_inner(app: &tauri::AppHandle) -> Result<ModelBundle, String> {
+    let _guard = download_lock().lock().await;
+    let root = models_root(app)?;
+    let client = http_client()?;
+    upgrade_bundle_in(&client, &root, hebrew_g2p_for_this_machine(), |progress| {
+        emit_progress(app, progress)
+    })
+    .await?;
+    blue_bundle(app)
+}
+
+/// The bundle upgrade itself, on a models directory, for the command and
+/// the tests.
+pub(crate) async fn upgrade_bundle_in(
+    client: &reqwest::Client,
+    root: &Path,
+    policy: HebrewG2pVariant,
+    mut emit: impl FnMut(ModelDownloadProgress),
+) -> Result<(), String> {
+    let blue = mambotts_registry::runtime("blue").expect("the Blue manifest");
+    let dir = root.join(blue.directory);
+    if blue_bundle_in(&dir, policy, blue.version.into()).installed {
+        remove_previous_bundles(root);
+        return Ok(());
+    }
+    let Some(old) = blue
+        .previous_directories
+        .iter()
+        .map(|name| root.join(name))
+        .find(|old| blue_bundle_in(old, policy, String::new()).installed)
+    else {
+        return Err("there is no earlier BlueTTS bundle to upgrade".into());
+    };
+    // RenikudPlus is the same revision in both releases: every variant the
+    // old bundle holds comes along (an int8-only install stays int8 until
+    // the RenikudPlus upgrade fetches fp32 in the new directory).
+    let mut files = blue.files.to_vec();
+    let carried: Vec<ModelFile> = [HebrewG2pVariant::Fp32, HebrewG2pVariant::Int8]
+        .into_iter()
+        .map(HebrewG2pVariant::model_file)
+        .filter(|file| has_expected_size(&old.join(file.name), file))
+        .collect();
+    if carried.is_empty() {
+        files.push(policy.model_file());
+    }
+    files.extend(carried);
+    migrate_files(client, &old, &dir, &files, &mut emit).await?;
+    if !blue_bundle_in(&dir, policy, blue.version.into()).installed {
+        return Err(format!("the {} upgrade finished, but files are missing", blue.version));
+    }
+    emit(ModelDownloadProgress {
+        downloaded: files.iter().map(|file| file.size).sum(),
+        total: Some(files.iter().map(|file| file.size).sum()),
+        progress: Some(1.0),
+        stage: "upgraded",
+    });
+    remove_previous_bundles(root);
+    Ok(())
+}
+
+/// Fill `dir` with `files`: kept when already there, taken from `old` when
+/// its copy is byte-identical (verified), downloaded otherwise.
+pub(crate) async fn migrate_files(
+    client: &reqwest::Client,
+    old: &Path,
+    dir: &Path,
+    files: &[ModelFile],
+    emit: &mut impl FnMut(ModelDownloadProgress),
+) -> Result<(), String> {
+    let total: u64 = files.iter().map(|file| file.size).sum();
+    let progress = |downloaded: u64| ModelDownloadProgress {
+        downloaded,
+        total: Some(total),
+        progress: Some((downloaded as f64 / total.max(1) as f64).clamp(0.0, 0.99)),
+        stage: "upgrading",
+    };
+    let mut done = 0_u64;
+    for file in files {
+        let destination = dir.join(file.name);
+        if !has_expected_size(&destination, file)
+            && !reuse_verified(file, &old.join(file.name), &destination).await?
+        {
+            fetch_verified(client, file, &destination, |bytes| emit(progress(done + bytes))).await?;
+        }
+        done += file.size;
+        emit(progress(done));
+    }
+    Ok(())
+}
+
+/// Remove earlier releases' directories once the current one is installed.
+/// A file a running server still holds open may not go on Windows; the
+/// next start tries again.
+fn remove_previous_bundles(root: &Path) {
+    let blue = mambotts_registry::runtime("blue").expect("the Blue manifest");
+    for name in blue.previous_directories {
+        let dir = root.join(name);
+        if dir.is_dir() {
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
 }
 
 async fn upgrade_hebrew_g2p_inner(app: &tauri::AppHandle) -> Result<ModelBundle, String> {
@@ -249,9 +380,30 @@ fn blue_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 }
 
 fn blue_bundle(app: &tauri::AppHandle) -> Result<ModelBundle, String> {
-    let source = runtime_source("blue").ok_or_else(|| "missing Blue source".to_string())?;
-    let dir = blue_dir(app)?;
-    Ok(blue_bundle_in(&dir, hebrew_g2p_for_this_machine(), source.version))
+    Ok(blue_bundle_at(&models_root(app)?, hebrew_g2p_for_this_machine()))
+}
+
+/// The bundle the app runs, in a models directory: the current release's
+/// when it is installed (earlier releases' directories are then removed);
+/// else the newest earlier release that is installed, marked for the
+/// background upgrade; else the current one, not installed (onboarding).
+pub(crate) fn blue_bundle_at(root: &Path, policy: HebrewG2pVariant) -> ModelBundle {
+    let blue = mambotts_registry::runtime("blue").expect("the Blue manifest");
+    let current = blue_bundle_in(&root.join(blue.directory), policy, blue.version.into());
+    if current.installed {
+        remove_previous_bundles(root);
+        return current;
+    }
+    for name in blue.previous_directories {
+        let mut previous = blue_bundle_in(&root.join(name), policy, (*name).into());
+        if previous.installed {
+            previous.bundle_upgrade = Some(blue.version.into());
+            // RenikudPlus is upgraded in the new directory, after the bundle.
+            previous.hebrew_g2p_upgrade = None;
+            return previous;
+        }
+    }
+    current
 }
 
 /// The bundle a directory holds, under a RenikudPlus policy.
@@ -295,6 +447,7 @@ pub(crate) fn blue_bundle_in(dir: &Path, policy: HebrewG2pVariant, version: Stri
         url: mambotts_registry::blue_model_base_url().to_string(),
         hebrew_g2p: plan.load,
         hebrew_g2p_upgrade: plan.upgrade,
+        bundle_upgrade: None,
     }
 }
 
@@ -560,6 +713,98 @@ mod tests {
         .unwrap();
         assert_eq!(plan.load, Some(Fp32));
         assert!(dir.path().join(Fp32.file_name()).exists());
+    }
+
+    /// A models directory with an earlier release's complete bundle.
+    fn root_with_previous(variants: &[HebrewG2pVariant]) -> tempfile::TempDir {
+        let root = tempfile::tempdir().unwrap();
+        let previous = bundle_dir(variants);
+        let blue = mambotts_registry::runtime("blue").unwrap();
+        std::fs::rename(previous.path(), root.path().join(blue.previous_directories[0])).unwrap();
+        root
+    }
+
+    #[test]
+    fn an_earlier_release_keeps_running_and_asks_for_the_upgrade() {
+        let blue = mambotts_registry::runtime("blue").unwrap();
+        let root = root_with_previous(&[Int8]);
+        let bundle = blue_bundle_at(root.path(), Fp32);
+        assert!(bundle.installed, "no onboarding for an upgrader");
+        assert_eq!(bundle.version, blue.previous_directories[0]);
+        assert!(bundle.model_dir.ends_with(blue.previous_directories[0]));
+        assert_eq!(bundle.bundle_upgrade.as_deref(), Some(blue.version));
+        // RenikudPlus waits for the new directory.
+        assert_eq!(bundle.hebrew_g2p_upgrade, None);
+        assert_eq!(bundle.hebrew_g2p, Some(Int8));
+
+        // The current release installed: it runs, and the old one goes.
+        let current = root.path().join(blue.directory);
+        std::fs::rename(bundle_dir(&[Fp32]).path(), &current).unwrap();
+        let bundle = blue_bundle_at(root.path(), Fp32);
+        assert!(bundle.installed);
+        assert_eq!(bundle.version, blue.version);
+        assert_eq!(bundle.bundle_upgrade, None);
+        assert!(!root.path().join(blue.previous_directories[0]).exists());
+
+        // Nothing at all: the current release, not installed.
+        let empty = tempfile::tempdir().unwrap();
+        let bundle = blue_bundle_at(empty.path(), Fp32);
+        assert!(!bundle.installed);
+        assert!(bundle.model_dir.ends_with(blue.directory));
+    }
+
+    /// The migration: unchanged files come from the old directory without a
+    /// request, a changed one is downloaded, a corrupt old copy is not used,
+    /// and the old directory is left alone.
+    #[tokio::test]
+    async fn the_upgrade_reuses_identical_files_and_downloads_the_rest() {
+        let same = body(4_000);
+        let changed_old = body(3_000);
+        let changed_new: Vec<u8> = body(3_500).into_iter().rev().collect();
+        let corrupt = body(2_000);
+        let server_same = serve(same.clone(), ServerOptions::default()).await;
+        let server_new = serve(changed_new.clone(), ServerOptions::default()).await;
+        let server_corrupt = serve(corrupt.clone(), ServerOptions::default()).await;
+        let mut vocoder = model_file(&server_same.url, &same);
+        vocoder.name = "vocoder.onnx";
+        let mut voice = model_file(&server_new.url, &changed_new);
+        voice.name = "voices/noa.json";
+        let mut lexicon = model_file(&server_corrupt.url, &corrupt);
+        lexicon.name = "polyg2p/en.lex";
+
+        let old = tempfile::tempdir().unwrap();
+        let new = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(old.path().join("voices")).unwrap();
+        std::fs::create_dir_all(old.path().join("polyg2p")).unwrap();
+        std::fs::write(old.path().join("vocoder.onnx"), &same).unwrap();
+        std::fs::write(old.path().join("voices/noa.json"), &changed_old).unwrap();
+        // Right size, wrong bytes: must be downloaded, not linked.
+        let mut flipped = corrupt.clone();
+        flipped[0] ^= 0xff;
+        std::fs::write(old.path().join("polyg2p/en.lex"), &flipped).unwrap();
+
+        let mut stages = Vec::new();
+        migrate_files(
+            &reqwest::Client::new(),
+            old.path(),
+            new.path(),
+            &[vocoder, voice, lexicon],
+            &mut |p: ModelDownloadProgress| stages.push((p.stage, p.downloaded)),
+        )
+        .await
+        .unwrap();
+        use std::sync::atomic::Ordering::SeqCst;
+        assert_eq!(server_same.requests.load(SeqCst), 0, "an identical file is not downloaded");
+        assert_eq!(server_new.requests.load(SeqCst), 1);
+        assert_eq!(server_corrupt.requests.load(SeqCst), 1);
+        assert_eq!(std::fs::read(new.path().join("vocoder.onnx")).unwrap(), same);
+        assert_eq!(std::fs::read(new.path().join("voices/noa.json")).unwrap(), changed_new);
+        assert_eq!(std::fs::read(new.path().join("polyg2p/en.lex")).unwrap(), corrupt);
+        // The old bundle is untouched (the app was running on it).
+        assert_eq!(std::fs::read(old.path().join("voices/noa.json")).unwrap(), changed_old);
+        assert_eq!(std::fs::read(old.path().join("vocoder.onnx")).unwrap(), same);
+        assert!(stages.iter().all(|(stage, _)| *stage == "upgrading"));
+        assert_eq!(stages.last().unwrap().1, 4_000 + 3_500 + 2_000);
     }
 
     #[tokio::test]

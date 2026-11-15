@@ -112,14 +112,15 @@ pub struct SpeechBody {
     /// BlueV3 reference read any pointed text.
     #[serde(default)]
     pub niqqud: bool,
-    /// The engine's speed, as bluetts.com sends it: 1.0 is the release's own
-    /// pace, below one is slower. Zero or absent means the site's default for
-    /// the language: 0.9 for Hebrew, 0.95 for the others.
+    /// The engine's speed, as bluetts.com sends it: 1.0 is the voice's
+    /// natural pace (BlueV3 v3.0.1 multiplies it by the voice's
+    /// `speed_scale` for the language), below one is slower. Zero or absent
+    /// means the release's default, 1.0, in every language.
     ///
     /// The API accepts 0.5 to 2.0, which only guards against nonsense. The
     /// app's slider offers the site's 0.8 to 1.2.
     #[serde(default)]
-    pub speed: f32,
+    pub speed: f64,
     /// The number of flow-matching steps, bluetts.com's Quality slider: more
     /// is slower and cleaner. Zero or absent means the site's default, 8.
     ///

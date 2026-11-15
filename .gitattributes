@@ -7,3 +7,7 @@
 
 # PowerShell is happy with either, but it is only ever run on Windows.
 *.ps1 text eol=crlf
+
+# The model files the registry compiles in (crates/mambotts-registry/shipped):
+# byte for byte the release's, checked against its SHA-256, so never converted.
+crates/mambotts-registry/shipped/** -text

@@ -11,7 +11,7 @@ import { ErrorBlock } from "../../components/ui";
 import { WaveformPlayer } from "../../components/WaveformPlayer";
 import { StudioHeader } from "../../components/WorkspaceHeader";
 import { EditorCard } from "./EditorCard";
-import { SPEED_STORAGE_KEY, STEPS_STORAGE_KEY, clampSteps, defaultSpeed } from "./GenerationControls";
+import { SPEED_STORAGE_KEY, STEPS_STORAGE_KEY, clampSteps } from "./GenerationControls";
 import { VoiceSettings } from "./VoiceSettings";
 
 const PRONUNCIATION_KEY = "editor-pronunciation";
@@ -414,7 +414,6 @@ export function HomePage({ bundle, setBundle, studio, setStudio }: HomePageProps
               blueVoice={blueVoice}
               blueVoiceIds={blueVoiceIds}
               speed={speed}
-              languageSpeed={defaultSpeed(isHebrew)}
               setBlueVoice={(nextVoice) => updateStudio({ blueVoice: nextVoice })}
               setSpeed={(nextSpeed) => {
                 if (nextSpeed === null) localStorage.removeItem(SPEED_STORAGE_KEY);

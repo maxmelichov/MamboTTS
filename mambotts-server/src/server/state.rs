@@ -397,16 +397,16 @@ mod tests {
         ModelInfo {
             loaded,
             runtime: "blue".into(),
-            model_path: "/m/bluev3-3.0.0".into(),
-            codec_path: "/m/bluev3-3.0.0/renikud-plus.onnx".into(),
+            model_path: "/m/bluev3-3.0.1".into(),
+            codec_path: "/m/bluev3-3.0.1/renikud-plus.onnx".into(),
             ..ModelInfo::default()
         }
     }
 
     #[test]
     fn nothing_counts_as_loaded_until_a_model_is_in_place() {
-        let model = Path::new("/m/bluev3-3.0.0");
-        let renikud = Path::new("/m/bluev3-3.0.0/renikud-plus.onnx");
+        let model = Path::new("/m/bluev3-3.0.1");
+        let renikud = Path::new("/m/bluev3-3.0.1/renikud-plus.onnx");
         // The recorded paths mean nothing while no model is loaded, which is
         // what keeps the reuse shortcut from skipping the very first load.
         assert!(!info(false).has_loaded("blue", model, renikud));
@@ -451,13 +451,13 @@ mod tests {
 
     #[test]
     fn a_different_model_is_not_the_loaded_one() {
-        let renikud = Path::new("/m/bluev3-3.0.0/renikud-plus.onnx");
+        let renikud = Path::new("/m/bluev3-3.0.1/renikud-plus.onnx");
         assert!(!info(true).has_loaded("blue", Path::new("/m/other"), renikud));
         assert!(!info(true).has_loaded(
             "blue",
-            Path::new("/m/bluev3-3.0.0"),
+            Path::new("/m/bluev3-3.0.1"),
             Path::new("/m/other/renikud-plus.onnx"),
         ));
-        assert!(!info(true).has_loaded("kokoro", Path::new("/m/bluev3-3.0.0"), renikud));
+        assert!(!info(true).has_loaded("kokoro", Path::new("/m/bluev3-3.0.1"), renikud));
     }
 }

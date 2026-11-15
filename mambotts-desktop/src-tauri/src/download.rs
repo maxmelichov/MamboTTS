@@ -46,6 +46,11 @@ pub async fn fetch_verified(
             .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
     }
     let part = part_path(dest);
+    if let Some(bytes) = file.shipped {
+        // A file the app carries (git-stored in the model repository, so not
+        // safe to fetch at a pinned revision): written, verified, renamed.
+        return write_shipped(file, bytes, &part, dest, &mut on_progress).await;
+    }
     // Two passes at most: a part the server will not resume (or one that
     // turns out corrupt) is dropped and fetched once more from the start.
     for attempt in 0..2 {
@@ -98,6 +103,34 @@ pub async fn fetch_verified(
     unreachable!("the loop returns on its second pass")
 }
 
+/// The words a permanent download failure's message carries, so a caller
+/// (the app's retry loop) stops instead of trying again.
+pub const PERMANENT_FAILURE: &str = "is no longer available";
+
+/// Write a shipped file's bytes as a download would land: under the part
+/// name, checked against the registry's size and SHA-256, then renamed.
+async fn write_shipped(
+    file: &ModelFile,
+    bytes: &[u8],
+    part: &Path,
+    dest: &Path,
+    on_progress: &mut impl FnMut(u64),
+) -> Result<(), String> {
+    use sha2::Digest;
+    let digest: String = Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect();
+    if bytes.len() as u64 != file.size || digest != file.sha256 {
+        return Err(format!("the shipped copy of {} does not match the registry", file.name));
+    }
+    tokio::fs::write(part, bytes)
+        .await
+        .map_err(|err| format!("failed to write {}: {err}", part.display()))?;
+    tokio::fs::rename(part, dest)
+        .await
+        .map_err(|err| format!("failed to rename {}: {err}", part.display()))?;
+    on_progress(file.size);
+    Ok(())
+}
+
 /// Append the bytes after `have` to `part`, or rewrite it from the start when
 /// the server answers a range request with the whole file.
 async fn download_rest(
@@ -117,6 +150,14 @@ async fn download_rest(
         .map_err(|err| format!("failed to download {}: {err}", file.url))?;
     let status = response.status();
     let resumed = have > 0 && status == reqwest::StatusCode::PARTIAL_CONTENT;
+    if matches!(status.as_u16(), 401 | 403 | 404 | 410) {
+        // Gone or refused for good (a squashed model revision answers 404):
+        // retrying cannot help, so say so instead of looping.
+        return Err(format!(
+            "{} {PERMANENT_FAILURE} at {} (HTTP {status}). Update MamboTTS to get the current model files.",
+            file.name, file.url
+        ));
+    }
     if !(status.is_success() || resumed) {
         return Err(format!("download of {} failed: {status}", file.url));
     }
@@ -182,6 +223,38 @@ fn content_range_start(response: &reqwest::Response) -> Option<u64> {
         .ok()
 }
 
+/// Put an earlier release's copy of `file` (at `from`) in place at `dest`
+/// when its bytes are the registry's: same size and SHA-256. The copy is a
+/// hard link where the file system allows it (no second copy on disk; the
+/// old directory can go later) and a plain copy otherwise, made under the
+/// `.part` name and renamed only when complete. `Ok(false)`: not reusable,
+/// download it.
+pub async fn reuse_verified(file: &ModelFile, from: &Path, dest: &Path) -> Result<bool, String> {
+    if !has_expected_size(from, file) || sha256_file(from).await? != file.sha256 {
+        return Ok(false);
+    }
+    if let Some(parent) = dest.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
+    }
+    let part = part_path(dest);
+    remove(&part).await?;
+    if tokio::fs::hard_link(from, &part).await.is_err() {
+        tokio::fs::copy(from, &part)
+            .await
+            .map_err(|err| format!("failed to copy {} to {}: {err}", from.display(), part.display()))?;
+    }
+    if !has_expected_size(&part, file) {
+        remove(&part).await?;
+        return Ok(false);
+    }
+    tokio::fs::rename(&part, dest)
+        .await
+        .map_err(|err| format!("failed to rename {}: {err}", part.display()))?;
+    Ok(true)
+}
+
 /// Lowercase hex SHA-256 of a file, off the async threads.
 pub async fn sha256_file(path: &Path) -> Result<String, String> {
     let shown = path.display().to_string();
@@ -238,6 +311,8 @@ pub(crate) mod tests {
         pub cut_after: Option<usize>,
         /// Answer every request with the whole body and 200.
         pub ignore_range: bool,
+        /// Answer every request with this status line and no body.
+        pub fail_with: Option<&'static str>,
     }
 
     pub struct TestServer {
@@ -285,6 +360,11 @@ pub(crate) mod tests {
                     requests.fetch_add(1, Ordering::SeqCst);
                     ranges.lock().unwrap().push(range.clone());
                     let options = options.lock().unwrap().clone();
+                    if let Some(status) = options.fail_with {
+                        let head = format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                        let _ = write.write_all(head.as_bytes()).await;
+                        return;
+                    }
                     let start = range
                         .filter(|_| !options.ignore_range)
                         .and_then(|value| value.trim_end_matches('-').parse::<usize>().ok());
@@ -338,7 +418,44 @@ pub(crate) mod tests {
             url: Box::leak(url.to_owned().into_boxed_str()),
             size: bytes.len() as u64,
             sha256: Box::leak(sha256_hex(bytes).into_boxed_str()),
+            shipped: None,
         }
+    }
+
+    #[tokio::test]
+    async fn a_shipped_file_is_written_without_a_request() {
+        let bytes: &'static [u8] = Box::leak(body(9_000).into_boxed_slice());
+        let server = serve(bytes.to_vec(), ServerOptions::default()).await;
+        let mut file = model_file(&server.url, bytes);
+        file.shipped = Some(bytes);
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("voices/noa.json");
+        fetch_verified(&reqwest::Client::new(), &file, &dest, |_| {}).await.unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), bytes);
+        assert_eq!(server.requests.load(std::sync::atomic::Ordering::SeqCst), 0);
+        // A shipped copy that is not the registry's is refused.
+        file.sha256 = "0000";
+        let err = fetch_verified(&reqwest::Client::new(), &file, &dir.path().join("x"), |_| {}).await.unwrap_err();
+        assert!(err.contains("does not match"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn a_missing_file_is_a_permanent_failure() {
+        let bytes = body(1_000);
+        let server = serve(
+            bytes.clone(),
+            ServerOptions {
+                fail_with: Some("404 Not Found"),
+                ..Default::default()
+            },
+        )
+        .await;
+        let file = model_file(&server.url, &bytes);
+        let dir = tempfile::tempdir().unwrap();
+        let err = fetch_verified(&reqwest::Client::new(), &file, &dir.path().join("f"), |_| {})
+            .await
+            .unwrap_err();
+        assert!(err.contains(PERMANENT_FAILURE) && err.contains("404"), "{err}");
     }
 
     #[tokio::test]

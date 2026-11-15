@@ -92,11 +92,11 @@ export function OnboardPage({ bundle, setBundle }: PageProps) {
     {
       id: "blue",
       name: "BlueTTS",
-      version: "bluev3-3.0.0",
+      version: "bluev3-3.0.1",
       size: "~1.7 GB",
       description: "Local speech in Hebrew, English, Spanish, German, Italian, and Russian",
       files: [],
-      directory: "bluev3-3.0.0",
+      directory: "bluev3-3.0.1",
       capabilities: { hebrew: true, streaming: true, voice_reference: false, fixed_voices: true },
     },
   ]) as ModelSource[];
@@ -123,7 +123,7 @@ export function OnboardPage({ bundle, setBundle }: PageProps) {
     progress?.stage === "extracting"
       ? "Optimizing models..."
       : progress?.stage === "upgrading" || progress?.stage === "upgraded"
-        ? "Upgrading Hebrew model in the background..."
+        ? "Upgrading in the background..."
         : "Downloading voice model...";
 
   return (
@@ -203,7 +203,7 @@ export function OnboardPage({ bundle, setBundle }: PageProps) {
             <div className="flex flex-col gap-5 bg-background/10 p-6 sm:flex-row sm:items-center sm:justify-between">
               <div className="space-y-1">
                 <Eyebrow>Local Infrastructure</Eyebrow>
-                <h3 className="text-base font-semibold tracking-tight">{bundles[runtime]?.version ?? "bluev3-3.0.0"}</h3>
+                <h3 className="text-base font-semibold tracking-tight">{bundles[runtime]?.version ?? "bluev3-3.0.1"}</h3>
                 <p className="text-xs text-secondary opacity-40">
                   {bundles[runtime]?.installed ? "Already installed locally" : `Initial setup: ${selectedSource?.size ?? "~1.7 GB"} storage (BlueTTS + RenikudPlus)`}
                 </p>

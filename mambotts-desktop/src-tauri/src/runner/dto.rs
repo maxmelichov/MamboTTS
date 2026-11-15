@@ -57,7 +57,7 @@ pub struct SpeechRequest {
     /// `input` is the niqqud editor's pointed Hebrew: read its points rather
     /// than drop them as bluetts.com does with any pointed text.
     pub niqqud: Option<bool>,
-    pub speed: Option<f32>,
+    pub speed: Option<f64>,
     /// The Quality slider's flow-matching steps (bluetts.com's 5 to 16).
     /// Unset is the server's default, 8.
     pub steps: Option<u32>,

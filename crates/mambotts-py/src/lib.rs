@@ -14,8 +14,8 @@ use blue_rs::{
     BlueTts, SynthesisOptions, VoiceStyle,
 };
 use mambotts_registry::{
-    blue_voice_name, hebrew_g2p_path, hebrew_g2p_variant, BLUE_POLYG2P_DIR, BLUE_VOICES,
-    DEFAULT_BLUE_VOICE,
+    blue_voice_name, hebrew_g2p_path, hebrew_g2p_variant, HebrewG2pVariant, BLUE_POLYG2P_DIR,
+    BLUE_VOICES, DEFAULT_BLUE_VOICE,
 };
 use pyo3::exceptions::{PyKeyError, PyValueError};
 use pyo3::prelude::*;
@@ -69,10 +69,10 @@ impl BlueTtsEngine {
             if !path.is_file() {
                 continue;
             }
-            styles.insert(
-                voice.name.to_owned(),
-                VoiceStyle::from_json(&path).map_err(to_py_err)?,
-            );
+            let style = VoiceStyle::from_json(&path).map_err(to_py_err)?;
+            // A voice belongs to the graphs of its checkpoint (v3.0.1: bluev3-702000).
+            tts.check_voice(&style).map_err(to_py_err)?;
+            styles.insert(voice.name.to_owned(), style);
         }
         if styles.is_empty() {
             return Err(PyValueError::new_err(format!(
@@ -123,8 +123,9 @@ impl BlueTtsEngine {
 
     /// Synthesizes text, returning mono `f32` samples.
     ///
-    /// `speed` is the engine's speed, as on bluetts.com; `None` is the
-    /// site's default for the language (0.9 Hebrew, 0.95 the others).
+    /// `speed` is the engine's speed, as on bluetts.com: the voice's
+    /// `speed_scale` for the language multiplies it, so `None` (1.0, the
+    /// release's default in every language) is the voice's natural pace.
     #[pyo3(signature = (text, voice = None, language = "auto", speed = None, cfg_scale = 4.0, total_step = 8))]
     fn synthesize(
         &self,
@@ -132,7 +133,7 @@ impl BlueTtsEngine {
         text: &str,
         voice: Option<&str>,
         language: &str,
-        speed: Option<f32>,
+        speed: Option<f64>,
         cfg_scale: f32,
         total_step: usize,
     ) -> PyResult<Vec<f32>> {
@@ -160,7 +161,7 @@ impl BlueTtsEngine {
         phonemes: &str,
         voice: Option<&str>,
         language: &str,
-        speed: Option<f32>,
+        speed: Option<f64>,
         cfg_scale: f32,
         total_step: usize,
     ) -> PyResult<Vec<f32>> {
@@ -211,7 +212,7 @@ impl Engine {
 
 fn options(
     language: &str,
-    speed: Option<f32>,
+    speed: Option<f64>,
     cfg_scale: f32,
     total_step: usize,
 ) -> PyResult<SynthesisOptions> {
@@ -229,19 +230,8 @@ fn options(
         lang: language.to_owned(),
         total_step,
         cfg_scale,
-        speed: speed.unwrap_or_else(|| default_speed(language)),
+        speed: speed.unwrap_or(blue_rs::DEFAULT_SPEED),
     })
-}
-
-/// bluetts.com's default speed for a language, used when none is given: the
-/// release's own 1.0 reads a little fast, Hebrew most of all. A given speed
-/// is the engine's speed as it is, as on the site.
-fn default_speed(language: &str) -> f32 {
-    if language == "he" {
-        0.9
-    } else {
-        0.95
-    }
 }
 
 /// IPA has no script to detect, so `auto` reads the language from a leading
@@ -296,6 +286,22 @@ fn to_py_err(err: anyhow::Error) -> PyErr {
 fn mambotts(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<BlueTtsEngine>()?;
     module.add("DEFAULT_VOICE", DEFAULT_BLUE_VOICE)?;
+    module.add("DEFAULT_SPEED", blue_rs::DEFAULT_SPEED)?;
+    // The bundle these bindings read: its release, directory name and every
+    // file at the pinned revision (name, url, size, sha256), for a script
+    // that fetches it itself.
+    let blue = mambotts_registry::runtime(mambotts_registry::DEFAULT_RUNTIME_ID)
+        .expect("the Blue manifest");
+    module.add("BUNDLE_VERSION", blue.version)?;
+    module.add("BUNDLE_DIRECTORY", blue.directory)?;
+    module.add("MODEL", blue_rs::RELEASE_MODEL)?;
+    module.add(
+        "BUNDLE_FILES",
+        blue.files_for(HebrewG2pVariant::Fp32)
+            .iter()
+            .map(|file| (file.name, file.url, file.size, file.sha256))
+            .collect::<Vec<_>>(),
+    )?;
     module.add(
         "VOICES",
         BLUE_VOICES

@@ -13,6 +13,11 @@ export type ModelBundle = {
   hebrew_g2p?: "fp32" | "int8" | null;
   /** Set while the machine's own RenikudPlus downloads in the background. */
   hebrew_g2p_upgrade?: "fp32" | "int8" | null;
+  /**
+   * Set while this bundle is an earlier release's (`version`): the release
+   * the background upgrade is moving it to. The app keeps running on it.
+   */
+  bundle_upgrade?: string | null;
 };
 
 export type ModelSourceFile = {
@@ -72,7 +77,7 @@ export type StudioState = {
   blueVoiceIds: string[];
   speaker: number;
   targetSpeaker: number;
-  /** The engine speed the slider set, or null for the language default (bluetts.com's). */
+  /** The engine speed the slider set, or null for the default 1.0 (the voice's natural pace). */
   speed: number | null;
   /** The Quality slider: flow-matching steps, 5 to 16 (bluetts.com's, default 8). */
   steps: number;

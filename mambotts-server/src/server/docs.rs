@@ -26,6 +26,7 @@ use crate::runtime::Language;
         handlers::metadata::skill_handler,
         handlers::state::models,
         handlers::metadata::model_sources_handler,
+        handlers::metadata::model_file_handler,
         handlers::load::model_load,
         handlers::state::model_unload,
         handlers::state::languages,

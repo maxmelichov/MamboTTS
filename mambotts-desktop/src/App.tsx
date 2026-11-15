@@ -14,7 +14,7 @@ import { SPEED_MAX, SPEED_MIN, SPEED_STORAGE_KEY, STEPS_DEFAULT, STEPS_STORAGE_K
 import { sampleText } from "./lib/constants";
 
 /// The speed someone set on the slider, kept inside its range, or null when
-/// they never moved it (the language's default then, as on bluetts.com).
+/// they never moved it (1.0 then, as on bluetts.com).
 /// "speech-speed" held a multiplier on top of that default and is not read:
 /// carried over, 0.95 would have meant 0.855 for Hebrew.
 function storedSpeed(): number | null {
@@ -90,13 +90,20 @@ function App() {
     };
   }, [location.pathname, navigate]);
 
-  // An install from before the fp32 default runs on int8 and fetches the
-  // machine's RenikudPlus here, in the background, with no onboarding. The
-  // download resumes after a failure (retried with a growing pause) or a
-  // restart; once verified, the new bundle points at fp32 and the next take's
-  // load_model switches to it.
+  // Background upgrades, with no onboarding: an earlier release's bundle
+  // (BlueV3 3.0.0) is moved to the current one first, reusing every file
+  // whose bytes did not change; then an install from before the fp32 default
+  // fetches the machine's RenikudPlus. Each download resumes after a failure
+  // (retried with a growing pause) or a restart; once verified, the new
+  // bundle replaces the old one and the next take's load_model switches to it.
   const upgradingRef = useRef(false);
-  const pendingUpgrade = bundle?.installed ? bundle.hebrew_g2p_upgrade : null;
+  const pendingUpgrade = !bundle?.installed
+    ? null
+    : bundle.bundle_upgrade
+      ? "bundle"
+      : bundle.hebrew_g2p_upgrade
+        ? "hebrew_g2p"
+        : null;
   useEffect(() => {
     if (!pendingUpgrade || upgradingRef.current) return;
     upgradingRef.current = true;
@@ -104,10 +111,18 @@ function App() {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const attempt = async (failures: number) => {
       try {
-        const upgraded = await invoke<ModelBundle>("upgrade_hebrew_g2p");
+        const upgraded = await invoke<ModelBundle>(
+          pendingUpgrade === "bundle" ? "upgrade_model_bundle" : "upgrade_hebrew_g2p",
+        );
         if (!stopped) setBundle(upgraded);
-      } catch {
+      } catch (err) {
         if (stopped) return;
+        // A file the Hub no longer serves (401/403/404/410) will not come
+        // back on retry; the app keeps running on what it has.
+        if (String(err).includes("is no longer available")) {
+          console.error(err);
+          return;
+        }
         const pause = Math.min(10 * 60_000, 15_000 * 2 ** failures);
         timer = setTimeout(() => attempt(failures + 1), pause);
         return;

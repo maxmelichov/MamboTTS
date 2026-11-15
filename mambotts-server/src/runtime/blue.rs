@@ -70,12 +70,30 @@ impl BlueRuntime {
                 .with_context(|| format!("load force lexicon from {}", path.display()))?;
         }
 
+        // The release's graphs and voices are checkpoint bluev3-702000
+        // (BlueV3 v3.0.1). An earlier release's bundle still runs, with its
+        // own voices, while the app upgrades it in the background.
+        match tts.model() {
+            Some(blue_rs::RELEASE_MODEL) => {}
+            Some(model) if blue_rs::PREVIOUS_MODELS.contains(&model) => eprintln!(
+                "BlueV3 bundle {} is an earlier release ({model}); the current one is {}",
+                model_dir.display(),
+                blue_rs::RELEASE_MODEL
+            ),
+            other => bail!(
+                "{} is not a BlueV3 v3.0.1 bundle: its tts.json names model {other:?}, expected {:?}",
+                model_dir.display(),
+                blue_rs::RELEASE_MODEL
+            ),
+        }
         let voices_dir = model_dir.join("voices");
         let mut styles = HashMap::new();
         for voice in BLUE_VOICES {
             let path = voices_dir.join(voice.file);
             let style = VoiceStyle::from_json(&path)
                 .with_context(|| format!("load Blue voice style {}", path.display()))?;
+            tts.check_voice(&style)
+                .with_context(|| format!("Blue voice style {}", path.display()))?;
             styles.insert(voice.name.to_owned(), style);
         }
         Ok(Self {
@@ -191,7 +209,7 @@ impl Runtime for BlueRuntime {
         text: &str,
         voice: Option<&str>,
         language: &str,
-        speed: f32,
+        speed: f64,
         steps: u32,
         on_chunk: &mut dyn FnMut(&[f32], u32) -> Result<()>,
     ) -> Result<Vec<f32>> {
@@ -227,7 +245,7 @@ impl Runtime for BlueRuntime {
         phonemes: &str,
         voice: Option<&str>,
         language: &str,
-        speed: f32,
+        speed: f64,
         steps: u32,
         on_chunk: &mut dyn FnMut(&[f32], u32) -> Result<()>,
     ) -> Result<Vec<f32>> {
@@ -264,16 +282,15 @@ impl Runtime for BlueRuntime {
 /// The speed the engine runs at, as bluetts.com sets it.
 ///
 /// A request's speed is the engine's speed, exactly as the site's slider
-/// sends it. Unset (zero) means the site's default for the language: 0.9 for
-/// Hebrew, 0.95 for the others, where the release's own 1.0 reads a little
-/// fast. The default is never applied on top of a chosen speed.
-fn effective_speed(requested: f32, language_code: &str) -> f32 {
+/// sends it. Unset (zero) means the release's default, 1.0, in every
+/// language (BlueV3 v3.0.1: the voice's `speed_scale[lang]` multiplies the
+/// speed, so 1.0 is each voice's natural pace; v3.0.0's 0.9 Hebrew / 0.95
+/// others are gone).
+fn effective_speed(requested: f64, _language_code: &str) -> f64 {
     if requested > 0.0 {
         requested
-    } else if language_code == "he" {
-        0.9
     } else {
-        0.95
+        blue_rs::DEFAULT_SPEED
     }
 }
 
