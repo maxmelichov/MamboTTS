@@ -294,6 +294,9 @@ fn strip_language_tags(phonemes: String) -> String {
 }
 
 #[cfg(test)]
+mod site_parity;
+
+#[cfg(test)]
 mod tests {
     use super::{BlueRuntime, strip_language_tags};
 

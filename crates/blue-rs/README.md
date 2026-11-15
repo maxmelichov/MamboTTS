@@ -46,3 +46,11 @@ is missing are skipped. The golden file was made with RenikudPlus's float
 model, the bundle's `renikud-plus-fp32.onnx`; with the int8 export
 (`renikud-plus.onnx`, what machines with 4 GB of memory or less get) a Hebrew
 case that differs only in its phonemes is reported as drift, not failed.
+
+## Parity with bluetts.com, end to end
+
+`scripts/site-parity/run.mjs` runs the cases of `scripts/site-parity/cases.json`
+through mambotts-server's synthesis path and through the site's own
+`js/onnx-web-worker.js` in Node, and compares the prepared text, the chunks,
+their token ids, durations and latent frames, and the audio sample by sample.
+Its header lists the inputs it needs.

@@ -1,0 +1,82 @@
+[
+ {
+  "id": "en-plain",
+  "lang": "en",
+  "text": "Hello, world. This is a short test of the voice."
+ },
+ {
+  "id": "en-numbers",
+  "lang": "en",
+  "text": "Dr. Smith paid $25 on March 3rd, 2024, and called 555-123-4567."
+ },
+ {
+  "id": "en-email",
+  "lang": "en",
+  "text": "Please write to max.m@example.com before Friday."
+ },
+ {
+  "id": "en-emoji",
+  "lang": "en",
+  "text": "Great job 🎉 see you soon 👋🏽 and thanks!"
+ },
+ {
+  "id": "en-long",
+  "lang": "en",
+  "text": "The small town of Millbrook opened its new public library on Saturday morning, and more than 300 people came to see it. The old library had been closed for 2 years after a storm damaged the roof. The new building sits next to the river, with large windows, a reading garden and a quiet room for students. Children lined up before 10 to get their first library cards, and a local band played on the front steps. The head librarian, Maria Lopez, said the town had waited a long time for this day. \"People kept asking when we would open,\" she said. \"Now they can come every day, even on Sundays.\""
+ },
+ {
+  "id": "he-plain",
+  "lang": "he",
+  "text": "שלום עולם, מה שלומך היום?"
+ },
+ {
+  "id": "he-pointed",
+  "lang": "he",
+  "text": "שָׁלוֹם עוֹלָם, מַה שְּׁלוֹמְךָ הַיּוֹם?"
+ },
+ {
+  "id": "he-numbers",
+  "lang": "he",
+  "text": "המחיר 1250 שקלים כולל מע\"מ, והפגישה ב-14:30 ב-3.5.2024."
+ },
+ {
+  "id": "he-email",
+  "lang": "he",
+  "text": "אפשר לכתוב לי לכתובת max.m@example.com עד יום שישי."
+ },
+ {
+  "id": "he-emoji",
+  "lang": "he",
+  "text": "תודה רבה 🙏 נתראה מחר ❤️"
+ },
+ {
+  "id": "he-latin",
+  "lang": "he",
+  "text": "פתחתי את הקובץ PDF במחשב ושלחתי אותו ב-WhatsApp."
+ },
+ {
+  "id": "he-long",
+  "lang": "he",
+  "text": "המאפייה בפינת הרחוב נפתחת בשש בבוקר, אבל התור מתחיל הרבה לפני כן. בחוץ עוד היה קר, אבל ריח של לחם חם כבר מילא את הרחוב. ביום שישי האחרון מיכל הגיעה ראשונה, כמו תמיד, עם צעיף ירוק וסל קניות ישן. \"בוקר טוב\", אמר המוכר כשפתח את הדלת. \"כמו תמיד?\" \"שתי חלות ועוגת שמרים\", ענתה מיכל. \"ועוד חלה אחת בשביל השכנה החדשה. היא עברה לבניין בשבוע שעבר, ועוד לא יצא לי להגיד לה שלום.\""
+ },
+ {
+  "id": "es-numbers",
+  "lang": "es",
+  "text": "¡Hola, Lucía! Llegamos el 3 de mayo con 25 euros y 2 maletas."
+ },
+ {
+  "id": "de-numbers",
+  "lang": "de",
+  "text": "Heute Morgen bin ich erst um 8 Uhr aufgewacht und habe 3 Kaffee getrunken."
+ },
+ {
+  "id": "it-numbers",
+  "lang": "it",
+  "text": "Sabato siamo partiti alle 7 e il viaggio è durato 3 ore."
+ },
+ {
+  "id": "ru-plain",
+  "lang": "ru",
+  "text": "Мы приехали в Петербург рано утром, и город встретил нас дождём. В 2024 году было 365 дней."
+ }
+]
