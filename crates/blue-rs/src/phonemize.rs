@@ -373,10 +373,26 @@ impl Phonemizer {
         } else {
             vec![prepared.to_owned()]
         };
-        units
+        let units = units
             .iter()
             .map(|unit| self.phonemize_prepared(unit, language.code()))
-            .collect()
+            .collect::<Result<Vec<_>>>()?;
+        if !self.bot_rules {
+            return Ok(units);
+        }
+        // NOT the site's: a unit with no letter ("?!...") is not spoken (the
+        // model was asked to say bare punctuation), and a space a span join
+        // left before a mark ("ˈɛs .") is removed.
+        Ok(units
+            .into_iter()
+            .map(|unit| {
+                if regex!(r"\p{L}").is_match(&unit) {
+                    regex!(r"[ \t]+([.,!?;:…])").replace_all(&unit, "$1").into_owned()
+                } else {
+                    String::new()
+                }
+            })
+            .collect())
     }
 
     /// `Text.phonemize(text, lang, g2p)` with a release bundle: Hebrew text
@@ -463,6 +479,15 @@ impl Phonemizer {
             if !regex!(r"[\p{L}\p{N}]").is_match(t) {
                 return Ok(t.to_owned());
             }
+            // NOT the site's: polyg2p's English model stops after about 20
+            // letters of a word, so a longer one is read in pieces.
+            let split;
+            let t = if self.bot_rules && lang == "en" {
+                split = crate::bot::split_long_words(t);
+                split.as_str()
+            } else {
+                t
+            };
             let ipa = self
                 .poly
                 .phonemize(t, poly_lang(lang).expect("a polyg2p language"));

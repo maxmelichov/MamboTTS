@@ -3,8 +3,13 @@
 //! reference `site_flow.py`; the format is its `tests/golden/README.md`).
 //!
 //! Each `plan` case is checked stage by stage (prepared, tagged, phonemes,
-//! chunks, token_ids) and the first stage that differs is reported; `pack`
-//! cases check the chunk packer alone and `geometry` cases the latent width.
+//! chunks, token_ids) and the first stage that differs is reported; a
+//! `compact` plan (the very long texts) compares the digest of every stage
+//! (`site_flow.plan_digest`). `pack` cases check the chunk packer alone,
+//! `geometry` cases the latent width and `duration` cases the voice's
+//! `speed_scale` lookup, the divisor and the float32 division from the stored
+//! `raw_s` (and, with a v3.0.1 bundle at hand, the duration predictor's own
+//! `raw_s` for the voice, to 1e-3 relative, and the voice's `speed_scale`).
 //!
 //! The file is vendored next to this test with the reference's `vocab.json`.
 //! `BLUEV3_GOLDEN=<path to cases.jsonl>` reads another copy. To refresh the
@@ -14,7 +19,7 @@
 //! The G2Ps are the release's: RenikudPlus (`BLUEV3_RENIKUD=<onnx>`) and
 //! polyg2p's data (`BLUEV3_POLYG2P_DATA=<dir>`), both by default from the
 //! bundle in `MAMBOTTS_BLUE_MODEL_DIR` or the installed MamboTTS
-//! `bluev3-3.0.0` bundle. The golden file was made with RenikudPlus's float
+//! `bluev3-3.0.1` bundle. The golden file was made with RenikudPlus's float
 //! `model.onnx` (BlueV3's `renikud.onnx`), which a bundle holds as
 //! `renikud-plus-fp32.onnx` on machines with more than 4 GB of memory; small
 //! machines hold the int8 export (`renikud-plus.onnx`), which reads a few
@@ -26,10 +31,13 @@
 use std::path::{Path, PathBuf};
 
 use blue_rs::{
-    TokenEncoder, chunk_phonemes, handling::tag_latin_runs, latent_geometry, plan_text,
+    DurationModel, TokenEncoder, VoiceStyle, chunk_duration, chunk_phonemes,
+    handling::tag_latin_runs, latent_geometry, parse_speed_scale, plan_text,
     phonemize::{Language, Phonemizer},
+    speed_divisor, speed_scale_for,
 };
-use serde_json::Value;
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 const REFERENCE: &str = "/Users/maxm/Documents/Project Blue/BlueV3/tests/golden/cases.jsonl";
 const MAX_CHUNK_TOKENS: usize = 300;
@@ -45,8 +53,8 @@ fn bundle_dir() -> Option<PathBuf> {
     }
     let home = PathBuf::from(std::env::var_os("HOME")?);
     [
-        "Library/Application Support/com.maxmelichov.mambotts/models/bluev3-3.0.0",
-        ".local/share/com.maxmelichov.mambotts/models/bluev3-3.0.0",
+        "Library/Application Support/com.maxmelichov.mambotts/models/bluev3-3.0.1",
+        ".local/share/com.maxmelichov.mambotts/models/bluev3-3.0.1",
     ]
     .into_iter()
     .map(|rel| home.join(rel))
@@ -77,6 +85,39 @@ fn id_rows(value: &Value) -> Vec<Vec<i64>> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// `site_flow.plan_digest`: the golden `compact` expectation of a long plan.
+fn plan_digest(prepared: &str, phonemes: &[String], chunks: &[String], ids: &[Vec<i64>]) -> Value {
+    let ids_digest = |row: &Vec<i64>| {
+        let text = row.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
+        sha256_hex(text.as_bytes())[..16].to_owned()
+    };
+    // Python's str.split(): runs of Unicode whitespace.
+    let words = |s: String| s.split_whitespace().map(str::to_owned).collect::<Vec<_>>();
+    json!({
+        "prepared_sha256": sha256_hex(prepared.as_bytes()),
+        "phonemes_sha256": sha256_hex(phonemes.join("\n").as_bytes()),
+        "chunk_count": chunks.len(),
+        "total_ids": ids.iter().map(Vec::len).sum::<usize>(),
+        "max_chunk_ids": ids.iter().map(Vec::len).max().unwrap_or(0),
+        "chunk_ids_sha256": ids.iter().map(ids_digest).collect::<Vec<_>>(),
+        "first_chunk": chunks.first().cloned().unwrap_or_default(),
+        "last_chunk": chunks.last().cloned().unwrap_or_default(),
+        "words_in_order": words(chunks.join(" ")) == words(phonemes.join(" ")),
+    })
+}
+
+/// The first field of a compact digest that differs.
+fn digest_difference(got: &Value, want: &Value) -> Option<String> {
+    let want = want.as_object()?;
+    want.iter()
+        .find(|(key, value)| got.get(key.as_str()) != Some(value))
+        .map(|(key, value)| format!("compact {key}\n      got:  {}\n      want: {value}", got[key.as_str()]))
 }
 
 /// The first stage whose value differs, as a report line.
@@ -121,11 +162,26 @@ fn golden_cases() {
         _ => false,
     };
 
+    // The duration predictor and voices of a v3.0.1 bundle, when one is here.
+    let release_dir = bundle_dir().filter(|dir| {
+        std::fs::read_to_string(dir.join("tts.json")).is_ok_and(|raw| raw.contains(blue_rs::RELEASE_MODEL))
+    });
+    let mut duration_model = release_dir
+        .as_ref()
+        .and_then(|dir| DurationModel::open(dir.join("duration_predictor_style.onnx")).ok());
+    eprintln!("duration predictor: {:?}", release_dir.as_ref().filter(|_| duration_model.is_some()));
+    let mut graph_checked = 0;
+
+    let filter = std::env::var("BLUEV3_GOLDEN_FILTER").ok();
     let (mut pass, mut skip, mut drift) = (0, Vec::new(), Vec::new());
     let mut failures = Vec::new();
     for line in raw.lines().filter(|line| !line.trim().is_empty()) {
         let case: Value = serde_json::from_str(line).expect("a JSON case");
         let id = case["id"].as_str().unwrap_or("?").to_owned();
+        // BLUEV3_GOLDEN_FILTER=<substring>: only the cases whose id has it.
+        if filter.as_deref().is_some_and(|f| !id.contains(f)) {
+            continue;
+        }
         let expect = &case["expect"];
         let lang = case["lang"].as_str().unwrap_or("");
         let ids = |chunks: &[String]| -> Vec<Vec<i64>> {
@@ -143,6 +199,40 @@ fn golden_cases() {
                     expect["t_mask"].as_u64().unwrap() as usize,
                 );
                 first_difference(&[("geometry", format!("{got:?}"), format!("{want:?}"))])
+            }
+            Some("duration") => {
+                let lang = case["lang"].as_str().unwrap();
+                let speed = case["speed"].as_f64().unwrap();
+                let raw_s = case["raw_s"].as_f64().unwrap() as f32;
+                let scale = parse_speed_scale(case.get("speed_scale"), "case").expect("speed_scale");
+                let factor = speed_scale_for(scale.as_ref(), lang);
+                let divisor = speed_divisor(speed, scale.as_ref(), lang) as f32;
+                let duration = chunk_duration(raw_s, speed, scale.as_ref(), lang);
+                let (t_lat, t_mask) = latent_geometry(duration, 44_100, 3072);
+                let got = json!({
+                    "scale": factor, "divisor": f64::from(divisor), "duration_s": f64::from(duration),
+                    "t_lat": t_lat, "t_mask": t_mask,
+                });
+                let mut diff = digest_difference(&got, expect).map(|d| d.replacen("compact ", "duration ", 1));
+                // The graph's own seconds and the voice file's calibration.
+                if let (None, Some(voice), Some(model), Some(dir)) =
+                    (&diff, case["voice"].as_str(), duration_model.as_mut(), release_dir.as_ref())
+                {
+                    let style = VoiceStyle::from_json(dir.join("voices").join(format!("{voice}.json")))
+                        .expect("a release voice");
+                    let ids: Vec<i64> = case["token_ids"].as_array().unwrap().iter().map(|id| id.as_i64().unwrap()).collect();
+                    let raw = model.raw_seconds(&ids, &style).expect("duration predictor");
+                    let rel = (f64::from(raw) - f64::from(raw_s)).abs() / f64::from(raw_s).abs().max(1e-9);
+                    if rel > 1e-3 {
+                        diff = Some(format!("raw_s\n      got:  {raw}\n      want: {raw_s}"));
+                    } else if style.speed_scale() != scale.as_ref() {
+                        diff = Some(format!("voice speed_scale\n      got:  {:?}\n      want: {scale:?}", style.speed_scale()));
+                    } else if style.model() != Some(blue_rs::RELEASE_MODEL) {
+                        diff = Some(format!("voice model {:?}", style.model()));
+                    }
+                    graph_checked += 1;
+                }
+                diff
             }
             Some("pack") => {
                 let units = strings(&case["phonemes"]);
@@ -166,6 +256,10 @@ fn golden_cases() {
                     }
                     Err(error) => Some(format!("plan failed: {error:#}")),
                     Ok(_) if expect.get("error").is_some() => Some("plan should have failed".into()),
+                    Ok(plan) if case["compact"].as_bool() == Some(true) => digest_difference(
+                        &plan_digest(&plan.prepared, &plan.phonemes, &plan.chunks, &ids(&plan.chunks)),
+                        expect,
+                    ),
                     Ok(plan) => first_difference(&[
                         ("prepared", plan.prepared.clone(), expect["prepared"].as_str().unwrap().to_owned()),
                         ("tagged", tag_latin_runs(&plan.prepared, lang), expect["tagged"].as_str().unwrap().to_owned()),
@@ -183,7 +277,10 @@ fn golden_cases() {
             Some(diff) if int8_renikud && renikud_case && diff.starts_with("phonemes") => {
                 drift.push(format!("{id}: {diff}"));
             }
-            Some(diff) => failures.push(format!("{id}: {diff}")),
+            Some(diff) => {
+                eprintln!("FAIL {id}: {diff}");
+                failures.push(format!("{id}: {diff}"));
+            }
         }
     }
 
@@ -193,9 +290,7 @@ fn golden_cases() {
     for line in &drift {
         eprintln!("INT8 {line}");
     }
-    for line in &failures {
-        eprintln!("FAIL {line}");
-    }
+    eprintln!("duration cases checked against the graph: {graph_checked}");
     eprintln!(
         "golden: {pass} passed, {} skipped, {} int8 G2P drift, {} failed ({})",
         skip.len(),
@@ -204,4 +299,7 @@ fn golden_cases() {
         path.display()
     );
     assert!(failures.is_empty(), "{} golden cases failed", failures.len());
+    if filter.is_none() {
+        assert_eq!(pass + skip.len() + drift.len(), raw.lines().filter(|l| !l.trim().is_empty()).count());
+    }
 }

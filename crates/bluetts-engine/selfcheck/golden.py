@@ -1,6 +1,6 @@
 """Golden output for the Rust engine's start-up self-check (engine-rs/src/engine.rs,
 `selfcheck_*`): ONNX Runtime's CPU EP on the release's vector_estimator.onnx
-(notmax123/BlueV3-onnx @ba91a77, onnx/; the same file as at d80497f), fed the same integer-hash inputs the
+(notmax123/BlueV3-onnx @d0a0270e, BlueV3 v3.0.1, onnx/; ORT 1.23.2), fed the same integer-hash inputs the
 engine builds.
 
     python golden.py <vector_estimator.onnx> [out=golden.bin]

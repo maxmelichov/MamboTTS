@@ -21,5 +21,10 @@ rand = "0.9"
 rand_distr = "0.5"
 regex = "1"
 renikud-plus-rs = { path = "../renikud-plus-rs" }
-serde_json = "1"
+# float_roundtrip: numbers parse to the nearest double, as JavaScript and
+# Python parse them (voice styles, speed_scale, the golden file).
+serde_json = { version = "1", features = ["float_roundtrip"] }
 unicode-normalization = "0.1"
+
+[dev-dependencies]
+sha2 = "0.10"

@@ -20,7 +20,7 @@ fn every_kernel_has_an_entry_point() {
 fn selfcheck_matches_golden() {
     let path = std::env::var_os("VE_ONNX").map(std::path::PathBuf::from).unwrap_or_else(|| {
         let home = std::env::var_os("HOME").expect("HOME");
-        std::path::Path::new(&home).join("Library/Application Support/com.maxmelichov.mambotts/models/bluev3-3.0.0/vector_estimator.onnx")
+        std::path::Path::new(&home).join("Library/Application Support/com.maxmelichov.mambotts/models/bluev3-3.0.1/vector_estimator.onnx")
     });
     let model = std::fs::read(&path).expect("model");
     pollster::block_on(async {

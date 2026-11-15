@@ -1,4 +1,4 @@
-//! BlueV3 (v3.0.0) inference: text or phonemes in, 44.1 kHz audio out.
+//! BlueV3 (v3.0.1) inference: text or phonemes in, 44.1 kHz audio out.
 //!
 //! The flow around the graphs is the BlueTTS site's (`js/onnx-web-worker.js`
 //! `synthesize`, `chunkFront`, `chunkBack`; `js/bluetts-text.js`), step for
@@ -6,7 +6,8 @@
 //! (Russian a sentence at a time), the phonemes cut into chunks of at most
 //! 300 ids a sentence each, ids wrapped in language tags, the predicted
 //! duration as it is (no pace blend, inline `<xx>` spans included) divided
-//! by the speed in float32, the latent length and mask as the site
+//! in float32 by the speed times the voice's `speed_scale` for the language
+//! (v3.0.1's per-voice calibration), the latent length and mask as the site
 //! rounds them, numpy's `default_rng(42)` noise for every chunk, classifier
 //! free guidance inside the vector estimator, the vocoder fed the normalised
 //! latent, a peak limit of 0.95 per chunk, 0.1 s between chunks and no trim.
@@ -19,6 +20,7 @@ macro_rules! regex {
     }};
 }
 
+pub mod bot;
 mod chunking;
 pub mod handling;
 pub mod hebrew_numbers;
@@ -28,7 +30,7 @@ pub mod phonemize;
 mod text;
 pub mod ve_gpu;
 
-use std::{fs, path::Path};
+use std::{collections::BTreeMap, fs, path::Path};
 
 use anyhow::{Context, Result, anyhow, bail};
 use ndarray::{Array1, Array3};
@@ -48,13 +50,26 @@ const DEFAULT_LATENT_DIM: usize = 24;
 /// The noise seed of every chunk: the site (and blue_onnx) start each
 /// chunk's flow from a fresh `np.random.default_rng(42)`.
 pub const SEED: u64 = 42;
+/// The checkpoint BlueV3 v3.0.1's graphs and voices are labelled with
+/// (`tts.json` and every voice JSON carry `"model"`).
+pub const RELEASE_MODEL: &str = "bluev3-702000";
+/// Earlier releases' checkpoints that can still run (graphs and voices of
+/// the same one) while an app upgrades their bundle: BlueV3 v3.0.0.
+pub const PREVIOUS_MODELS: &[&str] = &["bluev3-701500"];
+/// The speed every language is read at by default: the release's own 1.0
+/// (v3.0.1; the voices' `speed_scale` replaced v3.0.0's 0.9/0.95 tuning).
+pub const DEFAULT_SPEED: f64 = 1.0;
+/// The floor of the duration divisor (blue_onnx `speed_divisor`).
+const SPEED_FLOOR: f64 = 1e-6;
 
 #[derive(Clone, Debug)]
 pub struct SynthesisOptions {
     pub lang: String,
     pub total_step: usize,
     pub cfg_scale: f32,
-    pub speed: f32,
+    /// The speed asked for. The voice's `speed_scale[lang]` multiplies it, so
+    /// 1.0 is the voice's natural pace in every language.
+    pub speed: f64,
 }
 
 impl Default for SynthesisOptions {
@@ -64,20 +79,42 @@ impl Default for SynthesisOptions {
             lang: "he".to_string(),
             total_step: 8,
             cfg_scale: 4.0,
-            speed: 1.0,
+            speed: DEFAULT_SPEED,
         }
     }
 }
+
+/// A voice JSON's `speed_scale`: language code to a positive factor.
+pub type SpeedScale = BTreeMap<String, f64>;
 
 #[derive(Clone)]
 pub struct VoiceStyle {
     ttl: Array3<f32>,
     dp: Array3<f32>,
+    /// The voice's per-language speed calibration (v3.0.1), if it has one.
+    speed_scale: Option<SpeedScale>,
+    /// The checkpoint the voice was encoded for (`"model"`), if stated.
+    model: Option<String>,
 }
 
 impl VoiceStyle {
     pub fn new(ttl: Array3<f32>, dp: Array3<f32>) -> Self {
-        Self { ttl, dp }
+        Self {
+            ttl,
+            dp,
+            speed_scale: None,
+            model: None,
+        }
+    }
+
+    /// The voice's `speed_scale` ([`parse_speed_scale`]).
+    pub fn speed_scale(&self) -> Option<&SpeedScale> {
+        self.speed_scale.as_ref()
+    }
+
+    /// The voice's `"model"` label, such as [`RELEASE_MODEL`].
+    pub fn model(&self) -> Option<&str> {
+        self.model.as_deref()
     }
 
     pub fn from_json(path: impl AsRef<Path>) -> Result<Self> {
@@ -91,6 +128,8 @@ impl VoiceStyle {
         Ok(Self {
             ttl: read_style_tensor(&json["style_ttl"])?,
             dp: read_style_tensor(&json["style_dp"])?,
+            speed_scale: parse_speed_scale(json.get("speed_scale"), "voice JSON")?,
+            model: json["model"].as_str().map(str::to_owned),
         })
     }
 
@@ -108,6 +147,8 @@ pub struct BlueTts {
     geometry: ModelGeometry,
     release: ReleasePoint,
     vocoder_input: String,
+    /// `tts.json`'s `"model"`: the checkpoint the graphs are.
+    model: Option<String>,
     last_chunks: Vec<ChunkInfo>,
     /// The site's Rust engine for the flow (wgpu: Metal, Vulkan or DX12).
     /// `None` without a usable GPU, with `MAMBOTTS_VE_BACKEND=ort`, or after
@@ -144,7 +185,9 @@ pub struct ChunkInfo {
     pub tokens: usize,
     /// The duration predictor's seconds.
     pub raw_duration: f32,
-    /// Seconds after the speed.
+    /// The voice's `speed_scale` for the chunk's language (1.0 without one).
+    pub speed_scale: f64,
+    /// Seconds after the speed: `raw / (speed * speed_scale)` in float32.
     pub duration: f32,
     /// Latent frames (`tLat`).
     pub frames: usize,
@@ -233,7 +276,7 @@ impl BlueTts {
             .first()
             .map(|input| input.name().to_owned())
             .unwrap_or_else(|| "latent".to_owned());
-        let (geometry, release) = load_config(dir.join("tts.json"))?;
+        let (geometry, release, model) = load_config(dir.join("tts.json"))?;
         let gpu = open_gpu_flow(&dir.join("vector_estimator.onnx"));
 
         Ok(Self {
@@ -245,6 +288,7 @@ impl BlueTts {
             geometry,
             release,
             vocoder_input,
+            model,
             last_chunks: Vec::new(),
             gpu,
         })
@@ -252,6 +296,34 @@ impl BlueTts {
 
     pub fn sample_rate(&self) -> u32 {
         self.geometry.sample_rate as u32
+    }
+
+    /// Where the flow runs: the GPU adapter's name, or `None` for ONNX
+    /// Runtime (no adapter, `MAMBOTTS_VE_BACKEND=ort`, a failed self-check,
+    /// or a failure since).
+    pub fn gpu_adapter(&self) -> Option<&str> {
+        self.gpu.as_ref().map(|gpu| gpu.adapter())
+    }
+
+    /// The checkpoint the bundle's graphs are (`tts.json` `"model"`).
+    pub fn model(&self) -> Option<&str> {
+        self.model.as_deref()
+    }
+
+    /// A voice can be spoken with these graphs only when it was encoded for
+    /// the same checkpoint: a voice JSON states its `"model"`, which has to
+    /// be the bundle's.
+    pub fn check_voice(&self, style: &VoiceStyle) -> Result<()> {
+        match (self.model(), style.model()) {
+            (Some(graphs), Some(voice)) if graphs == voice => Ok(()),
+            (Some(graphs), Some(voice)) => {
+                bail!("this voice was made for {voice}, but the bundle's graphs are {graphs}")
+            }
+            (Some(graphs), None) => {
+                bail!("this voice states no model; the bundle's graphs are {graphs}")
+            }
+            (None, _) => Ok(()),
+        }
     }
 
     /// Characters accepted by the loaded model vocabulary, including IPA symbols.
@@ -388,6 +460,10 @@ impl BlueTts {
     where
         F: FnMut(&[f32]) -> Result<()>,
     {
+        self.check_voice(style)?;
+        if !(opts.speed.is_finite() && opts.speed > 0.0) {
+            bail!("speed must be a positive number, got {}", opts.speed);
+        }
         self.last_chunks.clear();
         let mut ledger = ChunkLedger::default();
         ledger.expect(chunks.len());
@@ -436,7 +512,8 @@ impl BlueTts {
         if !raw_duration.is_finite() {
             bail!("the duration predictor returned {raw_duration} s for this text");
         }
-        let duration = chunk_duration(raw_duration, opts.speed);
+        let speed_scale = speed_scale_for(style.speed_scale(), &opts.lang);
+        let duration = chunk_duration(raw_duration, opts.speed, style.speed_scale(), &opts.lang);
 
         let text_emb = {
             let out = self.text_encoder.run(ort::inputs! {
@@ -511,6 +588,7 @@ impl BlueTts {
             phonemes: phonemes.to_owned(),
             tokens: n_text,
             raw_duration,
+            speed_scale,
             duration,
             frames,
             mask_frames,
@@ -523,11 +601,106 @@ impl BlueTts {
     }
 }
 
-/// The model's own duration divided by the speed in float32, as the site's
-/// `chunkFront` computes it: release bundles blend no pace, inline
-/// `<xx>…</xx>` spans included (BlueTTS a6cc157).
-fn chunk_duration(raw: f32, speed: f32) -> f32 {
-    raw / speed.max(1e-6)
+/// A voice JSON's optional `speed_scale` (BlueTTS main, PR #61,
+/// `blue_onnx.parse_speed_scale`): `null` or missing is no calibration;
+/// otherwise an object whose every value reads as a finite positive number
+/// (as Python's `float()` reads it: a number, a numeric string, a boolean).
+/// Anything else refuses the voice.
+pub fn parse_speed_scale(value: Option<&Value>, source: &str) -> Result<Option<SpeedScale>> {
+    let map = match value {
+        None | Some(Value::Null) => return Ok(None),
+        Some(Value::Object(map)) => map,
+        Some(other) => bail!(
+            "{source}: speed_scale must be an object of language -> number, got {}",
+            json_type_name(other)
+        ),
+    };
+    let mut out = SpeedScale::new();
+    for (lang, factor) in map {
+        let number = match factor {
+            Value::Number(n) => n.as_f64(),
+            Value::Bool(b) => Some(if *b { 1.0 } else { 0.0 }),
+            Value::String(s) => s.trim().replace('_', "").parse::<f64>().ok(),
+            _ => None,
+        };
+        let Some(number) = number else {
+            bail!("{source}: speed_scale[{lang:?}] is not a number: {factor}");
+        };
+        if !(number.is_finite() && number > 0.0) {
+            bail!("{source}: speed_scale[{lang:?}] must be a positive finite number, got {factor}");
+        }
+        out.insert(lang.clone(), number);
+    }
+    Ok(Some(out))
+}
+
+fn json_type_name(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "bool",
+        Value::Number(_) => "number",
+        Value::String(_) => "str",
+        Value::Array(_) => "list",
+        Value::Object(_) => "dict",
+    }
+}
+
+/// The voice's factor for `lang` (`speed_scale_for`): the entry for the code
+/// as given, else for its canonical code (`en-us` is `en`, `ge` is `de`),
+/// else 1.0, as it is with no `speed_scale` at all.
+pub fn speed_scale_for(scale: Option<&SpeedScale>, lang: &str) -> f64 {
+    let Some(scale) = scale.filter(|scale| !scale.is_empty()) else {
+        return 1.0;
+    };
+    scale
+        .get(lang)
+        .or_else(|| scale.get(&handling::canonical_lang(lang)))
+        .copied()
+        .unwrap_or(1.0)
+}
+
+/// What the duration predictor's seconds are divided by (`speed_divisor`):
+/// `max(speed * speed_scale[lang], 1e-6)`, the product in float64.
+pub fn speed_divisor(speed: f64, scale: Option<&SpeedScale>, lang: &str) -> f64 {
+    (speed * speed_scale_for(scale, lang)).max(SPEED_FLOOR)
+}
+
+/// Seconds for one chunk, as the site's `chunkFront` computes them:
+/// `float32(raw) / float32(speed_divisor(...))`, a float32 division (JS
+/// `Math.fround(raw / Math.fround(divisor))`, the same value). Release
+/// bundles blend no pace, inline `<xx>…</xx>` spans included.
+pub fn chunk_duration(raw: f32, speed: f64, scale: Option<&SpeedScale>, lang: &str) -> f32 {
+    raw / speed_divisor(speed, scale, lang) as f32
+}
+
+/// The duration predictor alone (`duration_predictor_style.onnx`): the
+/// seconds a chunk's ids take for a voice, before the speed.
+pub struct DurationModel {
+    session: Session,
+}
+
+impl DurationModel {
+    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        Ok(Self {
+            session: load_session(path)?,
+        })
+    }
+
+    /// The predictor's raw seconds for one chunk's ids.
+    pub fn raw_seconds(&mut self, ids: &[i64], style: &VoiceStyle) -> Result<f32> {
+        let n = ids.len();
+        let text_ids = ndarray::Array2::from_shape_vec((1, n), ids.to_vec())?;
+        let text_mask = Array3::<f32>::ones((1, 1, n));
+        let out = self.session.run(ort::inputs! {
+            "text_ids" => Tensor::from_array(text_ids)?,
+            "style_dp" => Tensor::from_array(style.dp.clone())?,
+            "text_mask" => Tensor::from_array(text_mask)?,
+        })?;
+        output_vec_f32(&out[0])?
+            .first()
+            .copied()
+            .context("duration output was empty")
+    }
 }
 
 /// `opts` with its language code made canonical (`ge` is `de`, `EN` is
@@ -758,7 +931,7 @@ impl ChunkLedger {
 }
 
 /// The latent geometry and the release's operating point from `tts.json`.
-fn load_config(path: impl AsRef<Path>) -> Result<(ModelGeometry, ReleasePoint)> {
+fn load_config(path: impl AsRef<Path>) -> Result<(ModelGeometry, ReleasePoint, Option<String>)> {
     let path = path.as_ref();
     let raw = fs::read_to_string(path)
         .with_context(|| format!("read model config {}", path.display()))?;
@@ -790,7 +963,8 @@ fn load_config(path: impl AsRef<Path>) -> Result<(ModelGeometry, ReleasePoint)> 
     if let Some(value) = inference["peak_limit"].as_f64() {
         release.peak_limit = value;
     }
-    Ok((geometry, release))
+    let model = json["blue_release"]["model"].as_str().map(str::to_owned);
+    Ok((geometry, release, model))
 }
 
 fn output_vec_f32(value: &ort::value::DynValue) -> Result<Vec<f32>> {
@@ -890,14 +1064,35 @@ mod tests {
         assert_eq!(a, first, "the phoneme path speaks the text path's chunks");
     }
 
+    /// The desktop's default: the flow on the GPU engine, its start-up
+    /// self-check passing against this release's graph (a stale golden from
+    /// another vector estimator would fall back to ONNX Runtime quietly).
+    #[test]
+    #[ignore = "requires MAMBOTTS_BLUE_MODEL_DIR pointing to an installed BlueV3 bundle and a GPU"]
+    fn the_flow_runs_on_the_gpu_by_default() {
+        if std::env::var_os("MAMBOTTS_VE_BACKEND").is_some() {
+            eprintln!("MAMBOTTS_VE_BACKEND is set: skipped");
+            return;
+        }
+        let (tts, _, _) = bundle();
+        let adapter = tts.gpu_adapter().expect("the GPU flow engine did not open (see stderr)");
+        eprintln!("flow on {adapter}");
+    }
+
     #[test]
     #[ignore = "requires MAMBOTTS_BLUE_MODEL_DIR pointing to an installed BlueV3 bundle"]
     fn punctuation_alone_is_read_as_the_site_reads_it() {
         let (tts, mut phonemizer, _) = bundle();
-        // The site hands polyg2p nothing for a piece with no letters: the
-        // marks are the chunk.
+        // A unit with no letter is not spoken (a bot rule, BlueV3 v3.0.1):
+        // the model is never asked to say bare punctuation.
+        let plan = tts.plan_text(&mut phonemizer, "...", "en").unwrap();
+        assert!(plan.chunks.is_empty(), "{:?}", plan.chunks);
+        // Without the bot rules the site hands polyg2p nothing for a piece
+        // with no letters, and the marks are the chunk.
+        phonemizer.set_bot_rules(false);
         let plan = tts.plan_text(&mut phonemizer, "...", "en").unwrap();
         assert_eq!(plan.chunks, vec!["..."]);
+        phonemizer.set_bot_rules(true);
         let plan = tts
             .plan_text(&mut phonemizer, "Hello there. ...", "en")
             .unwrap();
@@ -930,10 +1125,31 @@ mod tests {
     }
 
     #[test]
-    fn the_duration_is_the_models_divided_by_speed_in_float32() {
-        assert_eq!(chunk_duration(2.0, 0.9), 2.0f32 / 0.9f32);
-        assert_eq!(chunk_duration(2.0, 1.0), 2.0);
-        assert_eq!(chunk_duration(2.0, 0.0), 2.0f32 / 1e-6f32);
+    fn the_duration_is_the_models_divided_by_speed_times_scale_in_float32() {
+        assert_eq!(chunk_duration(2.0, 0.9, None, "he"), 2.0f32 / 0.9f32);
+        assert_eq!(chunk_duration(2.0, 1.0, None, "he"), 2.0);
+        assert_eq!(chunk_duration(2.0, 0.0, None, "he"), 2.0f32 / 1e-6f32);
+        let scale: SpeedScale = [("he".to_owned(), 1.063), ("de".to_owned(), 0.995)].into();
+        assert_eq!(speed_scale_for(Some(&scale), "he"), 1.063);
+        assert_eq!(speed_scale_for(Some(&scale), "ge"), 0.995);
+        assert_eq!(speed_scale_for(Some(&scale), "fr"), 1.0);
+        assert_eq!(speed_scale_for(Some(&SpeedScale::new()), "he"), 1.0);
+        assert_eq!(
+            chunk_duration(2.5, 0.9, Some(&scale), "he"),
+            2.5f32 / (0.9f64 * 1.063) as f32
+        );
+    }
+
+    #[test]
+    fn speed_scale_is_an_object_of_positive_numbers() {
+        let parse = |raw: &str| parse_speed_scale(Some(&serde_json::from_str(raw).unwrap()), "v");
+        assert_eq!(parse("null").unwrap(), None);
+        assert_eq!(parse("{}").unwrap(), Some(SpeedScale::new()));
+        assert_eq!(parse(r#"{"he": 1.05, "en": "0.9"}"#).unwrap().unwrap()["en"], 0.9);
+        for bad in [r#"[1.0]"#, r#"1.0"#, r#"{"he": 0}"#, r#"{"he": -1}"#, r#"{"he": "fast"}"#, r#"{"he": null}"#, r#"{"he": [1]}"#] {
+            assert!(parse(bad).is_err(), "{bad}");
+        }
+        assert_eq!(parse_speed_scale(None, "v").unwrap(), None);
     }
 
     #[test]

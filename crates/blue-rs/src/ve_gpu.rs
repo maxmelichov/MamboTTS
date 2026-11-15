@@ -232,7 +232,7 @@ mod tests {
 
         let dir = std::env::var_os("BLUEV3_DIR").map(std::path::PathBuf::from).unwrap_or_else(|| {
             let home = std::env::var_os("HOME").expect("HOME");
-            Path::new(&home).join("Library/Application Support/com.maxmelichov.mambotts/models/bluev3-3.0.0")
+            Path::new(&home).join("Library/Application Support/com.maxmelichov.mambotts/models/bluev3-3.0.1")
         });
         let ve_path = dir.join("vector_estimator.onnx");
         let t0 = Instant::now();

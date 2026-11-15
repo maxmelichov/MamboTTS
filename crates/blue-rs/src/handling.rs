@@ -89,25 +89,105 @@ pub fn prepare_text(text: &str, lang: &str) -> String {
 }
 
 /// The text a language's G2P reads, with or without the bot rules
-/// (BlueV3 `site_flow.py`, `SiteFrontEnd.plan`): with them, pictographs
-/// out, tags flattened and a one-line Hebrew list broken into lines before
-/// [`prepare_text`], then phone numbers spelled and e-mail addresses read
-/// in English after it. Without them, [`prepare_text`] alone: the site
-/// exactly.
+/// (BlueV3 `site_flow.py`, `SiteFrontEnd.plan`). Without them,
+/// [`prepare_text`] alone: the site exactly. With them, [`bot_prepare`].
 pub fn prepare(text: &str, lang: &str, bot_rules: bool) -> String {
     if !bot_rules {
         return prepare_text(text, lang);
     }
-    let text = break_inline_lists(&flatten_tags(&strip_pictographs(text)), lang);
-    let prepared = prepare_text(&text, lang);
-    tag_emails(&spell_phone_numbers(&prepared, lang), lang)
+    bot_prepare(text, lang)
+}
+
+/// `bot_prepare`, the golden `prepared` stage: pictographs and invisible
+/// marks out, tags flattened and a one-line Hebrew list broken into lines;
+/// then [`crate::bot::normalize_before`] on every piece in its own
+/// language, [`prepare_text`] with spans prepared in their own language,
+/// and [`crate::bot::normalize_after`] on every piece.
+pub fn bot_prepare(text: &str, lang: &str) -> String {
+    let lang = model_lang(lang).unwrap_or("en");
+    let raw = break_inline_lists(
+        &flatten_tags(&crate::bot::strip_invisible(&strip_pictographs(text))),
+        lang,
+    );
+    let before = per_span(&raw, lang, crate::bot::normalize_before);
+    per_span(&prepare_text_protected(&before, lang), lang, crate::bot::normalize_after)
+}
+
+/// `per_span`: `f(piece, lang)` on the text outside inline spans and
+/// `f(inner, code)` on each span's content in the span's own language. The
+/// spans `f` makes inside a span are kept flat (`<en>a </en><en>x at y</en>`).
+fn per_span(text: &str, lang: &str, f: impl Fn(&str, &str) -> String) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut last = 0;
+    for span in inline_lang_spans(text) {
+        out.push_str(&f(&text[last..span.start], lang));
+        last = span.end;
+        let Some(code) = model_lang(&span.name) else {
+            out.push_str(&text[span.start..span.end]);
+            continue;
+        };
+        let inner = f(&text[span.content.0..span.content.1], code);
+        let name = &span.name;
+        let wrap = |piece: &str, out: &mut String| {
+            if crate::bot::py_strip(piece).is_empty() {
+                out.push_str(piece);
+            } else {
+                out.push_str(&format!("<{name}>{piece}</{name}>"));
+            }
+        };
+        let mut l2 = 0;
+        for nested in inline_lang_spans(&inner) {
+            wrap(&inner[l2..nested.start], &mut out);
+            out.push_str(&inner[nested.start..nested.end]);
+            l2 = nested.end;
+        }
+        wrap(&inner[l2..], &mut out);
+    }
+    out.push_str(&f(&text[last..], lang));
+    out
+}
+
+/// `prepare_text(text, lang, protect_spans=True)`: the text outside inline
+/// `<xx>…</xx>` spans prepared in the base language and each span's content
+/// in its own (the site's call ran heb-tts-normalizer over `<en>` spans too:
+/// "<en>call 5</en>" became "<en>call חמש</en>").
+pub fn prepare_text_protected(text: &str, lang: &str) -> String {
+    let spans = inline_lang_spans(text);
+    if spans.is_empty() {
+        return prepare_text(text, lang);
+    }
+    let code = canonical_lang(lang);
+    let keep_ws = |piece: &str, lg: &str| -> String {
+        let stripped = crate::bot::py_strip(piece);
+        if stripped.is_empty() {
+            return piece.to_owned();
+        }
+        let core = prepare_text(piece, lg);
+        let lead = if piece.starts_with(crate::bot::py_space) { " " } else { "" };
+        let trail = if piece.ends_with(crate::bot::py_space) { " " } else { "" };
+        format!("{lead}{core}{trail}")
+    };
+    let mut out = String::with_capacity(text.len());
+    let mut last = 0;
+    for span in &spans {
+        out.push_str(&keep_ws(&text[last..span.start], &code));
+        let content = &text[span.content.0..span.content.1];
+        let inner = match model_lang(&span.name) {
+            Some(inner_lang) => keep_ws(content, inner_lang),
+            None => content.to_owned(),
+        };
+        out.push_str(&format!("<{0}>{inner}</{0}>", span.name));
+        last = span.end;
+    }
+    out.push_str(&keep_ws(&text[last..], &code));
+    js_trim(&out).to_owned()
 }
 
 // ── the bot rules (NOT the site's; BlueV3 site_flow.py, tests/golden) ───────
 
 /// The model's language for a tag name or request code (`model_lang`),
 /// or `None`.
-fn model_lang(lang: &str) -> Option<&'static str> {
+pub(crate) fn model_lang(lang: &str) -> Option<&'static str> {
     match lang.trim().to_lowercase().as_str() {
         "he" => Some("he"),
         "en" | "en-us" => Some("en"),
@@ -125,12 +205,25 @@ fn model_lang(lang: &str) -> Option<&'static str> {
 /// (subdivision flags) are removed; a run of them with the spaces and tabs
 /// around it becomes one space. The vocab has none of them: each was a pad
 /// id in the middle of a chunk.
+///
+/// `#` or `*` keycaps go whole first (a digit keycap keeps its digit), and
+/// © ® ™ count as pictographs. A run becomes nothing instead of a space at
+/// the start of the text or a line, at its end, or before a newline or a
+/// closing mark (`done 🎉.` is `done.`).
 pub fn strip_pictographs(text: &str) -> String {
+    let text = regex!(r"[#*]\x{FE0F}?\x{20E3}").replace_all(text, "");
     let re = fregex!({
-        let p = r"\p{Emoji_Presentation}|\p{Extended_Pictographic}(?=\x{FE0F})|[\x{FE0E}\x{FE0F}\x{200D}\x{20E3}]|[\x{E0020}-\x{E007F}]";
+        let p = r"\p{Emoji_Presentation}|\p{Extended_Pictographic}(?=\x{FE0F})|[\x{FE0E}\x{FE0F}\x{200D}\x{20E3}]|[\x{E0020}-\x{E007F}]|[\x{A9}\x{AE}\x{2122}]";
         format!(r"[ \t]*(?:{p})(?:[ \t]*(?:{p}))*[ \t]*")
     });
-    freplace_all(re, text, |_| " ".into())
+    freplace_all(re, &text, |caps| {
+        let m = caps.get(0).expect("whole match");
+        let before = text[..m.start()].chars().next_back();
+        let after = text[m.end()..].chars().next();
+        let silent = before.is_none_or(|c| c == '\n')
+            || after.is_none_or(|c| ".,!?;:…)]}»\"'”’\n".contains(c));
+        if silent { String::new() } else { " ".into() }
+    })
 }
 
 /// `flatten_tags`: inline tags made flat before anything reads them. A tag
@@ -212,7 +305,7 @@ pub fn break_inline_lists(text: &str, lang: &str) -> String {
 }
 
 /// `f` over the text outside `<xx>…</xx>` spans and stray tags.
-fn outside_spans(text: &str, mut f: impl FnMut(&str) -> String) -> String {
+pub(crate) fn outside_spans(text: &str, mut f: impl FnMut(&str) -> String) -> String {
     let mut out = String::with_capacity(text.len());
     let mut last = 0;
     for m in span_or_tag_re().find_iter(text).filter_map(Result::ok) {
@@ -222,67 +315,6 @@ fn outside_spans(text: &str, mut f: impl FnMut(&str) -> String) -> String {
     }
     out.push_str(&f(&text[last..]));
     out
-}
-
-/// The languages whose phone numbers are read digit by digit, and the word
-/// for a leading `+` in each.
-fn plus_word(lang: &str) -> Option<&'static str> {
-    match lang {
-        "en" | "de" => Some("plus"),
-        "es" => Some("más"),
-        "it" => Some("più"),
-        _ => None,
-    }
-}
-
-/// `spell_phone_numbers`: in English, German, Spanish and Italian a phone
-/// number is read digit by digit with a pause between its groups
-/// (`555-123-4567` as `5 5 5, 1 2 3, 4 5 6 7`), where polyg2p read three
-/// cardinals. A phone number has 7 to 15 digits in groups split by `-`,
-/// spaces or `( )`, and starts with `+`, `(` or `0` or has three groups or
-/// more; a year range and a thousands-grouped number under nine digits are
-/// not phone numbers. Hebrew's normaliser already reads them digit by
-/// digit; Russian keeps the site's reading.
-pub fn spell_phone_numbers(text: &str, lang: &str) -> String {
-    let code = canonical_lang(lang);
-    let Some(plus_word) = plus_word(&code) else {
-        return text.to_owned();
-    };
-    let re = fregex!(
-        r"(?<![\w+.,/:-])(\+[ ]?)?(?:\([0-9]{1,5}\)[ -]?|[0-9]{1,5}[ -])(?:[0-9]{1,5}[ -]){0,5}[0-9]{2,8}(?![\w/:-]|[.,][0-9])"
-    );
-    let spell = |raw: &str| -> String {
-        let groups: Vec<&str> = regex!(r"[0-9]+").find_iter(raw).map(|m| m.as_str()).collect();
-        let digits: usize = groups.iter().map(|g| g.len()).sum();
-        let (plus, paren) = (raw.starts_with('+'), raw.contains('('));
-        if !(7..=15).contains(&digits) {
-            return raw.to_owned();
-        }
-        if !(plus || paren || groups.len() >= 3 || groups[0].starts_with('0')) {
-            return raw.to_owned();
-        }
-        if !plus
-            && !paren
-            && !raw.contains('-')
-            && digits < 9
-            && groups[0].len() <= 3
-            && groups[1..].iter().all(|g| g.len() == 3)
-        {
-            // "1 000 000": thousands-grouped ("612 345 678" is a phone).
-            return raw.to_owned();
-        }
-        let spoken = groups
-            .iter()
-            .map(|g| g.chars().map(String::from).collect::<Vec<_>>().join(" "))
-            .collect::<Vec<_>>()
-            .join(", ");
-        if plus {
-            format!("{plus_word} {spoken}")
-        } else {
-            spoken
-        }
-    };
-    outside_spans(text, |t| freplace_all(re, t, |caps| spell(&caps[0])))
 }
 
 /// `tag_emails`: in Hebrew, English, German, Spanish and Italian an e-mail
@@ -439,7 +471,7 @@ pub(crate) fn strip_emoji(text: &str) -> String {
 }
 
 /// `replace_all` with a `fancy_regex`, a match at a time.
-fn freplace_all<F>(re: &fancy_regex::Regex, text: &str, mut f: F) -> String
+pub(crate) fn freplace_all<F>(re: &fancy_regex::Regex, text: &str, mut f: F) -> String
 where
     F: FnMut(&fancy_regex::Captures) -> String,
 {
@@ -1019,7 +1051,7 @@ fn split_by_3(n: u64) -> Vec<u64> {
     out
 }
 
-fn ru_int(n: u64, feminine: bool) -> String {
+pub(crate) fn ru_int(n: u64, feminine: bool) -> String {
     if n == 0 {
         return "ноль".into();
     }

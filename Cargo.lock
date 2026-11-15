@@ -486,6 +486,7 @@ dependencies = [
  "regex",
  "renikud-plus-rs",
  "serde_json",
+ "sha2",
  "unicode-normalization",
 ]
 
