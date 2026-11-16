@@ -10,13 +10,18 @@ if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
   docker build --platform linux/amd64 -t "$IMAGE" -f "$ROOT/scripts/Dockerfile.linux-build" "$ROOT/scripts"
 fi
 
+# The Cargo target directory is a Docker volume, not the shared checkout:
+# a host-only build.target-dir in .cargo/config.toml would point into the void
+# here, and a volume is much faster than Docker Desktop's file sharing.
+# The bundles are copied back to target/x86_64-unknown-linux-gnu/release/bundle.
 docker run --rm \
   --platform linux/amd64 \
   -v "$ROOT:/workspace" \
   -v mambotts-desktop-node-modules:/workspace/mambotts-desktop/node_modules \
   -w /workspace \
   -e CI=true \
-  -e CARGO_TARGET_DIR=/workspace/target \
+  -v mambotts-linux-target:/target \
+  -e CARGO_TARGET_DIR=/target \
   -e ORT_STRATEGY=system \
   -e ORT_LIB_LOCATION=/workspace/crates/blue-rs/.ort/onnxruntime-linux-x64-1.23.2/lib \
   -e ORT_PREFER_DYNAMIC_LINK=1 \
@@ -62,9 +67,20 @@ docker run --rm \
     fi
     chmod +x "$plugin"
 
+    # The toolchain rust-toolchain.toml pins, which the image may not have.
+    rustup toolchain install
     uv run scripts/pre_build.py --target x86_64-unknown-linux-gnu
     pnpm --dir mambotts-desktop install --frozen-lockfile
     pnpm --dir mambotts-desktop exec tauri build --target x86_64-unknown-linux-gnu
+
+    out=/workspace/target/x86_64-unknown-linux-gnu/release/bundle
+    rm -rf "$out"
+    for kind in appimage deb rpm; do
+      mkdir -p "$out/$kind"
+      cp /target/x86_64-unknown-linux-gnu/release/bundle/$kind/*.AppImage \
+         /target/x86_64-unknown-linux-gnu/release/bundle/$kind/*.deb \
+         /target/x86_64-unknown-linux-gnu/release/bundle/$kind/*.rpm "$out/$kind/" 2>/dev/null || true
+    done
   '
 
 echo "Linux bundles:"
