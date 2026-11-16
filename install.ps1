@@ -87,7 +87,7 @@ $TagPrefix = 'mambotts-desktop-'
 # Used when the GitHub API cannot be reached, which is common enough from a
 # shared address that a hard failure would be the wrong default. Keep this in
 # step with the newest published desktop release.
-$FallbackVersion = '1.4.0'
+$FallbackVersion = '1.4.1'
 # The registry's directory for this bundle (RuntimeManifest.directory).
 $ModelSubDir = 'models\bluev3-3.0.1'
 
