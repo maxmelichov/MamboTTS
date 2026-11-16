@@ -183,13 +183,16 @@ def install_dxc_libs(target: str, dest_dir: Path) -> list[Path]:
 
     installed: list[Path] = []
     with zipfile.ZipFile(archive) as zf:
-        names = zf.namelist()
+        # The archive stores Windows paths (bin\x64\dxil.dll). zipfile turns
+        # them into forward slashes only when it runs on Windows, so map them
+        # here to stage DXC from a macOS or Linux cross build too.
+        entries = {n.replace("\\", "/"): n for n in zf.namelist()}
         for relative in DXC_LIBS[target]:
             out = dest_dir / Path(relative).name
-            out.write_bytes(zf.read(relative))
+            out.write_bytes(zf.read(entries[relative]))
             installed.append(out)
         # The NCSA license asks for its notice to travel with the binaries.
-        licenses = [n for n in names if Path(n).name.upper().startswith("LICENSE")]
+        licenses = [n for k, n in entries.items() if Path(k).name.upper().startswith("LICENSE")]
         if licenses:
             out = dest_dir / "dxc-LICENSE.txt"
             out.write_bytes(b"\n\n".join(zf.read(n) for n in sorted(licenses)))
@@ -283,7 +286,11 @@ def main() -> int:
         build_env[path_key] = f"{lib_dir}{os.pathsep}{current}" if current else str(lib_dir)
         library_path = build_env.get("LIBRARY_PATH", "")
         build_env["LIBRARY_PATH"] = f"{lib_dir}{os.pathsep}{library_path}" if library_path else str(lib_dir)
-        extra_rustflags.append(f"-Lnative={lib_dir}")
+        # ort-sys already adds ORT_LIB_LOCATION to the link search path; this
+        # is belt and braces. cargo-xwin re-encodes rustflags as RUSTFLAGS and
+        # refuses a flag with a space in it, so it goes without.
+        if not (use_xwin and " " in str(lib_dir)):
+            extra_rustflags.append(f"-Lnative={lib_dir}")
     if is_macos:
         extra_rustflags.append("-Clink-arg=-Wl,-headerpad_max_install_names")
     add_rustflags(build_env, extra_rustflags)

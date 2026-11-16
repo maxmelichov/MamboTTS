@@ -154,6 +154,8 @@ jobs:
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
           Copy-Item "$bin/mambotts-server-${{ matrix.target }}.exe" "$stage/mambotts-server.exe"
           Copy-Item "$bin/onnxruntime.dll", "$bin/onnxruntime_providers_shared.dll" $stage
+          # The GPU engine runs DX12 only with this DXC beside the executable.
+          Copy-Item "$bin/dxcompiler.dll", "$bin/dxil.dll", "$bin/dxc-LICENSE.txt" $stage
           # The Start Menu entry install.ps1 writes points at a .cmd launcher,
           # which otherwise shows the generic Windows script icon. install.ps1
           # picks this file up as the shortcut icon when it is present.

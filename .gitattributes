@@ -11,3 +11,6 @@
 # The model files the registry compiles in (crates/mambotts-registry/shipped):
 # byte for byte the release's, checked against its SHA-256, so never converted.
 crates/mambotts-registry/shipped/** -text
+
+# Vendored LAME sources: configure and friends must keep their LF endings.
+crates/mp3lame-sys/** -text

@@ -16,6 +16,7 @@ docker run --rm \
   -v mambotts-desktop-node-modules:/workspace/mambotts-desktop/node_modules \
   -w /workspace \
   -e CI=true \
+  -e CARGO_TARGET_DIR=/workspace/target \
   -e ORT_STRATEGY=system \
   -e ORT_LIB_LOCATION=/workspace/crates/blue-rs/.ort/onnxruntime-linux-x64-1.23.2/lib \
   -e ORT_PREFER_DYNAMIC_LINK=1 \

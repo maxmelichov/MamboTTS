@@ -1,0 +1,41 @@
+[package]
+name = "mp3lame-sys"
+version = "0.1.11"
+edition = "2021"
+repository = "https://github.com/DoumanAsh/mp3lame-sys"
+description = "Bindings to mp3lame library"
+keywords = ["lame", "mp3", "mp3lame", "libmp3lame", "codec"]
+categories = ["encoding", "external-ffi-bindings", "multimedia::audio", "multimedia::encoding"]
+license = "LGPL-3.0"
+include = [
+    "src/**",
+    "lame-3.100/**",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE",
+    "build.rs"
+]
+
+# Vendored from crates.io 0.1.11 (MamboTTS): build.rs picks the MSVC or the
+# autotools build by target so macOS can cross compile to Windows MSVC.
+publish = false
+
+[dependencies.libc]
+version = "0.2"
+default-features = false
+
+# Both, because which one runs depends on the target, not on the build host
+# (see build.rs).
+[build-dependencies]
+autotools = "0.2.6"
+cc = "1.0.77"
+
+[features]
+# Include decoder code (it is under GPL license which is pretty shite)
+decoder = []
+# Adjusts `HOST` when compiling C library to triplet in `TARGET`
+# Only relevant on unix systems
+target_host = []
+
+[package.metadata.docs.rs]
+features = ["decoder"]
