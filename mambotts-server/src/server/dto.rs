@@ -81,11 +81,8 @@ fn default_runtime() -> String {
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct SpeechBody {
     pub input: String,
-    #[serde(default)]
-    pub voice_reference: String,
-    /// A voice from /v1/voices, in any letter case (`Noa`, `noa`). Older ids
-    /// such as `libri_male_6209` still resolve. Empty means `Shira`, the
-    /// default voice of bluetts.com.
+    /// One of the fifteen BlueV3 voices from /v1/voices, in any letter case
+    /// (`Noa`, `noa`). Empty means `Shira`, the default voice of bluetts.com.
     #[serde(default)]
     pub voice: String,
     /// `wav` (the default) or `mp3` (128 kbps mono). Streamed responses are

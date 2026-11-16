@@ -15,7 +15,6 @@ use super::super::{
     },
     errors::write_error,
     state::{Cancelled, EngineError, SharedServer},
-    util::first_non_empty,
 };
 use crate::runtime::language_code_alias;
 
@@ -135,15 +134,6 @@ pub async fn diacritize(
     }
 }
 
-/// Whether the loaded runtime can clone a voice from a reference
-/// recording, read from the registry so the answer tracks the manifest
-/// rather than a hardcoded runtime name.
-fn supports_voice_reference(server: &SharedServer) -> bool {
-    let runtime = server.info().runtime.clone();
-    mambotts_registry::runtime(&runtime)
-        .is_some_and(|manifest| manifest.capabilities.voice_reference)
-}
-
 #[utoipa::path(
     post,
     path = "/v1/audio/speech",
@@ -174,19 +164,11 @@ pub async fn speech(
             return write_error(StatusCode::BAD_REQUEST, "invalid_request", err.to_string());
         }
     };
-    if !body.voice_reference.is_empty() && !supports_voice_reference(&server) {
-        return write_error(
-            StatusCode::BAD_REQUEST,
-            "invalid_request",
-            "the loaded runtime supports only its saved voices; \
-             load a runtime with voice cloning to use voice_reference",
-        );
-    }
     body.language = match checked_language(&server, &body.language) {
         Ok(language) => language,
         Err(response) => return *response,
     };
-    let voice = first_non_empty([body.voice_reference.clone(), body.voice.clone()]);
+    let voice = body.voice.clone();
     if let Err(message) = server.info().check_voice(&voice) {
         return write_error(StatusCode::BAD_REQUEST, "invalid_request", message);
     }
@@ -330,7 +312,7 @@ fn streaming_wav_response(server: SharedServer, body: SpeechBody) -> Response {
         );
     }
 
-    let voice = first_non_empty([body.voice_reference.clone(), body.voice.clone()]);
+    let voice = body.voice.clone();
     let speed = resolve_speed(body.speed);
     let steps = resolve_steps(body.steps);
     let generation = server.begin_generation();

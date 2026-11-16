@@ -2707,7 +2707,7 @@ dependencies = [
 
 [[package]]
 name = "mambotts"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "flate2",
  "futures-util",

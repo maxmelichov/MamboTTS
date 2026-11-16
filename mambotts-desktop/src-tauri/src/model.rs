@@ -16,6 +16,11 @@ use mambotts_registry::{
 /// and the directory goes once the current bundle is installed.
 const RETIRED_DIRECTORIES: &[&str] = &["bluetts-2.5"];
 
+/// Models of engines MamboTTS no longer runs at all (the early Blue ONNX
+/// bundle, the Qwen TTS experiment and the Phonikud G2P). Nothing reuses
+/// their files; they go with the retired bundles once v3.0.1 is installed.
+const OBSOLETE_DIRECTORIES: &[&str] = &["blue-onnx-v2", "qwentts-he-1.7b", "phonikud-v1"];
+
 /// One download into the models directory at a time: the onboarding's bundle
 /// download and the background RenikudPlus upgrade write the same `.part`.
 fn download_lock() -> &'static tokio::sync::Mutex<()> {
@@ -73,7 +78,6 @@ pub struct ModelSource {
     pub size: String,
     pub description: String,
     pub files: Vec<ModelSourceFile>,
-    pub archive_url: Option<String>,
     pub directory: String,
     pub capabilities: RuntimeCapabilities,
 }
@@ -82,14 +86,12 @@ pub struct ModelSource {
 pub struct RuntimeCapabilities {
     pub hebrew: bool,
     pub streaming: bool,
-    pub voice_reference: bool,
     pub fixed_voices: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ModelSources {
     pub runtimes: Vec<ModelSource>,
-    pub voices_url: String,
     pub default_paths: Vec<String>,
 }
 
@@ -302,7 +304,12 @@ pub(crate) async fn adopt_retired_hebrew_g2p(
 /// next start tries again.
 fn remove_previous_bundles(root: &Path) {
     let blue = mambotts_registry::runtime("blue").expect("the Blue manifest");
-    for name in blue.previous_directories.iter().chain(RETIRED_DIRECTORIES) {
+    for name in blue
+        .previous_directories
+        .iter()
+        .chain(RETIRED_DIRECTORIES)
+        .chain(OBSOLETE_DIRECTORIES)
+    {
         let dir = root.join(name);
         if dir.is_dir() {
             let _ = std::fs::remove_dir_all(&dir);
@@ -502,17 +509,14 @@ fn model_sources() -> ModelSources {
                         url: file.url.into(),
                     })
                     .collect(),
-                archive_url: None,
                 directory: runtime.directory.into(),
                 capabilities: RuntimeCapabilities {
                     hebrew: runtime.capabilities.hebrew,
                     streaming: runtime.capabilities.streaming,
-                    voice_reference: runtime.capabilities.voice_reference,
                     fixed_voices: runtime.capabilities.fixed_voices,
                 },
             })
             .collect(),
-        voices_url: String::new(),
         default_paths: vec![
             "macOS: ~/Library/Application Support/com.maxmelichov.mambotts/models".to_string(),
             "Windows: %LOCALAPPDATA%\\com.maxmelichov.mambotts\\models".to_string(),
@@ -666,6 +670,25 @@ mod tests {
 
         assert!(blue_bundle_at(root.path(), Fp32).installed);
         assert!(!retired.exists());
+    }
+
+    #[test]
+    fn other_engines_models_go_once_the_current_one_is_installed() {
+        let root = tempfile::tempdir().unwrap();
+        let blue = mambotts_registry::runtime("blue").unwrap();
+        let current = bundle_dir(&[Fp32]);
+        std::fs::rename(current.path(), root.path().join(blue.directory)).unwrap();
+        for name in OBSOLETE_DIRECTORIES {
+            let dir = root.path().join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("model.onnx"), b"x").unwrap();
+        }
+
+        assert!(blue_bundle_at(root.path(), Fp32).installed);
+        for name in OBSOLETE_DIRECTORIES {
+            assert!(!root.path().join(name).exists(), "{name}");
+        }
+        assert!(root.path().join(blue.directory).is_dir());
     }
 
     /// A 1.3.x RenikudPlus of the right size but other bytes is not taken:

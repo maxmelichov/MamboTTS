@@ -32,7 +32,6 @@ export type ModelSource = {
   size: string;
   description: string;
   files: ModelSourceFile[];
-  archive_url?: string | null;
   directory: string;
   capabilities: RuntimeCapabilities;
 };
@@ -40,13 +39,11 @@ export type ModelSource = {
 export type RuntimeCapabilities = {
   hebrew: boolean;
   streaming: boolean;
-  voice_reference: boolean;
   fixed_voices: boolean;
 };
 
 export type ModelSources = {
   runtimes: ModelSource[];
-  voices_url: string;
   default_paths: string[];
 };
 
@@ -70,7 +67,6 @@ export type StudioState = {
   diacritics: string;
   /** The plain text `diacritics` was generated from, used to flag it as stale after edits. */
   diacriticsSource: string;
-  referencePath: string;
   languages: string[];
   language: string;
   blueVoice: string;
@@ -91,25 +87,6 @@ export type StudioState = {
   status: string;
   busy: boolean;
   error: string;
-};
-
-export type VoicePreset = {
-  id: string;
-  name: string;
-  description: string;
-  language: string;
-  url: string;
-};
-
-export type VoiceCatalog = {
-  version: string;
-  source: string;
-  text: string;
-  voices: VoicePreset[];
-};
-
-export type DownloadedVoice = {
-  path: string;
 };
 
 /** Which editor layer the Generate button sends, most refined first. */

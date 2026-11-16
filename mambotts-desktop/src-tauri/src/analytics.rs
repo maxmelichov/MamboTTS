@@ -22,7 +22,6 @@ pub mod events {
     pub const ERROR_RUNNER_REQUEST_FAILED: &str = "error_runner_request_failed";
     pub const ERROR_RUNNER_START_FAILED: &str = "error_runner_start_failed";
     pub const ERROR_SYNTHESIS_FAILED: &str = "error_synthesis_failed";
-    pub const ERROR_VOICE_DOWNLOAD_FAILED: &str = "error_voice_download_failed";
     pub const SYNTHESIS_COMPLETED: &str = "synthesis_completed";
 }
 

@@ -1,24 +1,14 @@
-//! The single source of truth for TTS runtime metadata.
-//!
-//! Adding an engine starts here: define its model manifest and capabilities,
-//! then implement the matching server runtime adapter.
+//! The single source of truth for the model MamboTTS runs: BlueV3 v3.0.1,
+//! its files, its voices and its Hebrew G2P policy. It is the only runtime.
 
 use serde::Serialize;
 
 pub const DEFAULT_RUNTIME_ID: &str = "blue";
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum InstallKind {
-    Files,
-    Archive,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 pub struct RuntimeCapabilities {
     pub hebrew: bool,
     pub streaming: bool,
-    pub voice_reference: bool,
     pub fixed_voices: bool,
 }
 
@@ -55,7 +45,6 @@ pub struct RuntimeManifest {
     pub size: &'static str,
     pub description: &'static str,
     pub directory: &'static str,
-    pub install_kind: InstallKind,
     pub files: &'static [ModelFile],
     pub required_files: &'static [&'static str],
     /// Directories of earlier releases of this bundle, newest first. An
@@ -527,7 +516,6 @@ const BLUE: RuntimeManifest = RuntimeManifest {
     // Each release in its own directory: its graphs and voices go together,
     // so a new release never lands on top of the one the app is running.
     directory: "bluev3-3.0.1",
-    install_kind: InstallKind::Files,
     files: BLUE_FILES,
     required_files: BLUE_REQUIRED_FILES,
     previous_directories: &["bluev3-3.0.0"],
@@ -535,7 +523,6 @@ const BLUE: RuntimeManifest = RuntimeManifest {
     capabilities: RuntimeCapabilities {
         hebrew: true,
         streaming: true,
-        voice_reference: false,
         fixed_voices: true,
     },
 };
@@ -620,22 +607,11 @@ pub const BLUE_VOICES: &[BlueVoice] = &[
 /// The voice a request without one gets: bluetts.com's default, Shira.
 pub const DEFAULT_BLUE_VOICE: &str = "Shira";
 
-/// File stems the 2.5 bundle named its four voices by. A caller that pinned
-/// one keeps landing on the voice of the same name.
-const LEGACY_VOICE_STEMS: &[(&str, &str)] = &[
-    ("libri_female_1088", "Noa"),
-    ("libri_female_6147", "Lily"),
-    ("libri_male_6209", "Daniel"),
-    ("libri_male_8088", "Adam"),
-];
-
-/// Resolves a file stem, in any letter case, to its display name, so `noa`
-/// and the older `libri_male_6209` both land on a catalog voice.
+/// Resolves a voice name in any letter case to its catalog spelling, so
+/// `noa` lands on `Noa`. Anything else, BlueTTS 2.5's `libri_*` voices
+/// included, comes back unchanged and is rejected as an unknown voice.
 pub fn blue_voice_name(id: &str) -> &str {
     let id = id.trim();
-    if let Some((_, name)) = LEGACY_VOICE_STEMS.iter().find(|(stem, _)| *stem == id) {
-        return name;
-    }
     BLUE_VOICES
         .iter()
         .find(|voice| voice.name.eq_ignore_ascii_case(id))
@@ -643,8 +619,7 @@ pub fn blue_voice_name(id: &str) -> &str {
         .unwrap_or(id)
 }
 
-// Blue stays first and stays the default: it is the small, fast bundle
-// most users want. A second engine is added by appending its manifest here.
+// BlueV3 v3.0.1 is the only model MamboTTS ships.
 const RUNTIMES: &[RuntimeManifest] = &[BLUE];
 
 pub fn runtimes() -> &'static [RuntimeManifest] {
@@ -721,8 +696,8 @@ mod tests {
     }
 
     #[test]
-    fn old_voice_stems_still_resolve() {
-        assert_eq!(blue_voice_name("libri_male_6209"), "Daniel");
+    fn only_the_fifteen_voices_resolve() {
+        assert_eq!(blue_voice_name("libri_male_6209"), "libri_male_6209");
         assert_eq!(blue_voice_name("Noa"), "Noa");
         assert_eq!(blue_voice_name("michael"), "Michael");
         assert_eq!(blue_voice_name("nonsense"), "nonsense");

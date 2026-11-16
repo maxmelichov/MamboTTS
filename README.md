@@ -142,10 +142,6 @@ does not ship an installer for, such as Intel macOS and Arm Linux. See its
 
 See [BUILDING.md](docs/BUILDING.md).
 
-## Adding models
-
-Want to ship another open-source TTS model or voice bundle with MamboTTS? See [docs/ADDING_MODELS.md](docs/ADDING_MODELS.md) for licensing, registry wiring, server/desktop steps, and the PR checklist.
-
 ---
 
 This code is taken from [Chirp](https://github.com/thewh1teagle/chirp).

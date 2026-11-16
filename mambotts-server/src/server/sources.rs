@@ -58,7 +58,6 @@ pub struct HebrewG2pPolicy {
 pub struct RuntimeCapabilitiesResponse {
     hebrew: bool,
     streaming: bool,
-    voice_reference: bool,
     fixed_voices: bool,
 }
 
@@ -80,14 +79,12 @@ pub struct ModelSource {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ModelSourcesResponse {
     runtimes: Vec<ModelSource>,
-    voices_url: &'static str,
     default_paths: Vec<&'static str>,
 }
 
 pub fn model_sources() -> ModelSourcesResponse {
     ModelSourcesResponse {
         runtimes: runtimes().iter().map(source_from_manifest).collect(),
-        voices_url: "",
         default_paths: vec![
             "macOS: ~/Library/Application Support/com.maxmelichov.mambotts/models",
             "Windows: %LOCALAPPDATA%\\com.maxmelichov.mambotts\\models",
@@ -125,7 +122,6 @@ fn source_from_manifest(manifest: &RuntimeManifest) -> ModelSource {
         capabilities: RuntimeCapabilitiesResponse {
             hebrew: manifest.capabilities.hebrew,
             streaming: manifest.capabilities.streaming,
-            voice_reference: manifest.capabilities.voice_reference,
             fixed_voices: manifest.capabilities.fixed_voices,
         },
     }
@@ -183,8 +179,8 @@ mod tests {
                 if manifest.hebrew_g2p { 2 } else { 0 }
             );
             assert_eq!(
-                source.capabilities.voice_reference,
-                manifest.capabilities.voice_reference
+                source.capabilities.fixed_voices,
+                manifest.capabilities.fixed_voices
             );
         }
     }
