@@ -154,6 +154,10 @@ pub struct BlueTts {
     /// `None` without a usable GPU, with `MAMBOTTS_VE_BACKEND=ort`, or after
     /// it failed once; the ONNX Runtime graph runs the flow then.
     gpu: Option<ve_gpu::GpuVectorEstimator>,
+    /// The GPU engine while it is still opening. Compiling its kernels can
+    /// take half a minute (DXC on Windows), so the model loads and speaks on
+    /// ONNX Runtime meanwhile and switches at the next chunk once it is ready.
+    gpu_opening: Option<std::thread::JoinHandle<Option<ve_gpu::GpuVectorEstimator>>>,
 }
 
 /// Open the GPU flow engine unless disabled; any failure means ONNX Runtime.
@@ -277,7 +281,12 @@ impl BlueTts {
             .map(|input| input.name().to_owned())
             .unwrap_or_else(|| "latent".to_owned());
         let (geometry, release, model) = load_config(dir.join("tts.json"))?;
-        let gpu = open_gpu_flow(&dir.join("vector_estimator.onnx"));
+        let gpu_path = dir.join("vector_estimator.onnx");
+        let gpu_opening = std::thread::Builder::new()
+            .name("bluev3-gpu-open".into())
+            .spawn(move || open_gpu_flow(&gpu_path))
+            .map_err(|err| eprintln!("BlueV3 flow on ONNX Runtime: could not start the GPU engine: {err}"))
+            .ok();
 
         Ok(Self {
             dp: load_session(dir.join("duration_predictor_style.onnx"))?,
@@ -290,8 +299,24 @@ impl BlueTts {
             vocoder_input,
             model,
             last_chunks: Vec::new(),
-            gpu,
+            gpu: None,
+            gpu_opening,
         })
+    }
+
+    /// Takes over the GPU engine once its background open has finished.
+    fn adopt_gpu(&mut self, wait: bool) {
+        if self.gpu_opening.as_ref().is_some_and(|handle| wait || handle.is_finished()) {
+            let handle = self.gpu_opening.take().expect("checked above");
+            // A panic while opening is one more reason to stay on ONNX Runtime.
+            self.gpu = handle.join().ok().flatten();
+        }
+    }
+
+    /// Blocks until the GPU engine has opened or given up, for callers that
+    /// need to know where the flow runs (see [`BlueTts::gpu_adapter`]).
+    pub fn wait_for_gpu(&mut self) {
+        self.adopt_gpu(true);
     }
 
     pub fn sample_rate(&self) -> u32 {
@@ -300,7 +325,7 @@ impl BlueTts {
 
     /// Where the flow runs: the GPU adapter's name, or `None` for ONNX
     /// Runtime (no adapter, `MAMBOTTS_VE_BACKEND=ort`, a failed self-check,
-    /// or a failure since).
+    /// a failure since, or still opening: see [`BlueTts::wait_for_gpu`]).
     pub fn gpu_adapter(&self) -> Option<&str> {
         self.gpu.as_ref().map(|gpu| gpu.adapter())
     }
@@ -536,6 +561,7 @@ impl BlueTts {
         // as the graph's to ~1e-5. If it fails, ONNX Runtime takes over for
         // this chunk and every later one.
         let mut gpu_done = false;
+        self.adopt_gpu(false);
         if let Some(engine) = self.gpu.as_mut() {
             let flat = |array: &ndarray::Array3<f32>| -> Vec<f32> { array.iter().copied().collect() };
             match engine.flow(
@@ -1074,7 +1100,8 @@ mod tests {
             eprintln!("MAMBOTTS_VE_BACKEND is set: skipped");
             return;
         }
-        let (tts, _, _) = bundle();
+        let (mut tts, _, _) = bundle();
+        tts.wait_for_gpu();
         let adapter = tts.gpu_adapter().expect("the GPU flow engine did not open (see stderr)");
         eprintln!("flow on {adapter}");
     }
