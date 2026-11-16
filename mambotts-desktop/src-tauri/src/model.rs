@@ -9,6 +9,13 @@ use mambotts_registry::{
     HebrewG2pPlan, HebrewG2pVariant, ModelFile, hebrew_g2p_plan, hebrew_g2p_variant, runtimes,
 };
 
+/// Bundles from before BlueV3 (MamboTTS 1.3.x). Their graphs and voices do
+/// not run on BlueV3, so there is no background upgrade from them and the
+/// user goes through onboarding; but RenikudPlus is the same revision, so
+/// onboarding takes its file from here instead of fetching 1.2 GB again,
+/// and the directory goes once the current bundle is installed.
+const RETIRED_DIRECTORIES: &[&str] = &["bluetts-2.5"];
+
 /// One download into the models directory at a time: the onboarding's bundle
 /// download and the background RenikudPlus upgrade write the same `.part`.
 fn download_lock() -> &'static tokio::sync::Mutex<()> {
@@ -265,12 +272,37 @@ pub(crate) async fn migrate_files(
     Ok(())
 }
 
+/// Put a retired bundle's RenikudPlus in place for `policy` when its bytes
+/// are the registry's (it is a hard link where possible, so the retired
+/// directory's removal frees nothing twice). 1.3.x named its file
+/// `renikud-plus.onnx` whichever weights it held, so both names are tried
+/// and only the size and SHA-256 decide.
+pub(crate) async fn adopt_retired_hebrew_g2p(
+    root: &Path,
+    dir: &Path,
+    policy: HebrewG2pVariant,
+) -> Result<(), String> {
+    let file = policy.model_file();
+    let dest = dir.join(file.name);
+    if has_expected_size(&dest, &file) {
+        return Ok(());
+    }
+    for retired in RETIRED_DIRECTORIES {
+        for name in [HebrewG2pVariant::Int8, HebrewG2pVariant::Fp32].map(|v| v.model_file().name) {
+            if reuse_verified(&file, &root.join(retired).join(name), &dest).await? {
+                return Ok(());
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Remove earlier releases' directories once the current one is installed.
 /// A file a running server still holds open may not go on Windows; the
 /// next start tries again.
 fn remove_previous_bundles(root: &Path) {
     let blue = mambotts_registry::runtime("blue").expect("the Blue manifest");
-    for name in blue.previous_directories {
+    for name in blue.previous_directories.iter().chain(RETIRED_DIRECTORIES) {
         let dir = root.join(name);
         if dir.is_dir() {
             let _ = std::fs::remove_dir_all(&dir);
@@ -506,6 +538,7 @@ async fn download_runtime_bundle(
     let dir = blue_dir(&app)?;
     let policy = hebrew_g2p_for_this_machine();
     let client = http_client()?;
+    adopt_retired_hebrew_g2p(&models_root(&app)?, &dir, policy).await?;
     download_bundle_in(&client, &dir, &manifest.files_for(policy), |progress| {
         emit_progress(&app, progress)
     })
@@ -619,6 +652,51 @@ mod tests {
         // A low-memory machine is done: int8 is its own variant.
         let bundle = blue_bundle_in(dir.path(), Int8, "v".into());
         assert_eq!((bundle.hebrew_g2p, bundle.hebrew_g2p_upgrade), (Some(Int8), None));
+    }
+
+    #[test]
+    fn a_retired_bundle_goes_once_the_current_one_is_installed() {
+        let root = tempfile::tempdir().unwrap();
+        let blue = mambotts_registry::runtime("blue").unwrap();
+        let current = bundle_dir(&[Fp32]);
+        std::fs::rename(current.path(), root.path().join(blue.directory)).unwrap();
+        let retired = root.path().join(RETIRED_DIRECTORIES[0]);
+        std::fs::create_dir_all(retired.join("voices")).unwrap();
+        std::fs::write(retired.join("vocoder.onnx"), b"x").unwrap();
+
+        assert!(blue_bundle_at(root.path(), Fp32).installed);
+        assert!(!retired.exists());
+    }
+
+    /// A 1.3.x RenikudPlus of the right size but other bytes is not taken:
+    /// onboarding downloads the registry's file instead.
+    #[tokio::test]
+    async fn a_retired_renikud_that_is_not_the_registrys_is_left_alone() {
+        let root = tempfile::tempdir().unwrap();
+        let retired = root.path().join(RETIRED_DIRECTORIES[0]);
+        std::fs::create_dir_all(&retired).unwrap();
+        std::fs::File::create(retired.join("renikud-plus.onnx"))
+            .unwrap()
+            .set_len(Int8.model_file().size)
+            .unwrap();
+        let dir = root.path().join("current");
+        adopt_retired_hebrew_g2p(root.path(), &dir, Int8).await.unwrap();
+        assert!(!dir.join(Int8.file_name()).exists());
+    }
+
+    /// 1.3.x's real RenikudPlus (fp32 under the int8 name) is taken over:
+    /// `MAMBOTTS_RETIRED_RENIKUD` names a bluetts-2.5 `renikud-plus.onnx`.
+    #[tokio::test]
+    #[ignore = "needs MAMBOTTS_RETIRED_RENIKUD pointing at a 1.3.x renikud-plus.onnx"]
+    async fn a_retired_renikud_with_the_registrys_bytes_is_taken_over() {
+        let source = PathBuf::from(std::env::var("MAMBOTTS_RETIRED_RENIKUD").unwrap());
+        let root = tempfile::tempdir().unwrap();
+        let retired = root.path().join(RETIRED_DIRECTORIES[0]);
+        std::fs::create_dir_all(&retired).unwrap();
+        std::fs::copy(&source, retired.join("renikud-plus.onnx")).unwrap();
+        let dir = root.path().join("current");
+        adopt_retired_hebrew_g2p(root.path(), &dir, Fp32).await.unwrap();
+        assert!(has_expected_size(&dir.join(Fp32.file_name()), &Fp32.model_file()));
     }
 
     #[test]
