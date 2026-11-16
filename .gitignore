@@ -20,6 +20,9 @@ target/
 */target/
 mambotts-desktop/src-tauri/binaries/mambotts-*
 mambotts-desktop/src-tauri/binaries/mambotts-runner-*
+# DirectX Shader Compiler, staged and cached by scripts/pre_build.py.
+mambotts-desktop/src-tauri/binaries/dxc-LICENSE.txt
+crates/bluetts-engine/.dxc/
 *.o
 *.a
 *.so

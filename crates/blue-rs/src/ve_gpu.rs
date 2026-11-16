@@ -40,12 +40,31 @@ pub struct GpuVectorEstimator {
 }
 
 impl GpuVectorEstimator {
-    /// Opens a GPU device (Metal on macOS, Vulkan or DX12 on Windows, Vulkan
-    /// on Linux), uploads the weights of `vector_estimator.onnx`, compiles the
-    /// kernels and runs the self-check. `Ok(None)`: no hardware adapter.
+    /// Opens a GPU device (Metal on macOS, DX12 or else Vulkan on Windows,
+    /// Vulkan on Linux), uploads the weights of `vector_estimator.onnx`,
+    /// compiles the kernels and runs the self-check. Each backend is tried on
+    /// its own and the first that passes the self-check is kept, so a driver
+    /// that computes wrongly on one backend does not cost the GPU when another
+    /// works. `Ok(None)`: no hardware adapter on any of them.
     pub fn open(vector_estimator_onnx: impl AsRef<Path>) -> Result<Option<Self>> {
         let path = vector_estimator_onnx.as_ref();
-        let (device, queue) = match pollster::block_on(Engine::new_device(false)) {
+        let mut failures = Vec::new();
+        for backends in Engine::native_backend_candidates() {
+            match Self::open_on(path, backends) {
+                Ok(Some(me)) => return Ok(Some(me)),
+                Ok(None) => {}
+                Err(err) => failures.push(format!("{err:#}")),
+            }
+        }
+        if failures.is_empty() {
+            Ok(None)
+        } else {
+            bail!("{}", failures.join("; "))
+        }
+    }
+
+    fn open_on(path: &Path, backends: wgpu::Backends) -> Result<Option<Self>> {
+        let (device, queue) = match pollster::block_on(Engine::new_device_on(backends, false)) {
             Ok(dq) => dq,
             Err(e) if e.starts_with("no WebGPU adapter") => return Ok(None),
             Err(e) => bail!("GPU vector estimator: {e}"),

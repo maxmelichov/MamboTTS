@@ -432,6 +432,14 @@ fn gemv(w: &[f32], b: &[f32], x: &[f32]) -> Vec<f32> {
     b.iter().enumerate().map(|(i, bi)| (dot64(&w[i * k..(i + 1) * k], x) + *bi as f64) as f32).collect()
 }
 
+/// The DXC shipped beside the executable (scripts/pre_build.py stages
+/// `dxcompiler.dll` and `dxil.dll` there), as wgpu's `DynamicDxc` path.
+#[cfg(windows)]
+fn bundled_dxc() -> Option<String> {
+    let dll = std::env::current_exe().ok()?.parent()?.join("dxcompiler.dll");
+    dll.is_file().then(|| dll.to_string_lossy().into_owned())
+}
+
 impl Engine {
     /// A device of our own (wgpu cannot adopt ONNX Runtime's), with WebGPU's
     /// default limits and no optional features: every kernel fits the spec
@@ -439,14 +447,54 @@ impl Engine {
     /// invocations, buffers far below 128 MiB at any chunk length the site makes).
     /// `timestamps`: also ask for timestamp queries (tuning only, `profile`).
     pub async fn new_device(timestamps: bool) -> Result<(wgpu::Device, wgpu::Queue), String> {
-        let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
         // Natively: Metal on macOS, Vulkan or DX12 on Windows, Vulkan on Linux
         // (whichever the build enabled; the high-performance adapter wins).
-        desc.backends = if cfg!(target_arch = "wasm32") {
+        let backends = if cfg!(target_arch = "wasm32") {
             wgpu::Backends::BROWSER_WEBGPU
         } else {
             wgpu::Backends::METAL | wgpu::Backends::VULKAN | wgpu::Backends::DX12
         };
+        Self::new_device_on(backends, timestamps).await
+    }
+
+    /// The native backends to try one at a time, in order, for a caller that
+    /// checks each device's output and moves on when one is wrong: on Windows
+    /// the same GPU can compute correctly through DX12 and wrongly through its
+    /// Vulkan driver (an AMD Radeon iGPU fails the self-check on Vulkan), and
+    /// asking for both at once lets wgpu settle on either. `WGPU_BACKEND`
+    /// (e.g. `vulkan`) narrows the list to what it names.
+    pub fn native_backend_candidates() -> Vec<wgpu::Backends> {
+        let order: &[wgpu::Backends] = if cfg!(windows) {
+            &[wgpu::Backends::DX12, wgpu::Backends::VULKAN]
+        } else if cfg!(target_os = "macos") {
+            &[wgpu::Backends::METAL]
+        } else {
+            &[wgpu::Backends::VULKAN]
+        };
+        let allowed = wgpu::Backends::from_env().unwrap_or(wgpu::Backends::all());
+        order.iter().copied().filter(|b| allowed.contains(*b)).collect()
+    }
+
+    /// [`Engine::new_device`] on the given backends only.
+    pub async fn new_device_on(backends: wgpu::Backends, timestamps: bool) -> Result<(wgpu::Device, wgpu::Queue), String> {
+        let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+        desc.backends = backends;
+        #[cfg(windows)]
+        if backends.contains(wgpu::Backends::DX12) {
+            // wgpu's default looks for dxcompiler.dll on the search path and
+            // otherwise falls back to FXC, which spends many minutes of CPU
+            // compiling these kernels: model load looks hung. So DX12 runs
+            // only on the DXC the app ships beside the executable.
+            match bundled_dxc() {
+                Some(dxc_path) => desc.backend_options.dx12.shader_compiler = wgpu::Dx12Compiler::DynamicDxc { dxc_path },
+                None => {
+                    desc.backends.remove(wgpu::Backends::DX12);
+                    if desc.backends.is_empty() {
+                        return Err("no WebGPU adapter: DX12 needs the dxcompiler.dll shipped beside the executable".into());
+                    }
+                }
+            }
+        }
         let instance = wgpu::Instance::new(desc);
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {

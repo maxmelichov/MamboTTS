@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import platform
 import shutil
@@ -62,6 +63,18 @@ ORT_PACKAGES = {
         ["lib/onnxruntime.dll", "lib/onnxruntime_providers_shared.dll"],
     ),
 }
+
+
+# DirectX Shader Compiler for the GPU engine's DX12 backend on Windows. wgpu
+# otherwise compiles the WGSL kernels with FXC, which takes many minutes, so
+# the engine only uses DX12 when this DXC sits beside the sidecar. Pinned to a
+# release and its archive's SHA-256; wgpu 30 needs DXC 1.8.2502 or newer.
+DXC_VERSION = "v1.9.2609"
+DXC_URL = f"https://github.com/microsoft/DirectXShaderCompiler/releases/download/{DXC_VERSION}/dxc_2026_09_29.zip"
+DXC_SHA256 = "ad31b1fc8443175d204f77a611fdb3ef2ec42759bdc2f1167368de24a4a7e7f1"
+DXC_CACHE = ROOT / "crates" / "bluetts-engine" / ".dxc"
+# dxil.dll signs the compiled shaders, without which D3D12 rejects them.
+DXC_LIBS = {"x86_64-pc-windows-msvc": ["bin/x64/dxcompiler.dll", "bin/x64/dxil.dll"]}
 
 
 def detect_host_target() -> str | None:
@@ -138,6 +151,37 @@ def install_ort_libs(target: str, dest_dir: Path) -> list[Path]:
     if not installed:
         raise FileNotFoundError(f"no ONNX Runtime libraries found under {ort_root}")
     print(f"Installed ONNX Runtime libs from {name}: {[p.name for p in installed]}")
+    return installed
+
+
+def install_dxc_libs(target: str, dest_dir: Path) -> list[Path]:
+    """Stage dxcompiler.dll, dxil.dll and DXC's license beside the sidecar."""
+    archive = DXC_CACHE / f"dxc-{DXC_VERSION}.zip"
+    # Checked by hash rather than trusted by name: a cache that lost or
+    # truncated its file is downloaded again instead of shipped broken.
+    if not archive.exists() or hashlib.sha256(archive.read_bytes()).hexdigest() != DXC_SHA256:
+        DXC_CACHE.mkdir(parents=True, exist_ok=True)
+        print(f"+ downloading {DXC_URL}")
+        urllib.request.urlretrieve(DXC_URL, archive)
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        if digest != DXC_SHA256:
+            archive.unlink()
+            raise RuntimeError(f"DXC archive SHA-256 {digest}, expected {DXC_SHA256}")
+
+    installed: list[Path] = []
+    with zipfile.ZipFile(archive) as zf:
+        names = zf.namelist()
+        for relative in DXC_LIBS[target]:
+            out = dest_dir / Path(relative).name
+            out.write_bytes(zf.read(relative))
+            installed.append(out)
+        # The NCSA license asks for its notice to travel with the binaries.
+        licenses = [n for n in names if Path(n).name.upper().startswith("LICENSE")]
+        if licenses:
+            out = dest_dir / "dxc-LICENSE.txt"
+            out.write_bytes(b"\n\n".join(zf.read(n) for n in sorted(licenses)))
+            installed.append(out)
+    print(f"Installed DirectX Shader Compiler {DXC_VERSION}: {[p.name for p in installed]}")
     return installed
 
 
@@ -220,6 +264,8 @@ def main() -> int:
         dest.chmod(dest.stat().st_mode | 0o111)
 
     install_ort_libs(target, dest_dir)
+    if target in DXC_LIBS:
+        install_dxc_libs(target, dest_dir)
 
     if is_macos:
         for rpath in (
