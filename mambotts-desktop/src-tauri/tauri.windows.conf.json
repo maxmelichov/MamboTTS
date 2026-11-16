@@ -9,7 +9,10 @@
     ],
     "resources": {
       "binaries/onnxruntime.dll": "onnxruntime.dll",
-      "binaries/onnxruntime_providers_shared.dll": "onnxruntime_providers_shared.dll"
+      "binaries/onnxruntime_providers_shared.dll": "onnxruntime_providers_shared.dll",
+      "binaries/dxcompiler.dll": "dxcompiler.dll",
+      "binaries/dxil.dll": "dxil.dll",
+      "binaries/dxc-LICENSE.txt": "dxc-LICENSE.txt"
     },
     "windows": {
       "webviewInstallMode": {
@@ -20,7 +23,8 @@
         "installMode": "currentUser",
         "installerIcon": "icons/icon.ico",
         "headerImage": "installer/header.bmp",
-        "sidebarImage": "installer/sidebar.bmp"
+        "sidebarImage": "installer/sidebar.bmp",
+        "installerHooks": "installer/hooks.nsh"
       }
     }
   }
