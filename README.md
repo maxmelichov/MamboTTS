@@ -110,9 +110,11 @@ installer is the one place you get to see where the app is going and say no.
 Pass `-Silent` if you are installing unattended.
 
 The app installs for the current user, so nothing asks for an administrator.
-On first launch the onboarding screen downloads the BlueTTS model and the
-Renikud phonemizer, around 580 MB, into the app data folder. That is the only
-part that needs the network; generation after it is offline.
+On first launch the onboarding screen downloads the BlueV3 model and the
+RenikudPlus phonemizer, about 1.7 GB (1 GB on machines with 4 GB of memory or
+less), into the app data folder. That is the only part that needs the network;
+generation after it is offline. Coming from 1.3.x, the phonemizer already on
+disk is reused, so the download is about 430 MB.
 
 If you want the HTTP API without the window, `-Server` installs the headless
 server into `%LOCALAPPDATA%\MamboTTS` with a `MamboTTS-Server.cmd` launcher
