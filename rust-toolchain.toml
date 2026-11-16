@@ -1,0 +1,11 @@
+# Pinned because Cargo 1.100 lays out build-script output as
+# build/<package>/<hash>/out, and tauri-build 2.5.6 (the newest) still finds
+# the target directory three levels above OUT_DIR. On 1.100 that lands in
+# target/<triple>/release/build, so it tries to replace the sidecar copy
+# "mambotts-server" there, which is the server package's build directory, and
+# the desktop crate's build script panics with EISDIR ("failed to run custom
+# build command for `mambotts`"). Move this forward together with a
+# tauri-build that understands the new layout.
+[toolchain]
+channel = "1.97.1"
+targets = ["aarch64-apple-darwin", "x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]

@@ -18,3 +18,8 @@ codegen-units = 1
 lto = true
 opt-level = "s"
 strip = true
+
+# Vendored with a target-based build script so macOS can cross compile the
+# Windows sidecar with cargo-xwin (crates/mp3lame-sys/Cargo.toml).
+[patch.crates-io]
+mp3lame-sys = { path = "crates/mp3lame-sys" }
