@@ -1,104 +1,64 @@
-# MamboTTS Agent Skill
+# MamboTTS Local TTS API
 
-MamboTTS is a local, offline TTS server. The current shipped engine is [BlueTTS](https://github.com/maxmelichov/BlueTTS), with Hebrew, English, Spanish, Italian, and German support, streamed WAV output, and fixed voice styles. Hebrew IPA and Hebrew diacritics (niqqud) both come from [RenikudPlus](https://github.com/maxmelichov/RenikudPlus). It does not support voice cloning.
+You are using MamboTTS, a local BlueV3 text-to-speech HTTP API. The shipped runtime speaks six languages: Hebrew (`he`), English (`en`), Spanish (`es`), German (`de`), Italian (`it`), and Russian (`ru`), in fixed voices (GET /v1/voices), with WAV, MP3, and streaming WAV output. It does not support voice cloning.
 
-## Start the server
+`language` may be `auto` (the default), one of the six codes, or a language name such as `Hebrew`. `auto` picks Hebrew for Hebrew script, Russian for Cyrillic, and English otherwise, so set the language explicitly for Spanish, German, and Italian. Voice names are case-insensitive. An unsupported language or an unknown voice is a 400 `invalid_request`.
 
-The server can start without a model and load one through HTTP:
+Hebrew grapheme-to-IPA uses RenikudPlus (`renikud-plus.onnx`) with optional `speaker` / `target_speaker` conditioning (0=unknown, 1=male, 2=female). The same RenikudPlus model adds Hebrew diacritics (niqqud).
 
-```console
-mambotts-server serve --host 127.0.0.1 --port 8080 --exit-with-parent false
-```
+Base URL: http://127.0.0.1:8080
+OpenAPI schema: http://127.0.0.1:8080/openapi.json
+Swagger docs: http://127.0.0.1:8080/docs
+Model sources: http://127.0.0.1:8080/v1/models/sources
 
-Or load the Blue bundle immediately:
+Before calling the API, fetch the OpenAPI schema from /openapi.json and use it as the source of truth for request and response shapes.
 
-```console
-mambotts-server serve \
-  --host 127.0.0.1 \
-  --port 8080 \
-  --model-dir /path/to/bluetts-2.5 \
-  --renikud /path/to/bluetts-2.5/renikud-plus.onnx \
-  --exit-with-parent false
-```
+Recommended flow:
 
-The model directory must include `duration_predictor.onnx`, `text_encoder.onnx`, `vector_estimator.onnx`, `vocoder.onnx`, `vocab.json`, `tts.json`, the `voices/` directory, and `renikud-plus.onnx`.
+1. Call GET /health.
+2. If loaded=false, call GET /v1/models/sources to discover runtimes, model download URLs, and default MamboTTS Desktop model locations.
+3. Check whether the model files already exist in MamboTTS Desktop's default model directory.
+4. Call POST /v1/models/load with `runtime`, `model_path`, and `renikud_path` pointing at the bundle's RenikudPlus (`renikud-plus-fp32.onnx`, or the int8 `renikud-plus.onnx` on small machines). Optional: `speaker`, `target_speaker`.
+5. Optional IPA preview: POST /v1/phonemize, then edit phonemes client-side.
+6. Call POST /v1/audio/speech to synthesize speech. For edited IPA, set `input_is_phonemes: true` and `stream: true` (phoneme input requires streaming), and send the IPA's language: IPA has no script to detect, so with `auto` only a leading `<xx>` tag (for example `<he>ʃalˈom</he>`) identifies it, and untagged IPA is read as English.
+7. Non-streaming responses return a standalone WAV (`stream: false`). Streaming responses use MamboTTS binary frames.
+8. A streaming response carries an `x-mambotts-generation-id` header. POST it to /v1/audio/speech/cancel as `{"id":"..."}` to stop that generation; an empty body stops every running one. Dropping the response also stops it, at the next chunk boundary.
 
-## Load a model over HTTP
+Status endpoints (/health, /v1/models, /v1/voices, /v1/languages, /v1/phonemes) answer while a synthesis is running; `/health` reports `busy`. Anything that needs the engine (speech, phonemize, diacritize, model load) waits its turn.
 
-```console
-curl -sS http://127.0.0.1:8080/v1/models/load \
-  -H 'content-type: application/json' \
-  -d '{
-    "runtime": "blue",
-    "model_path": "/path/to/bluetts-2.5",
-    "renikud_path": "/path/to/bluetts-2.5/renikud-plus.onnx",
-    "speaker": 0,
-    "target_speaker": 0
-  }'
-```
+Example:
 
-Hebrew always uses RenikudPlus. Speaker IDs are `0` unknown, `1` male, `2` female. The retired `hebrew_g2p_engine` and `phonikud_path` fields are accepted and ignored.
+~~~sh
+curl http://127.0.0.1:8080/health
 
-Discover installed runtime metadata before presenting controls:
+curl http://127.0.0.1:8080/v1/models/sources
 
-```console
-curl -sS http://127.0.0.1:8080/v1/models/sources
-curl -sS http://127.0.0.1:8080/v1/languages
-curl -sS http://127.0.0.1:8080/v1/voices
-```
+curl -X POST http://127.0.0.1:8080/v1/models/load \
+  -H 'Content-Type: application/json' \
+  -d '{"runtime":"blue","model_path":"/path/to/bluev3-3.0.1","renikud_path":"/path/to/bluev3-3.0.1/renikud-plus-fp32.onnx","speaker":0,"target_speaker":0}'
 
-## Preview and edit IPA
+curl -X POST http://127.0.0.1:8080/v1/phonemize \
+  -H 'Content-Type: application/json' \
+  -d '{"input":"שלום מממבו רמבו","language":"he"}'
 
-```console
-curl -sS http://127.0.0.1:8080/v1/phonemize \
-  -H 'content-type: application/json' \
-  -d '{"input":"שלום, זהו ממו רמבו.","language":"he"}'
+curl -X POST http://127.0.0.1:8080/v1/audio/speech \
+  -H 'Content-Type: application/json' \
+  -o speech.wav \
+  -d '{"input":"שלום מממבו רמבו","language":"auto","voice":"Shira","response_format":"wav","stream":false}'
 
-curl -sS http://127.0.0.1:8080/v1/phonemes
-```
+# Same, as a 128 kbps MP3 (about a quarter of the WAV size; not for stream=true)
+curl -X POST http://127.0.0.1:8080/v1/audio/speech \
+  -H 'Content-Type: application/json' \
+  -o speech.mp3 \
+  -d '{"input":"שלום מממבו רמבו","language":"auto","voice":"Shira","response_format":"mp3"}'
+~~~
 
-To synthesize edited IPA, set `input_is_phonemes: true` and `stream: true` (phoneme input requires streaming).
+Useful endpoints for the desktop Phoneme editor:
 
-## Create speech
+- POST /v1/phonemize → `{"phonemes":"..."}`
+- GET /v1/phonemes → BlueV3 phoneme inventory
+- POST /v1/diacritize with `{"input":"..."}` → `{"text":"<Hebrew with niqqud>"}` (RenikudPlus re-points the text from its own reading; the stressed syllable is marked with the hatama U+05AB, which /v1/phonemize reads back. Add `"stress": false` for plain niqqud with no stress mark.)
+- POST /v1/audio/speech with `input_is_phonemes: true`, `stream: true`, and the IPA's `language` to speak edited IPA
+- POST /v1/audio/speech/cancel with `{"id":"<x-mambotts-generation-id>"}` to stop a generation
 
-```console
-curl -sS http://127.0.0.1:8080/v1/audio/speech \
-  -H 'content-type: application/json' \
-  -d '{
-    "input": "שלום, זהו ממו רמבו.",
-    "language": "he",
-    "voice": "Noa",
-    "response_format": "wav",
-    "stream": false
-  }' \
-  --output output.wav
-```
-
-Set `response_format` to `"mp3"` for a 128 kbps mono MP3 at about a quarter of the WAV size (non-streamed requests only; `"wav"` is the default).
-
-Use `language: "auto"` to detect Hebrew or English. Query `/v1/voices` rather than hardcoding a voice list. For streamed requests, the response body uses MamboTTS binary frames instead of a standalone WAV; desktop clients should decode and save the final frame.
-
-## Available endpoints
-
-```text
-GET    /health
-GET    /skill
-GET    /v1/models
-GET    /v1/models/sources
-POST   /v1/models/load
-DELETE /v1/models
-GET    /v1/languages
-GET    /v1/voices
-GET    /v1/phonemes
-POST   /v1/phonemize
-POST   /v1/diacritize
-POST   /v1/audio/speech
-```
-
-## Troubleshooting
-
-- If no model is loaded, call `POST /v1/models/load` with Blue's directory and RenikudPlus path (`renikud-plus.onnx`).
-- If a language or voice is rejected, query the loaded runtime metadata first.
-- Do not send `voice_reference` to BlueTTS; it is unsupported.
-- The sidecar requires ONNX Runtime shared libraries distributed with the desktop build.
-- `POST /v1/diacritize` with `{"input":"..."}` returns `{"text":"<Hebrew with niqqud>"}` from RenikudPlus: the text re-pointed from the model's own reading, with the stressed syllable marked by the hatama (U+05AB) because niqqud has no stress mark of its own. `/v1/phonemize` and speech read those points back as hard constraints, so the pointed text is spoken the way it is pointed. Add `"stress": false` for plain niqqud with no stress mark.
+If the API returns no_model, ask the user to install the MamboTTS model in the desktop app first.

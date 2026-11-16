@@ -67,8 +67,8 @@ export function SettingsPage({ bundle }: SettingsPageProps) {
               </div>
               <div className="flex flex-col gap-4 border-t border-border/10 p-8 sm:flex-row sm:items-center sm:justify-between">
                 <div className="space-y-1">
-                  <p className="text-[9px] font-bold uppercase tracking-widest text-secondary opacity-30">Runtime</p>
-                  <p className="text-sm font-semibold tracking-tight text-primary">BlueTTS</p>
+                  <p className="text-[9px] font-bold uppercase tracking-widest text-secondary opacity-30">Model</p>
+                  <p className="text-sm font-semibold tracking-tight text-primary">BlueV3 v3.0.1</p>
                 </div>
                 <Link
                   to="/onboard?manage=1"

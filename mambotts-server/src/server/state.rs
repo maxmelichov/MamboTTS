@@ -78,7 +78,7 @@ impl ModelInfo {
     }
 
     /// Check a requested voice against the loaded model's catalog, accepting
-    /// any letter case and the retired file stems the registry still maps.
+    /// any letter case. BlueTTS 2.5's voice ids are unknown voices now.
     /// An empty voice means the default and always passes.
     pub(crate) fn check_voice(&self, voice: &str) -> Result<(), String> {
         let Some(voices) = self.voices.as_ref() else {
@@ -439,12 +439,12 @@ mod tests {
     }
 
     #[test]
-    fn voices_match_in_any_case_and_by_their_old_ids() {
+    fn voices_match_in_any_case_and_only_the_fifteen() {
         let info = loaded_catalog();
         assert!(info.check_voice("").is_ok());
         assert!(info.check_voice("Noa").is_ok());
         assert!(info.check_voice("noa").is_ok());
-        assert!(info.check_voice("libri_male_6209").is_ok());
+        assert!(info.check_voice("libri_male_6209").is_err());
         let err = info.check_voice("Bogus").unwrap_err();
         assert!(err.contains("`Bogus`") && err.contains("Noa"), "{err}");
     }

@@ -45,7 +45,6 @@ function App() {
     phonemes: "",
     diacritics: "",
     diacriticsSource: "",
-    referencePath: "",
     languages: ["auto"],
     language: "auto",
     // Left empty on purpose. The catalog arrives with the loaded bundle, and
@@ -139,11 +138,15 @@ function App() {
 
   useEffect(() => {
     // Retired preferences: the Hebrew G2P engine chooser (Hebrew now always uses
-    // RenikudPlus) and the Settings-only phoneme toggle (the editor tabs now live
-    // in the studio). Dropping the keys keeps old values from lingering.
+    // RenikudPlus), the Settings-only phoneme toggle (the editor tabs now live
+    // in the studio), the engine picker's choice (BlueV3 v3.0.1 is the only
+    // model) and the 1.3.x speed multiplier. Dropping the keys keeps old values
+    // from lingering; the studio starts on BlueV3's defaults.
     try {
       localStorage.removeItem("hebrew-g2p-engine");
       localStorage.removeItem("advanced-mode");
+      localStorage.removeItem("mambotts.runtime");
+      localStorage.removeItem("speech-speed");
     } catch {
       // Storage can be unavailable; nothing depends on the cleanup.
     }

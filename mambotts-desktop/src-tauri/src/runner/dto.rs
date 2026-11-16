@@ -49,7 +49,6 @@ fn default_runtime() -> String {
 #[derive(Debug, Deserialize)]
 pub struct SpeechRequest {
     pub input: String,
-    pub voice_reference: Option<String>,
     pub voice: Option<String>,
     pub output_path: Option<String>,
     pub language: Option<String>,

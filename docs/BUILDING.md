@@ -308,10 +308,8 @@ directory:
 - Windows: `%LOCALAPPDATA%\com.maxmelichov.mambotts\models`
 - Linux: `~/.local/share/com.maxmelichov.mambotts/models`
 
-The current release provides the BlueTTS model bundle. New models must be
-registered in `crates/mambotts-registry` and included in a sidecar build before
-the desktop will offer them. Full instructions for contributors:
-[ADDING_MODELS.md](./ADDING_MODELS.md).
+BlueV3 v3.0.1 is the only model: the app and the server offer nothing else.
+Its manifest, files and voices live in `crates/mambotts-registry`.
 
 ## Upstream projects
 

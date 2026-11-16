@@ -170,13 +170,8 @@ pub async fn synthesize_request(
         .unwrap_or_else(super::default_output_path);
     let language = request.language.unwrap_or_else(|| "auto".to_string());
     let voice = request.voice.unwrap_or_default();
-    let has_voice_reference = request
-        .voice_reference
-        .as_deref()
-        .is_some_and(|value| !value.trim().is_empty());
     let body = serde_json::json!({
         "input": request.input,
-        "voice_reference": request.voice_reference.unwrap_or_default(),
         "voice": voice,
         "response_format": "wav",
         "language": language,
@@ -194,7 +189,6 @@ pub async fn synthesize_request(
             "operation": "synthesize",
             "voice": body["voice"].as_str().unwrap_or_default(),
             "language": body["language"].as_str().unwrap_or("auto"),
-            "has_voice_reference": has_voice_reference,
             "speed": body["speed"].as_f64().unwrap_or(0.0),
             "steps": body["steps"].as_u64().unwrap_or(0),
         })

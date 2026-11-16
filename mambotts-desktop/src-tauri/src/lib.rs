@@ -3,7 +3,6 @@ mod download;
 mod files;
 mod model;
 mod runner;
-mod voices;
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -43,7 +42,6 @@ pub fn run() {
             runner::synthesize,
             runner::cancel_synthesis,
             runner::export_audio_file,
-            voices::download_voice,
         ]);
 
     if analytics::is_aptabase_configured() {
