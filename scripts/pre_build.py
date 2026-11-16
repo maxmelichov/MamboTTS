@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import platform
 import shutil
@@ -84,9 +85,21 @@ def detect_host_target() -> str | None:
 def cargo_target_dir() -> Path:
     """Where Cargo will drop build artifacts for this workspace.
 
-    CARGO_TARGET_DIR can point the build somewhere other than `<repo>/target`,
-    so the built sidecar has to be looked up there rather than assumed.
+    CARGO_TARGET_DIR or a `.cargo/config.toml` `build.target-dir` can point the
+    build somewhere other than `<repo>/target`, so ask Cargo instead of
+    assuming.
     """
+    try:
+        out = subprocess.run(
+            ["cargo", "metadata", "--format-version", "1", "--no-deps"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        return Path(json.loads(out)["target_directory"])
+    except (OSError, subprocess.CalledProcessError, KeyError, ValueError):
+        pass
     for key in ("CARGO_TARGET_DIR", "CARGO_BUILD_TARGET_DIR"):
         value = os.environ.get(key)
         if value:
@@ -185,6 +198,26 @@ def install_dxc_libs(target: str, dest_dir: Path) -> list[Path]:
     return installed
 
 
+def add_rustflags(env: dict[str, str], flags: list[str]) -> None:
+    """Append rustc flags without splitting paths that contain spaces.
+
+    RUSTFLAGS is split on whitespace, so `-L native=/path/with a space/lib`
+    reaches rustc as two arguments and every build fails. Cargo reads
+    CARGO_ENCODED_RUSTFLAGS (0x1f-separated) first, so the flags go there,
+    after whatever RUSTFLAGS or CARGO_ENCODED_RUSTFLAGS already held.
+    """
+    if not flags:
+        return
+    existing: list[str] = []
+    encoded = env.pop("CARGO_ENCODED_RUSTFLAGS", "")
+    plain = env.pop("RUSTFLAGS", "")
+    if encoded:
+        existing = encoded.split("\x1f")
+    elif plain.strip():
+        existing = plain.split()
+    env["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join(existing + flags)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build the MamboTTS server sidecar for Tauri builds")
     parser.add_argument("--target", help="Rust target triple, for example x86_64-unknown-linux-gnu")
@@ -240,6 +273,7 @@ def main() -> int:
     # ort-sys treats ORT_LIB_LOCATION as a direct -L path for the shared library.
     build_env["ORT_LIB_LOCATION"] = str(lib_dir if lib_dir.exists() else ort_root)
     build_env["ORT_PREFER_DYNAMIC_LINK"] = "1"
+    extra_rustflags: list[str] = []
     if lib_dir.exists():
         # This variable only matters for build scripts and linker helpers that
         # run on this machine, so it follows the host rather than the target.
@@ -249,10 +283,10 @@ def main() -> int:
         build_env[path_key] = f"{lib_dir}{os.pathsep}{current}" if current else str(lib_dir)
         library_path = build_env.get("LIBRARY_PATH", "")
         build_env["LIBRARY_PATH"] = f"{lib_dir}{os.pathsep}{library_path}" if library_path else str(lib_dir)
-        rustflags = build_env.get("RUSTFLAGS", "")
-        build_env["RUSTFLAGS"] = f"{rustflags} -L native={lib_dir}".strip()
+        extra_rustflags.append(f"-Lnative={lib_dir}")
     if is_macos:
-        build_env["RUSTFLAGS"] = f"{build_env.get('RUSTFLAGS', '')} -C link-arg=-Wl,-headerpad_max_install_names".strip()
+        extra_rustflags.append("-Clink-arg=-Wl,-headerpad_max_install_names")
+    add_rustflags(build_env, extra_rustflags)
     subprocess.run(cmd, cwd=ROOT, env=build_env, check=True)
 
     source = cargo_target_dir() / target / args.profile / ("mambotts-server.exe" if is_windows else "mambotts-server")
