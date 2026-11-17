@@ -250,8 +250,14 @@ mod tests {
         use std::time::Instant;
 
         let dir = std::env::var_os("BLUEV3_DIR").map(std::path::PathBuf::from).unwrap_or_else(|| {
-            let home = std::env::var_os("HOME").expect("HOME");
-            Path::new(&home).join("Library/Application Support/com.maxmelichov.mambotts/models/bluev3-3.0.1")
+            // The desktop app's download on this OS (Tauri's app data directory).
+            let base = if cfg!(windows) {
+                std::path::PathBuf::from(std::env::var_os("LOCALAPPDATA").expect("LOCALAPPDATA"))
+            } else {
+                let home = std::path::PathBuf::from(std::env::var_os("HOME").expect("HOME"));
+                if cfg!(target_os = "macos") { home.join("Library/Application Support") } else { home.join(".local/share") }
+            };
+            base.join("com.maxmelichov.mambotts/models/bluev3-3.0.1")
         });
         let ve_path = dir.join("vector_estimator.onnx");
         let t0 = Instant::now();
