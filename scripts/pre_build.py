@@ -65,7 +65,6 @@ ORT_PACKAGES = {
 }
 
 
-
 def detect_host_target() -> str | None:
     return HOST_TRIPLE_MAP.get((platform.system(), platform.machine()))
 

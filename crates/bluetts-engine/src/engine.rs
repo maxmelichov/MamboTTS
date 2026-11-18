@@ -432,8 +432,8 @@ fn gemv(w: &[f32], b: &[f32], x: &[f32]) -> Vec<f32> {
     b.iter().enumerate().map(|(i, bi)| (dot64(&w[i * k..(i + 1) * k], x) + *bi as f64) as f32).collect()
 }
 
-/// The DXC shipped beside the executable (scripts/pre_build.py stages
-/// `dxcompiler.dll` and `dxil.dll` there), as wgpu's `DynamicDxc` path.
+/// A DXC placed beside the executable (`dxcompiler.dll` with `dxil.dll`; the
+/// app no longer ships one, see docs/BUILDING.md), as wgpu's `DynamicDxc` path.
 #[cfg(windows)]
 fn bundled_dxc() -> Option<String> {
     let dll = std::env::current_exe().ok()?.parent()?.join("dxcompiler.dll");
@@ -484,13 +484,13 @@ impl Engine {
             // wgpu's default looks for dxcompiler.dll on the search path and
             // otherwise falls back to FXC, which spends many minutes of CPU
             // compiling these kernels: model load looks hung. So DX12 runs
-            // only on the DXC the app ships beside the executable.
+            // only on a DXC placed beside the executable.
             match bundled_dxc() {
                 Some(dxc_path) => desc.backend_options.dx12.shader_compiler = wgpu::Dx12Compiler::DynamicDxc { dxc_path },
                 None => {
                     desc.backends.remove(wgpu::Backends::DX12);
                     if desc.backends.is_empty() {
-                        return Err("no WebGPU adapter: DX12 needs the dxcompiler.dll shipped beside the executable".into());
+                        return Err("no WebGPU adapter: DX12 needs dxcompiler.dll beside the executable".into());
                     }
                 }
             }

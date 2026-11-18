@@ -156,7 +156,7 @@ pub struct BlueTts {
     /// the ONNX Runtime graph runs the flow then.
     gpu: Option<ve_gpu::GpuVectorEstimator>,
     /// The GPU engine while it is still opening. Compiling its kernels can
-    /// take half a minute (DXC on Windows), so the model loads and speaks on
+    /// take half a minute, so the model loads and speaks on
     /// ONNX Runtime meanwhile and switches at the next chunk once it is ready.
     gpu_opening: Option<std::thread::JoinHandle<Option<ve_gpu::GpuVectorEstimator>>>,
 }
