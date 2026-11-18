@@ -150,21 +150,37 @@ pub struct BlueTts {
     /// `tts.json`'s `"model"`: the checkpoint the graphs are.
     model: Option<String>,
     last_chunks: Vec<ChunkInfo>,
-    /// The site's Rust engine for the flow (wgpu: Metal, Vulkan or DX12).
-    /// `None` without a usable GPU, with `MAMBOTTS_VE_BACKEND=ort`, or after
-    /// it failed once; the ONNX Runtime graph runs the flow then.
+    /// The site's Rust engine for the flow (wgpu: Metal or Vulkan). `None`
+    /// on Windows unless asked for (see [`gpu_flow_wanted`]), without a
+    /// usable GPU, with `MAMBOTTS_VE_BACKEND=ort`, or after it failed once;
+    /// the ONNX Runtime graph runs the flow then.
     gpu: Option<ve_gpu::GpuVectorEstimator>,
     /// The GPU engine while it is still opening. Compiling its kernels can
-    /// take half a minute (DXC on Windows), so the model loads and speaks on
+    /// take half a minute, so the model loads and speaks on
     /// ONNX Runtime meanwhile and switches at the next chunk once it is ready.
     gpu_opening: Option<std::thread::JoinHandle<Option<ve_gpu::GpuVectorEstimator>>>,
 }
 
-/// Open the GPU flow engine unless disabled; any failure means ONNX Runtime.
-fn open_gpu_flow(path: &Path) -> Option<ve_gpu::GpuVectorEstimator> {
-    if std::env::var("MAMBOTTS_VE_BACKEND").is_ok_and(|value| value.eq_ignore_ascii_case("ort")) {
-        return None;
+/// Whether to open the GPU flow engine, from `MAMBOTTS_VE_BACKEND`: `ort`
+/// never, `gpu` always, and otherwise everywhere but Windows.
+///
+/// Windows runs ONNX Runtime on the CPU by default. The GPU engine compiles
+/// its kernels through whatever graphics driver the machine has, and on
+/// Windows that went wrong in ways the app cannot recover from: an AMD Radeon
+/// iGPU computes them wrongly on Vulkan (caught by the self-check), FXC takes
+/// many minutes, and a driver that crashes or hangs takes the whole server
+/// down with it, so generation stops working instead of falling back. The CPU
+/// path is the one every Windows machine could already fall back to.
+fn gpu_flow_wanted(setting: Option<&str>) -> bool {
+    match setting.map(str::trim) {
+        Some(value) if value.eq_ignore_ascii_case("ort") => false,
+        Some(value) if value.eq_ignore_ascii_case("gpu") => true,
+        _ => !cfg!(windows),
     }
+}
+
+/// Open the GPU flow engine; any failure means ONNX Runtime.
+fn open_gpu_flow(path: &Path) -> Option<ve_gpu::GpuVectorEstimator> {
     match ve_gpu::GpuVectorEstimator::open(path) {
         Ok(Some(engine)) => {
             eprintln!("BlueV3 flow on the GPU engine ({})", engine.adapter());
@@ -282,11 +298,16 @@ impl BlueTts {
             .unwrap_or_else(|| "latent".to_owned());
         let (geometry, release, model) = load_config(dir.join("tts.json"))?;
         let gpu_path = dir.join("vector_estimator.onnx");
-        let gpu_opening = std::thread::Builder::new()
-            .name("bluev3-gpu-open".into())
-            .spawn(move || open_gpu_flow(&gpu_path))
-            .map_err(|err| eprintln!("BlueV3 flow on ONNX Runtime: could not start the GPU engine: {err}"))
-            .ok();
+        let gpu_opening = if gpu_flow_wanted(std::env::var("MAMBOTTS_VE_BACKEND").ok().as_deref()) {
+            std::thread::Builder::new()
+                .name("bluev3-gpu-open".into())
+                .spawn(move || open_gpu_flow(&gpu_path))
+                .map_err(|err| eprintln!("BlueV3 flow on ONNX Runtime: could not start the GPU engine: {err}"))
+                .ok()
+        } else {
+            eprintln!("BlueV3 flow on ONNX Runtime (MAMBOTTS_VE_BACKEND=gpu tries the GPU engine)");
+            None
+        };
 
         Ok(Self {
             dp: load_session(dir.join("duration_predictor_style.onnx"))?,
@@ -1090,14 +1111,25 @@ mod tests {
         assert_eq!(a, first, "the phoneme path speaks the text path's chunks");
     }
 
-    /// The desktop's default: the flow on the GPU engine, its start-up
-    /// self-check passing against this release's graph (a stale golden from
-    /// another vector estimator would fall back to ONNX Runtime quietly).
+    #[test]
+    fn windows_runs_onnx_runtime_unless_the_gpu_is_asked_for() {
+        assert_eq!(gpu_flow_wanted(None), !cfg!(windows));
+        assert_eq!(gpu_flow_wanted(Some("")), !cfg!(windows));
+        assert!(!gpu_flow_wanted(Some("ort")));
+        assert!(!gpu_flow_wanted(Some(" ORT ")));
+        assert!(gpu_flow_wanted(Some("gpu")));
+        assert!(gpu_flow_wanted(Some("GPU")));
+    }
+
+    /// The desktop's default off Windows (and with MAMBOTTS_VE_BACKEND=gpu
+    /// on it): the flow on the GPU engine, its start-up self-check passing
+    /// against this release's graph (a stale golden from another vector
+    /// estimator would fall back to ONNX Runtime quietly).
     #[test]
     #[ignore = "requires MAMBOTTS_BLUE_MODEL_DIR pointing to an installed BlueV3 bundle and a GPU"]
     fn the_flow_runs_on_the_gpu_by_default() {
-        if std::env::var_os("MAMBOTTS_VE_BACKEND").is_some() {
-            eprintln!("MAMBOTTS_VE_BACKEND is set: skipped");
+        if !gpu_flow_wanted(std::env::var("MAMBOTTS_VE_BACKEND").ok().as_deref()) {
+            eprintln!("the GPU engine is not wanted here (Windows, or MAMBOTTS_VE_BACKEND=ort): skipped");
             return;
         }
         let (mut tts, _, _) = bundle();

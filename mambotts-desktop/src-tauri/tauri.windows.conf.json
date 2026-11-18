@@ -9,10 +9,7 @@
     ],
     "resources": {
       "binaries/onnxruntime.dll": "onnxruntime.dll",
-      "binaries/onnxruntime_providers_shared.dll": "onnxruntime_providers_shared.dll",
-      "binaries/dxcompiler.dll": "dxcompiler.dll",
-      "binaries/dxil.dll": "dxil.dll",
-      "binaries/dxc-LICENSE.txt": "dxc-LICENSE.txt"
+      "binaries/onnxruntime_providers_shared.dll": "onnxruntime_providers_shared.dll"
     },
     "windows": {
       "webviewInstallMode": {
