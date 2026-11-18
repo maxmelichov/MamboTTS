@@ -5,6 +5,8 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1"
+# The GPU worker's wire format (ve_worker.rs): f32 tensors as bytes.
+bytemuck = "1"
 # The site front end's lookaround and backreference regexes, kept as written.
 fancy-regex = "0.14"
 # The vector estimator on the GPU (ve_gpu.rs): the BlueTTS site's Rust engine.

@@ -39,6 +39,67 @@ pub struct GpuVectorEstimator {
     error: Arc<Mutex<Option<String>>>,
 }
 
+/// The adapter a backend opened, as far as the driver reports it: what the
+/// GPU verdict cache keys on (see `gpu_flow.rs`), so a driver update or
+/// another GPU is probed afresh.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AdapterId {
+    /// `metal`, `vulkan` or `dx12` (see [`backend_name`]).
+    pub backend: String,
+    pub name: String,
+    pub vendor: u32,
+    pub device: u32,
+    pub driver: String,
+    pub driver_info: String,
+}
+
+impl AdapterId {
+    /// As the log and [`GpuVectorEstimator::adapter`] name it.
+    pub fn label(&self) -> String {
+        format!("{} ({})", self.name, pretty_backend(&self.backend))
+    }
+}
+
+/// How [`GpuVectorEstimator::open_backend`] ended without an error.
+pub enum Opened {
+    Ready(GpuVectorEstimator),
+    /// No hardware adapter on this backend (none, or a software rasteriser).
+    NoAdapter,
+    /// The `on_adapter` callback declined it.
+    Declined,
+}
+
+/// The backends worth trying here, in order (see
+/// `Engine::native_backend_candidates`), by name.
+pub fn backend_candidates() -> Vec<&'static str> {
+    Engine::native_backend_candidates().into_iter().filter_map(backend_name).collect()
+}
+
+pub fn backend_name(backends: wgpu::Backends) -> Option<&'static str> {
+    [(wgpu::Backends::METAL, "metal"), (wgpu::Backends::VULKAN, "vulkan"), (wgpu::Backends::DX12, "dx12")]
+        .into_iter()
+        .find(|(b, _)| *b == backends)
+        .map(|(_, name)| name)
+}
+
+pub fn backend_from_name(name: &str) -> Option<wgpu::Backends> {
+    match name {
+        "metal" => Some(wgpu::Backends::METAL),
+        "vulkan" => Some(wgpu::Backends::VULKAN),
+        "dx12" => Some(wgpu::Backends::DX12),
+        _ => None,
+    }
+}
+
+fn pretty_backend(name: &str) -> &str {
+    match name {
+        "metal" => "Metal",
+        "vulkan" => "Vulkan",
+        "dx12" => "Dx12",
+        other => other,
+    }
+}
+
 impl GpuVectorEstimator {
     /// Opens a GPU device (Metal on macOS, DX12 or else Vulkan on Windows,
     /// Vulkan on Linux), uploads the weights of `vector_estimator.onnx`,
@@ -49,10 +110,10 @@ impl GpuVectorEstimator {
     pub fn open(vector_estimator_onnx: impl AsRef<Path>) -> Result<Option<Self>> {
         let path = vector_estimator_onnx.as_ref();
         let mut failures = Vec::new();
-        for backends in Engine::native_backend_candidates() {
-            match Self::open_on(path, backends) {
-                Ok(Some(me)) => return Ok(Some(me)),
-                Ok(None) => {}
+        for backend in backend_candidates() {
+            match Self::open_backend(path, backend, &mut |_| true, false) {
+                Ok(Opened::Ready(me)) => return Ok(Some(me)),
+                Ok(_) => {}
                 Err(err) => failures.push(format!("{err:#}")),
             }
         }
@@ -63,19 +124,42 @@ impl GpuVectorEstimator {
         }
     }
 
-    fn open_on(path: &Path, backends: wgpu::Backends) -> Result<Option<Self>> {
+    /// One backend (`metal`, `vulkan`, `dx12`): the device, then
+    /// `on_adapter` with what it is (before anything is compiled or run on
+    /// it; `false` declines it), then the weights, the kernels and the
+    /// self-check. `corrupt_selfcheck` is a test hook: the self-check reads
+    /// wrong numbers, as a driver that miscomputes gives.
+    pub fn open_backend(
+        path: &Path,
+        backend: &str,
+        on_adapter: &mut dyn FnMut(&AdapterId) -> bool,
+        corrupt_selfcheck: bool,
+    ) -> Result<Opened> {
+        let backends = backend_from_name(backend).with_context(|| format!("unknown GPU backend {backend:?}"))?;
         let (device, queue) = match pollster::block_on(Engine::new_device_on(backends, false)) {
             Ok(dq) => dq,
-            Err(e) if e.starts_with("no WebGPU adapter") => return Ok(None),
+            Err(e) if e.starts_with("no WebGPU adapter") => return Ok(Opened::NoAdapter),
             Err(e) => bail!("GPU vector estimator: {e}"),
         };
         let info = device.adapter_info();
         if info.device_type == wgpu::DeviceType::Cpu {
             // A software rasteriser (llvmpipe, WARP, SwiftShader) is slower than ONNX Runtime's CPU path.
             device.destroy();
-            return Ok(None);
+            return Ok(Opened::NoAdapter);
         }
-        let adapter = format!("{} ({:?})", info.name, info.backend);
+        let id = AdapterId {
+            backend: backend_name(info.backend.into()).unwrap_or(backend).to_owned(),
+            name: info.name.clone(),
+            vendor: info.vendor,
+            device: info.device,
+            driver: info.driver.clone(),
+            driver_info: info.driver_info.clone(),
+        };
+        if !on_adapter(&id) {
+            device.destroy();
+            return Ok(Opened::Declined);
+        }
+        let adapter = id.label();
 
         let error = Arc::new(Mutex::new(None));
         let sink = error.clone();
@@ -95,8 +179,8 @@ impl GpuVectorEstimator {
             .map_err(|e| anyhow!("GPU vector estimator: load {}: {e}", path.display()))?;
         drop(bytes);
         let mut me = Self { engine, adapter, error };
-        me.self_check()?;
-        Ok(Some(me))
+        me.self_check(corrupt_selfcheck)?;
+        Ok(Opened::Ready(me))
     }
 
     /// The adapter in use, e.g. "Apple M3 Pro (Metal)".
@@ -145,10 +229,13 @@ impl GpuVectorEstimator {
 
     /// The golden run the site checks at start-up (two fixed inputs against
     /// ONNX Runtime CPU's output, compiled into the engine).
-    fn self_check(&mut self) -> Result<()> {
+    fn self_check(&mut self, corrupt: bool) -> Result<()> {
         let (a, b) = self.engine.selfcheck_start().map_err(|e| anyhow!("GPU self-check: {e}"))?;
         let d = self.engine.device.clone();
-        let lat0 = pollster::block_on(engine::map_read(d.clone(), a)).map_err(|e| anyhow!("GPU self-check: {e}"))?;
+        let mut lat0 = pollster::block_on(engine::map_read(d.clone(), a)).map_err(|e| anyhow!("GPU self-check: {e}"))?;
+        if corrupt {
+            lat0.iter_mut().step_by(7).for_each(|v| *v += 0.25);
+        }
         let lat1 = pollster::block_on(engine::map_read(d, b)).map_err(|e| anyhow!("GPU self-check: {e}"))?;
         self.take_error()?;
         let r = engine::selfcheck_compare(&lat0, &lat1);
