@@ -764,13 +764,22 @@ struct ChunkAudio {
     requested_samples: usize,
 }
 
+/// ONNX Runtime's intra-op thread count: `MAMBOTTS_ORT_THREADS`, else 8.
+/// Measured on an Apple M5 with ONNX Runtime 1.23.2 (57.7 s of English audio,
+/// flow on ONNX Runtime): 1 thread 3.2x real time, 2 5.7x, 4 8.8x, 6 8.6x,
+/// 8 10.2x, 10 9.0x. The variable is there to try other counts per machine
+/// (`examples/bench.rs`).
+fn ort_threads() -> usize {
+    std::env::var("MAMBOTTS_ORT_THREADS").ok().and_then(|v| v.trim().parse().ok()).filter(|n| *n > 0).unwrap_or(8)
+}
+
 fn load_session(path: impl AsRef<Path>) -> Result<Session> {
     let path = path.as_ref();
     Session::builder()
         .map_err(|e| anyhow!("{e}"))?
         .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level3)
         .map_err(|e| anyhow!("{e}"))?
-        .with_intra_threads(8)
+        .with_intra_threads(ort_threads())
         .map_err(|e| anyhow!("{e}"))?
         .with_inter_threads(1)
         .map_err(|e| anyhow!("{e}"))?
