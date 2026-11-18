@@ -208,6 +208,27 @@ on Windows anyway, start the server with `MAMBOTTS_VE_BACKEND=gpu`; DX12 needs
 newer) beside `mambotts-server.exe`, and otherwise only Vulkan is tried.
 `MAMBOTTS_VE_BACKEND=ort` keeps any platform on ONNX Runtime.
 
+Wherever it runs, the GPU engine runs in a worker process: `mambotts-server`
+re-invokes itself with a hidden `--bluev3-gpu-worker` argument
+(`crates/blue-rs/src/ve_worker.rs`), and the worker owns wgpu and answers
+one flow per chunk over a pipe. If the worker crashes, hangs past its
+deadline, fails the start-up self-check or returns a non-finite latent, the
+server kills it, logs one line and runs that chunk and the rest on ONNX
+Runtime, so the request still completes. The verdict is cached in
+`gpu-verdicts.json` in the app data directory, keyed by backend, adapter,
+driver version and app build, so an adapter that failed is not probed again
+until its driver or the app changes. On an Apple M5 the boundary costs about
+0.5% of a one-minute text. The knobs:
+
+| Variable | Effect |
+|---|---|
+| `MAMBOTTS_GPU_ISOLATION=inprocess` | run the engine in the server process, as before |
+| `MAMBOTTS_GPU_REPROBE=1` | ignore cached failures and probe again |
+| `MAMBOTTS_GPU_VERDICT_FILE=<path>` | another verdict file; empty turns the cache off |
+| `MAMBOTTS_GPU_OPEN_TIMEOUT_SECS`, `MAMBOTTS_GPU_FLOW_TIMEOUT_SECS` | the probe deadline (180 s) and a flow's base deadline (15 s, plus 2 ms per frame and step) |
+| `MAMBOTTS_GPU_WORKER=<exe>` | another worker executable (`bluev3-gpu-worker`, built from `crates/blue-rs`) |
+| `MAMBOTTS_GPU_WORKER_FAULT=<abort,hang,exit,wrong>@<adapter,open,flow:N>` | test hook: the worker fails that way at that point |
+
 ### Cross-compile the Windows sidecar from macOS or Linux
 
 The installer has to be produced on Windows, but the sidecar can be
@@ -297,7 +318,9 @@ directory to `PATH` is not enough, because the old `onnxruntime.dll` in
 `System32` is found first and every test binary that links `ort` dies with
 `0xC000007B` before a single test runs. The GPU tests among the `--ignored`
 ones try DX12 only with `dxcompiler.dll` and `dxil.dll` copied there as well;
-without them they test Vulkan alone.
+without them they test Vulkan alone. `crates/blue-rs/tests/gpu_isolation.rs`
+starts `target/<profile>/bluev3-gpu-worker.exe`, so the ONNX Runtime and DXC
+DLLs belong beside it too.
 
 ## Models
 
