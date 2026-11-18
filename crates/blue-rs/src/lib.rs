@@ -1073,8 +1073,12 @@ mod tests {
             .filter_map(|entry| entry.ok().map(|entry| entry.path()))
             .find(|path| path.extension().is_some_and(|ext| ext == "json"))
             .expect("a voice in the bundle");
+        let mut tts = BlueTts::from_dir(&dir).unwrap();
+        // Every run on one engine: otherwise the GPU engine, opening in the
+        // background, takes over between two runs and they differ by its ~1e-5.
+        tts.wait_for_gpu();
         (
-            BlueTts::from_dir(&dir).unwrap(),
+            tts,
             Phonemizer::open(None::<&Path>, Some(dir.join("polyg2p")), Language::English).unwrap(),
             VoiceStyle::from_json(voice).unwrap(),
         )
