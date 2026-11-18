@@ -197,16 +197,16 @@ system directories. A copy anywhere else, including one reachable through
 loader with `0xC000007B` (`STATUS_INVALID_IMAGE_FORMAT`) before it can run a
 line of its own code or write a word to stderr.
 
-`dxcompiler.dll` and `dxil.dll` (the DirectX Shader Compiler, pinned in
-`scripts/pre_build.py`, with its license as `dxc-LICENSE.txt`) sit beside them
-for the GPU flow engine. On Windows it tries DX12 first and Vulkan second, and
-keeps the first backend whose output passes the start-up self-check against
-ONNX Runtime: some drivers compute these kernels wrongly on one backend and
-correctly on the other (an AMD Radeon iGPU fails on Vulkan and passes on DX12).
-DX12 is only used with this bundled DXC. wgpu's own fallback, FXC, takes many
-minutes of CPU to compile the kernels. The engine opens on a background thread
-while the model already speaks on ONNX Runtime, and takes over from the next
-chunk once its kernels are compiled.
+On Windows the flow runs on ONNX Runtime on the CPU; the GPU engine (Metal on
+macOS, Vulkan on Linux) is not opened there. It compiles its kernels through
+whatever graphics driver the machine has, and on Windows that failed in ways
+the app could not recover from: an AMD Radeon iGPU computes them wrongly on
+Vulkan, wgpu's FXC compiler for DX12 takes many minutes, and a driver that
+crashes or hangs takes the speech server down with it. To try the GPU engine
+on Windows anyway, start the server with `MAMBOTTS_VE_BACKEND=gpu`; DX12 needs
+`dxcompiler.dll` and `dxil.dll` from the DirectX Shader Compiler (1.8.2502 or
+newer) beside `mambotts-server.exe`, and otherwise only Vulkan is tried.
+`MAMBOTTS_VE_BACKEND=ort` keeps any platform on ONNX Runtime.
 
 ### Cross-compile the Windows sidecar from macOS or Linux
 
@@ -296,8 +296,8 @@ works around: the test executables live there, and adding the ONNX Runtime
 directory to `PATH` is not enough, because the old `onnxruntime.dll` in
 `System32` is found first and every test binary that links `ort` dies with
 `0xC000007B` before a single test runs. The GPU tests among the `--ignored`
-ones also want `dxcompiler.dll` and `dxil.dll` copied there from
-`mambotts-desktop/src-tauri/binaries`, or the engine skips DX12.
+ones try DX12 only with `dxcompiler.dll` and `dxil.dll` copied there as well;
+without them they test Vulkan alone.
 
 ## Models
 
