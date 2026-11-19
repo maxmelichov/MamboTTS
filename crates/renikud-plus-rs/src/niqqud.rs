@@ -92,11 +92,31 @@ fn dagesh_soft(letter: char) -> Option<&'static str> {
     })
 }
 
+/// Meteg (U+05BD): in phonikud's pointing, a vocal shva (shva na, /e/).
+pub const METEG: char = '\u{05BD}';
+/// Nikud haser (U+05AF, Masora circle): phonikud's mark for a silent letter.
+pub const NIKUD_HASER: char = '\u{05AF}';
+/// Phonikud's prefix bar: `וְ|הַ|יֶּלֶד` separates the prefix letters from the
+/// stem. It is not read aloud.
+pub const PREFIX_BAR: char = '|';
+/// Prefix letters whose shva is vocal (/e/) when the prefix bar follows them.
+const PREFIX_SHVA_LETTERS: [char; 4] = ['ו', 'כ', 'ל', 'ב'];
+
 struct Pointed {
     /// Index of the letter in the bare text, in characters.
     index: usize,
     letter: char,
     marks: Vec<char>,
+    /// A prefix bar followed this letter (and was dropped from the bare text).
+    prefix: bool,
+}
+
+fn is_hebrew_letter(c: char) -> bool {
+    ('א'..='ת').contains(&c)
+}
+
+fn has_vowel_sign(entry: &Pointed) -> bool {
+    entry.marks.iter().any(|&m| point_vowels(m).is_some())
 }
 
 /// Split pointed text into its skeleton and the readings its points force.
@@ -110,18 +130,55 @@ struct Pointed {
 /// male or shuruk vav (וֹ / וּ) pushes its /o/ or /u/ back onto the preceding
 /// letter and takes ∅/∅ itself — the inverse of the fixup `vocalize` applies.
 ///
-/// `read_hatama` additionally reads U+05AB as "this letter is the stressed one
-/// of its word" (a MamboTTS extension; upstream ignores the mark).
-pub fn parse_niqqud(text: &str, read_hatama: bool) -> (String, Constraints) {
+/// With `phonikud` off this is upstream RenikudPlus's `parse_niqqud`
+/// (renikud_onnx 0.6.0) exactly. With it on it is the BlueV3 reference's
+/// `site_flow.parse_points` (tests/golden/README.md, "Pointed Hebrew"), which
+/// adds phonikud's marks:
+///
+/// 1. hatama U+05AB: the letter is its word's stressed letter. It follows the
+///    vowel: a letter left with consonant ∅ and vowel ∅ (or none) — the
+///    holam-male/shuruk vav, the hiriq/tsere-male yod, a silent final
+///    alef/he — passes it to the adjacent letter before in the word; a
+///    nikud-haser letter passes it to the adjacent letter after.
+/// 2. meteg U+05BD: vowel `e` when the letter has no vowel sign or its signs
+///    admit /e/ (shva); ignored next to any other vowel.
+/// 3. the prefix bar `|` right after a letter carrying any mark and right
+///    before a Hebrew letter is dropped; if that letter starts its word, is one
+///    of וכלב and has shva: vowel `e`.
+/// 4. nikud haser U+05AF: consonant ∅, vowel ∅.
+/// 5. vav with holam haser for vav (U+05BA) as its only sign, or with holam as
+///    its only sign right after an adjacent letter of the same word that has a
+///    vowel sign: consonant `v`, vowel `o` (not a mater).
+/// 6. qamats right before an adjacent letter with hataf qamats: vowel `o`.
+/// 7. a bare vav in a pointed word is the consonant (`v`/`w`) only right after
+///    an adjacent letter with a vowel sign (upstream: any bare vav, which reads
+///    partially pointed שָׁלום as ʃalˈovm).
+///
+/// Only vowel signs make a word pointed, and a letter whose only mark is the
+/// hatama counts as unmarked.
+pub fn parse_niqqud(text: &str, phonikud: bool) -> (String, Constraints) {
+    let chars: Vec<char> = text.chars().collect();
     let mut bare: Vec<char> = Vec::new();
     let mut letters: Vec<Pointed> = Vec::new();
-    for c in text.chars() {
+    for (pos, &c) in chars.iter().enumerate() {
+        let attached = letters
+            .last()
+            .is_some_and(|last| last.index + 1 == bare.len());
         if crate::text::is_niqqud(c) {
-            if let Some(last) = letters.last_mut()
-                && last.index + 1 == bare.len()
-            {
-                last.marks.push(c);
+            if attached {
+                letters.last_mut().expect("attached").marks.push(c);
             }
+            continue;
+        }
+        if phonikud
+            && c == PREFIX_BAR
+            && attached
+            && !letters.last().expect("attached").marks.is_empty()
+            && chars
+                .get(pos + 1)
+                .is_some_and(|&next| is_hebrew_letter(next))
+        {
+            letters.last_mut().expect("attached").prefix = true;
             continue;
         }
         if is_hebrew(c) {
@@ -129,14 +186,14 @@ pub fn parse_niqqud(text: &str, read_hatama: bool) -> (String, Constraints) {
                 index: bare.len(),
                 letter: c,
                 marks: Vec::new(),
+                prefix: false,
             });
         }
         bare.push(c);
     }
 
     // A word counts as pointed once any of its letters carries a vowel sign;
-    // only there is an UNMARKED letter informative (in pointed text a vowel vav
-    // always carries holam or dagesh, so a bare vav is the consonant).
+    // only there is an UNMARKED letter informative.
     let mut word_of: Vec<usize> = Vec::with_capacity(bare.len());
     let mut word = 0usize;
     for &c in &bare {
@@ -147,15 +204,24 @@ pub fn parse_niqqud(text: &str, read_hatama: bool) -> (String, Constraints) {
     }
     let mut pointed_words: Vec<usize> = Vec::new();
     for entry in &letters {
-        if entry.marks.iter().any(|&m| point_vowels(m).is_some()) {
+        if has_vowel_sign(entry) {
             pointed_words.push(word_of[entry.index]);
         }
     }
     let word_pointed = |index: usize| pointed_words.contains(&word_of[index]);
+    // The letter right before (`-1`) or after (`+1`): adjacent in the bare
+    // text and in the same word.
+    let neighbour = |rec_i: usize, step: isize| -> Option<usize> {
+        let j = rec_i.checked_add_signed(step)?;
+        let (here, there) = (letters[rec_i].index, letters.get(j)?.index);
+        (there.checked_add_signed(-step) == Some(here) && word_of[there] == word_of[here])
+            .then_some(j)
+    };
 
     let mut cons: BTreeMap<usize, Vec<&'static str>> = BTreeMap::new();
     let mut vows: BTreeMap<usize, Vec<&'static str>> = BTreeMap::new();
-    let mut stressed: Vec<usize> = Vec::new();
+    // Record indices of the letters carrying the hatama.
+    let mut hatama: Vec<usize> = Vec::new();
     // (record index, "o" | "u")
     let mut mater: Vec<(usize, &'static str)> = Vec::new();
 
@@ -169,8 +235,13 @@ pub fn parse_niqqud(text: &str, read_hatama: bool) -> (String, Constraints) {
             .filter(|&m| point_vowels(m).is_some())
             .collect();
         let dagesh = entry.marks.contains(&DAGESH);
-        if read_hatama && entry.marks.contains(&HATAMA) {
-            stressed.push(idx);
+        if phonikud && entry.marks.contains(&HATAMA) {
+            hatama.push(rec_i);
+        }
+        if phonikud && entry.marks.contains(&NIKUD_HASER) {
+            cons.insert(idx, vec![NONE]);
+            vows.insert(idx, vec![NONE]);
+            continue;
         }
 
         if letter == 'ש' {
@@ -194,8 +265,18 @@ pub fn parse_niqqud(text: &str, read_hatama: bool) -> (String, Constraints) {
             mater.push((rec_i, "u")); // shuruk
             continue;
         }
+        if phonikud && letter == 'ו' && signs == [HOLAM_HASER_FOR_VAV] {
+            cons.insert(idx, vec!["v"]);
+            vows.insert(idx, vec!["o"]);
+            continue;
+        }
         if letter == 'ו' && signs.len() == 1 && point_vowels(signs[0]) == Some(&["o"][..]) {
-            mater.push((rec_i, "o")); // holam male
+            if phonikud && neighbour(rec_i, -1).is_some_and(|prev| has_vowel_sign(&letters[prev])) {
+                cons.insert(idx, vec!["v"]);
+                vows.insert(idx, vec!["o"]);
+            } else {
+                mater.push((rec_i, "o")); // holam male
+            }
             continue;
         }
         if let Some(&first) = signs.first() {
@@ -209,20 +290,53 @@ pub fn parse_niqqud(text: &str, read_hatama: bool) -> (String, Constraints) {
                 vows.insert(idx, allowed);
             }
         }
+        if !phonikud {
+            continue;
+        }
+        if entry.marks.contains(&METEG)
+            && (signs.is_empty() || vows.get(&idx).is_some_and(|v| v.contains(&"e")))
+        {
+            vows.insert(idx, vec!["e"]);
+        }
+        if entry.prefix
+            && PREFIX_SHVA_LETTERS.contains(&letter)
+            && signs.contains(&SHEVA)
+            && (rec_i == 0 || word_of[letters[rec_i - 1].index] != word_of[idx])
+        {
+            vows.insert(idx, vec!["e"]);
+        }
+        if signs.contains(&QAMATS)
+            && neighbour(rec_i, 1).is_some_and(|next| letters[next].marks.contains(&HATAF_QAMATS))
+        {
+            vows.insert(idx, vec!["o"]);
+        }
     }
 
     // Unmarked letters inside a pointed word.
     for (rec_i, entry) in letters.iter().enumerate() {
         let idx = entry.index;
-        if !entry.marks.is_empty() || !word_pointed(idx) {
+        let unmarked = if phonikud {
+            entry.marks.iter().all(|&m| m == HATAMA)
+        } else {
+            entry.marks.is_empty()
+        };
+        if !unmarked || !word_pointed(idx) {
             continue;
         }
         let previous = rec_i.checked_sub(1).map(|i| &letters[i]);
         let next = letters.get(rec_i + 1);
         let same_word = next.is_some_and(|next| word_of[next.index] == word_of[idx]);
         if entry.letter == 'ו' {
-            // A vowel vav carries a point; this one does not, so it is a consonant.
-            cons.insert(idx, vec!["v", "w"]);
+            // Upstream: a vowel vav carries a point, so a bare one is the
+            // consonant. Phonikud: only after a letter with a vowel sign of its
+            // own; after a bare one the vav may be that letter's vowel in
+            // partially pointed text (שָׁלום).
+            if !phonikud
+                || previous
+                    .is_some_and(|previous| previous.index + 1 == idx && has_vowel_sign(previous))
+            {
+                cons.insert(idx, vec!["v", "w"]);
+            }
         } else if entry.letter == 'י'
             && previous.is_some_and(|previous| {
                 previous.index + 1 == idx
@@ -248,16 +362,33 @@ pub fn parse_niqqud(text: &str, read_hatama: bool) -> (String, Constraints) {
             Some(previous) if previous + 1 == idx && !vows.contains_key(&previous) => {
                 vows.insert(previous, vec![quality]);
                 vows.insert(idx, vec![NONE]);
-                if let Some(position) = stressed.iter().position(|&s| s == idx) {
-                    // The vowel moved, and the stress on it moves along.
-                    stressed[position] = previous;
-                }
             }
             _ => {
                 vows.insert(idx, vec![quality]);
             }
         }
         cons.insert(idx, vec![NONE]);
+    }
+
+    // The stress goes where the vowel is.
+    let mut stressed: Vec<usize> = Vec::new();
+    for &rec_i in &hatama {
+        let mut rec_i = rec_i;
+        if letters[rec_i].marks.contains(&NIKUD_HASER) {
+            match neighbour(rec_i, 1) {
+                Some(next) => rec_i = next,
+                None => continue,
+            }
+        }
+        let mut idx = letters[rec_i].index;
+        let silent = cons.get(&idx).map(Vec::as_slice) == Some(&[NONE][..])
+            && vows.get(&idx).is_none_or(|v| v.as_slice() == [NONE]);
+        if silent && let Some(prev) = neighbour(rec_i, -1) {
+            idx = letters[prev].index;
+        }
+        if !stressed.contains(&idx) {
+            stressed.push(idx);
+        }
     }
 
     let mut constraints = Constraints::new();
@@ -345,7 +476,7 @@ mod tests {
     }
 
     #[test]
-    fn the_hatama_is_read_as_stress_only_when_asked() {
+    fn the_hatama_is_read_as_stress_only_with_phonikud_marks() {
         let nfd: String =
             unicode_normalization::UnicodeNormalization::nfd("שָׁלוֹ\u{05AB}ם").collect();
         let (_, with) = parse_niqqud(&nfd, true);
@@ -354,6 +485,70 @@ mod tests {
         // does the stress.
         assert!(with[&1].stressed);
         assert!(without.values().all(|c| !c.stressed));
+    }
+
+    fn phonikud(text: &str) -> (Vec<char>, Constraints) {
+        let nfd: String = unicode_normalization::UnicodeNormalization::nfd(text).collect();
+        let (bare, constraints) = parse_niqqud(&nfd, true);
+        (bare.chars().collect(), constraints)
+    }
+
+    fn at(constraints: &Constraints, index: usize) -> Constraint {
+        constraints.get(&index).cloned().unwrap_or_default()
+    }
+
+    #[test]
+    fn the_hatama_follows_the_vowel() {
+        // Off a hiriq-male yod onto the letter before: שִׁי֫ר.
+        let (_, c) = phonikud("שִׁי\u{05AB}ר");
+        assert!(at(&c, 0).stressed && !at(&c, 1).stressed);
+        // Off a silent final he (its only mark, the hatama, leaves it
+        // unmarked, so it is silent): יַלְדָּה֫.
+        let (_, c) = phonikud("יַלְדָּה\u{05AB}");
+        assert!(at(&c, 2).stressed && !at(&c, 3).stressed);
+        // Off a nikud-haser letter onto the letter after.
+        let (_, c) = phonikud("אַ\u{05AF}\u{05AB}בָּא");
+        assert_eq!(at(&c, 0).consonants, Some(vec![NONE]));
+        assert_eq!(at(&c, 0).vowels, Some(vec![NONE]));
+        assert!(at(&c, 1).stressed && !at(&c, 0).stressed);
+    }
+
+    #[test]
+    fn meteg_prefix_bar_and_qamats_read_as_phonikud_writes_them() {
+        // Meteg on a shva: vocal, /e/.
+        let (_, c) = phonikud("שְׁ\u{05BD}מוֹ");
+        assert_eq!(at(&c, 0).vowels, Some(vec!["e"]));
+        // Prefix bar: dropped from the bare text; וְ| reads /e/.
+        let (bare, c) = phonikud("וְ|הַיֶּלֶד");
+        assert_eq!(bare.iter().collect::<String>(), "והילד");
+        assert_eq!(at(&c, 0).vowels, Some(vec!["e"]));
+        // Without the bar the shva stays open.
+        let (_, c) = phonikud("וְהַיֶּלֶד");
+        assert_eq!(at(&c, 0).vowels, Some(vec!["e", NONE]));
+        // Qamats before hataf qamats: צָהֳרַיִם.
+        let (_, c) = phonikud("צָהֳרַיִם");
+        assert_eq!(at(&c, 0).vowels, Some(vec!["o"]));
+    }
+
+    #[test]
+    fn the_vav_rules() {
+        // Holam after a vowelled letter: consonantal vav, /vo/ (מִצְוֹת).
+        let (_, c) = phonikud("מִצְוֹת");
+        assert_eq!(at(&c, 2).consonants, Some(vec!["v"]));
+        assert_eq!(at(&c, 2).vowels, Some(vec!["o"]));
+        // Upstream reads it as holam male.
+        let nfd: String = unicode_normalization::UnicodeNormalization::nfd("מִצְוֹת").collect();
+        let (_, up) = parse_niqqud(&nfd, false);
+        assert_eq!(up[&2].consonants, Some(vec![NONE]));
+        // Holam haser for vav alone: consonantal too.
+        let (_, c) = phonikud("עָו\u{05BA}ן");
+        assert_eq!(at(&c, 1).consonants, Some(vec!["v"]));
+        // Partial pointing: a bare vav after a bare letter is left open.
+        let (_, c) = phonikud("שָׁלום");
+        assert_eq!(at(&c, 2).consonants, None);
+        let nfd: String = unicode_normalization::UnicodeNormalization::nfd("שָׁלום").collect();
+        let (_, up) = parse_niqqud(&nfd, false);
+        assert_eq!(up[&2].consonants, Some(vec!["v", "w"]));
     }
 
     #[test]

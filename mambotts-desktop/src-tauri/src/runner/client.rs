@@ -102,7 +102,6 @@ pub async fn phonemize_request(
         .json(&serde_json::json!({
             "input": request.input,
             "language": request.language.unwrap_or_else(|| "auto".to_string()),
-            "niqqud": request.niqqud.unwrap_or(false),
         }))
         .send()
         .await
@@ -177,7 +176,6 @@ pub async fn synthesize_request(
         "language": language,
         "stream": true,
         "input_is_phonemes": request.input_is_phonemes.unwrap_or(false),
-        "niqqud": request.niqqud.unwrap_or(false),
         // The engine's speed, as bluetts.com sends it. Unset is zero, which
         // the server reads as the release's default, 1.0.
         "speed": request.speed.unwrap_or(0.0),

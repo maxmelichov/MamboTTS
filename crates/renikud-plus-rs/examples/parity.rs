@@ -12,7 +12,7 @@
 //! Request fields (all optional but `op`): `op` (`phonemize`, `vocalize`,
 //! `numbers`, `align`, `lexicon`), `text`, `niqqud` (`strip`/`use`),
 //! `exact_map`, `speaker`, `target_speaker`, `number_norm`, `with_stress`,
-//! `read_hatama`, `use_lexicon`, `surface`, `ipa`, `entries`.
+//! `phonikud_marks` (alias `read_hatama`), `use_lexicon`, `surface`, `ipa`, `entries`.
 
 use std::io::{BufRead, BufWriter, Write};
 
@@ -136,7 +136,10 @@ fn main() -> anyhow::Result<()> {
         }
         let request: Value = serde_json::from_str(&line)?;
         let mut config = g2p.config().clone();
-        config.read_hatama = request["read_hatama"].as_bool().unwrap_or(true);
+        config.phonikud_marks = request["phonikud_marks"]
+            .as_bool()
+            .or(request["read_hatama"].as_bool())
+            .unwrap_or(true);
         g2p.set_config(config);
         let result = match run(&mut g2p, &request) {
             Ok(out) => json!({ "i": request["i"], "out": out }),
