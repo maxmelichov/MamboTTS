@@ -205,7 +205,7 @@ export function HomePage({ bundle, setBundle, studio, setStudio }: HomePageProps
     await ensureModelLoaded();
     const pointed = freshVocalized || vocalized;
     const output = await invoke<string>("phonemize", {
-      request: { input: pointed || text, language, niqqud: Boolean(pointed) },
+      request: { input: pointed || text, language },
     });
     updateStudio({ phonemes: output });
   }
@@ -329,9 +329,6 @@ export function HomePage({ bundle, setBundle, studio, setStudio }: HomePageProps
           voice: synthesisVoice || undefined,
           language: synthesisLanguage,
           input_is_phonemes: inputIsPhonemes,
-          // Points are read only from the niqqud editor's text; pointed text
-          // typed into the editor is read as the site reads it, without them.
-          niqqud: inputSource === "diacritics",
           // Unset: the server uses the language's default, as the site does.
           speed: speed ?? undefined,
           // The Quality slider's step count, always sent, as the site does.

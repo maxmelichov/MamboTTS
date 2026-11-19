@@ -103,12 +103,6 @@ pub struct SpeechBody {
     /// Requires `stream: true`.
     #[serde(default)]
     pub input_is_phonemes: bool,
-    /// The input is pointed Hebrew whose points were chosen on purpose (the
-    /// app's niqqud editor): RenikudPlus reads them. Off by default, where
-    /// points are dropped and the bare letters read, as bluetts.com and the
-    /// BlueV3 reference read any pointed text.
-    #[serde(default)]
-    pub niqqud: bool,
     /// The engine's speed, as bluetts.com sends it: 1.0 is the voice's
     /// natural pace (BlueV3 v3.0.1 multiplies it by the voice's
     /// `speed_scale` for the language), below one is slower. Zero or absent
@@ -149,12 +143,6 @@ pub struct PhonemizeBody {
     /// Same values as the speech request's `language`.
     #[serde(default)]
     pub language: String,
-    /// The input is pointed Hebrew whose points were chosen on purpose (the
-    /// app's niqqud editor): RenikudPlus reads them. Off by default, where
-    /// points are dropped and the bare letters read, as bluetts.com and the
-    /// BlueV3 reference read any pointed text.
-    #[serde(default)]
-    pub niqqud: bool,
 }
 
 /// Diacritization only ever applies to Hebrew, so unlike [`PhonemizeBody`]

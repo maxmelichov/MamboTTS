@@ -39,13 +39,14 @@ A voice must carry the graphs' checkpoint label (`"model": "bluev3-702000"`).
 bluetts.com applies the same rules (LightBlue-site `golden-parity`);
 `Phonemizer::set_bot_rules(false)` reads text as the site did before them.
 
-Pointed Hebrew is read as the site and the reference read it: the points are
-dropped and RenikudPlus reads the bare letters. `Phonemizer::set_honor_niqqud(true)`
-reads them as constraints instead, for text whose points were chosen on
-purpose (the app's niqqud editor sends `"niqqud": true`).
+Pointed Hebrew is read with its points, as the reference reads it
+(`site_flow.parse_points`, tests/golden/README.md "Pointed Hebrew"): vowel
+signs, dagesh, shin/sin dots and phonikud's marks (hatama, meteg, nikud haser,
+the prefix bar) are hard constraints on RenikudPlus's decode, so בַּר and בֶּר
+differ. Hebrew without points reads exactly as before.
 
 `tests/golden.rs` checks every case of `tests/golden/cases.jsonl`, stage by
-stage (616 cases: `plan`, `compact` plans of 2k-50k characters compared by
+stage (637 cases: `plan`, `compact` plans of 2k-50k characters compared by
 digest, `pack`, `geometry`, and `duration`, which also runs the bundle's
 duration predictor for each voice when a v3.0.1 bundle is at hand). It is
 vendored, with `vocab.json`, from BlueV3 `tests/golden/`: after the

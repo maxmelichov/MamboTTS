@@ -53,9 +53,6 @@ pub struct SpeechRequest {
     pub output_path: Option<String>,
     pub language: Option<String>,
     pub input_is_phonemes: Option<bool>,
-    /// `input` is the niqqud editor's pointed Hebrew: read its points rather
-    /// than drop them as bluetts.com does with any pointed text.
-    pub niqqud: Option<bool>,
     pub speed: Option<f64>,
     /// The Quality slider's flow-matching steps (bluetts.com's 5 to 16).
     /// Unset is the server's default, 8.
@@ -77,8 +74,6 @@ pub struct SpeechResult {
 pub struct PhonemizeRequest {
     pub input: String,
     pub language: Option<String>,
-    /// As [`SpeechRequest::niqqud`].
-    pub niqqud: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]

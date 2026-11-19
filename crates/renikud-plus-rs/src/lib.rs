@@ -17,11 +17,12 @@
 //! - **Force lexicon**, **Hebrew number front end**, **long-input windowing**
 //!   and the **raw-Hebrew backstop**, as upstream.
 //!
-//! One documented extension: niqqud has no stress mark, so
+//! Documented extensions: niqqud has no stress mark, so
 //! [`Options::with_stress`] writes the predicted stress with the hatama
 //! (U+05AB), and [`NiqqudMode::Use`] reads that mark back as a stress
-//! constraint. Both are off in upstream and can be turned off here
-//! ([`G2PConfig::read_hatama`]).
+//! constraint, along with phonikud's other marks (meteg, nikud haser, the
+//! prefix bar) and the BlueV3 reference's vav rules. Upstream does none of
+//! this; [`G2PConfig::phonikud_marks`] turns the reading off.
 
 pub mod decode;
 pub mod lexicon;
@@ -76,11 +77,15 @@ pub struct G2PConfig {
     pub chunk_chars: Option<usize>,
     /// What to do with points in the input.
     pub niqqud: NiqqudMode,
-    /// Read the hatama (U+05AB) as a stress constraint in [`NiqqudMode::Use`].
+    /// In [`NiqqudMode::Use`], read phonikud's marks too: the hatama (U+05AB)
+    /// as the word's stress, meteg, nikud haser, the prefix bar and the vav
+    /// rules of the BlueV3 reference (`site_flow.parse_points`; see
+    /// [`niqqud::parse_niqqud`]). Off, the points are read exactly as upstream
+    /// RenikudPlus reads them.
     ///
-    /// A MamboTTS extension: it is what makes `vocalize(with_stress)` output
-    /// round-trip through `phonemize` with its stress intact.
-    pub read_hatama: bool,
+    /// The hatama is what makes `vocalize(with_stress)` output round-trip
+    /// through `phonemize` with its stress intact.
+    pub phonikud_marks: bool,
 }
 
 impl Default for G2PConfig {
@@ -89,7 +94,7 @@ impl Default for G2PConfig {
             exact_map: true,
             chunk_chars: Some(SAFE_CHUNK_CHARS),
             niqqud: NiqqudMode::Strip,
-            read_hatama: true,
+            phonikud_marks: true,
         }
     }
 }
@@ -439,7 +444,7 @@ impl G2P {
         Ok(match mode {
             NiqqudMode::Strip => (strip_niqqud(&normalized), None, text),
             NiqqudMode::Use => {
-                let (bare, constraints) = parse_niqqud(&normalized, self.config.read_hatama);
+                let (bare, constraints) = parse_niqqud(&normalized, self.config.phonikud_marks);
                 (bare, Some(constraints), text)
             }
         })
@@ -795,6 +800,9 @@ impl G2P {
             //   - A bare י after hiriq or tsere is that vowel's mater, so a י
             //     the decode reads as the glide /j/ (the second half of ej, aj)
             //     needs the shva that says it closes the syllable instead.
+            //     Before a vowel vav (וֹ / וּ) it takes a dagesh instead, as in
+            //     הַיּוֹם: a holam vav right after a letter with a vowel sign
+            //     (the shva included) is the consonant /vo/ (מִצְוֹת).
             //
             // Only those three: pointing every vowel-less consonant with its
             // shva, which upstream also leaves out, measures worse rather than
@@ -813,7 +821,19 @@ impl G2P {
                 ) {
                     ('ו', NONE, NONE) => Some(niqqud::RAFE),
                     ('ה', "h", _) if word_final => Some(niqqud::DAGESH),
-                    ('י', consonant, NONE) if consonant != NONE => Some(niqqud::SHEVA),
+                    ('י', consonant, NONE) if consonant != NONE => {
+                        let vowel_vav_next = records.get(i + 1).is_some_and(|next| {
+                            next.start == record.start + 1
+                                && next.letter == 'ו'
+                                && next.consonant == NONE
+                                && matches!(next.vowel.as_str(), "o" | "u")
+                        });
+                        Some(if vowel_vav_next {
+                            niqqud::DAGESH
+                        } else {
+                            niqqud::SHEVA
+                        })
+                    }
                     _ => None,
                 }
             });
