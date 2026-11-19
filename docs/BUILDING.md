@@ -208,6 +208,20 @@ on Windows anyway, start the server with `MAMBOTTS_VE_BACKEND=gpu`; DX12 needs
 newer) beside `mambotts-server.exe`, and otherwise only Vulkan is tried.
 `MAMBOTTS_VE_BACKEND=ort` keeps any platform on ONNX Runtime.
 
+ONNX Runtime's CPU path has two speed settings:
+
+- Threads: `min(8, usable CPUs)` (the affinity mask and, on Linux, the cgroup
+  quota). `MAMBOTTS_ORT_THREADS=<n>` overrides it. More threads than CPUs is
+  much slower: 8 threads on 2 usable x86 CPUs ran 3x slower than 2.
+- The vector estimator graph: off macOS, ONNX Runtime runs
+  `vector_estimator.int8.onnx` (dynamic int8 MatMuls, BlueV3-onnx f0db559) when
+  the bundle has it, and `vector_estimator.onnx` otherwise. That is about 1.7x
+  faster on x86 and 2.5x on ARM Linux, with the same ASR error and speaker
+  similarity. The file is optional: the desktop app fetches it in the
+  background off macOS (`optional_files` in the registry), and `install.ps1`
+  fetches it after the bundle. macOS and the GPU engine keep float32.
+  `MAMBOTTS_PRECISION=fp32|int8|auto` overrides the choice.
+
 ### Cross-compile the Windows sidecar from macOS or Linux
 
 The installer has to be produced on Windows, but the sidecar can be

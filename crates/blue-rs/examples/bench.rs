@@ -3,7 +3,8 @@
 //! Usage: `cargo run -p blue-rs --release --example bench -- <model_dir> <voice> <lang> <text_file> [runs]`
 //!
 //! `MAMBOTTS_VE_BACKEND=ort|gpu` picks the flow backend and
-//! `MAMBOTTS_ORT_THREADS=<n>` the ONNX Runtime thread count.
+//! `MAMBOTTS_ORT_THREADS=<n>` the ONNX Runtime thread count and
+//! `MAMBOTTS_PRECISION=fp32|int8|auto` the vector estimator graph.
 
 use std::{env, path::PathBuf, time::Instant};
 
@@ -56,8 +57,9 @@ fn main() -> Result<()> {
         }
     }
     println!(
-        "backend {} | {seconds:.1} s of audio in {best:.2} s = {:.1}x real time | first chunk after {first:.2} s",
+        "backend {} ({}) | {seconds:.1} s of audio in {best:.2} s = {:.1}x real time | first chunk after {first:.2} s",
         tts.gpu_adapter().unwrap_or("onnxruntime"),
+        if tts.gpu_adapter().is_some() { "fp32" } else { tts.precision().as_str() },
         seconds / best
     );
     Ok(())

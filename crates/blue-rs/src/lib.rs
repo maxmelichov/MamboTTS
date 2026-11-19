@@ -142,6 +142,8 @@ pub struct BlueTts {
     dp: Session,
     text_encoder: Session,
     vector_estimator: Session,
+    /// Which vector estimator graph `vector_estimator` is.
+    precision: Precision,
     vocoder: Session,
     tokenizer: Tokenizer,
     geometry: ModelGeometry,
@@ -159,6 +161,105 @@ pub struct BlueTts {
     /// take half a minute, so the model loads and speaks on
     /// ONNX Runtime meanwhile and switches at the next chunk once it is ready.
     gpu_opening: Option<std::thread::JoinHandle<Option<ve_gpu::GpuVectorEstimator>>>,
+}
+
+/// The bundle's dynamic-int8 vector estimator (BlueV3-onnx f0db559, BlueTTS
+/// `blue_onnx/cpu.py`): MatMul weights int8 per output channel with
+/// `reduce_range`, everything else float32. Optional: a bundle without it
+/// runs `vector_estimator.onnx`.
+pub const INT8_VECTOR_ESTIMATOR: &str = "vector_estimator.int8.onnx";
+
+/// The float32 vector estimator, the graph every bundle has.
+pub const FP32_VECTOR_ESTIMATOR: &str = "vector_estimator.onnx";
+
+/// Which vector estimator graph ONNX Runtime runs the flow with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Precision {
+    Fp32,
+    Int8,
+}
+
+impl Precision {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Precision::Fp32 => "fp32",
+            Precision::Int8 => "int8",
+        }
+    }
+}
+
+/// The vector estimator precision to ask for: `fp32`, `int8`, or `auto`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum PrecisionSetting {
+    /// int8 where it was measured to help (see [`PrecisionSetting::resolve`]).
+    #[default]
+    Auto,
+    Fp32,
+    Int8,
+}
+
+impl PrecisionSetting {
+    /// `MAMBOTTS_PRECISION=fp32|int8|auto`; unset, empty or unknown is auto.
+    pub fn from_env() -> Self {
+        let value = std::env::var("MAMBOTTS_PRECISION").ok();
+        let setting = Self::parse(value.as_deref().unwrap_or(""));
+        if setting.is_none() {
+            eprintln!("MAMBOTTS_PRECISION={value:?} is not fp32, int8 or auto: using auto");
+        }
+        setting.unwrap_or_default()
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "" | "auto" => Some(Self::Auto),
+            "fp32" | "float32" | "float" => Some(Self::Fp32),
+            "int8" | "quantized" => Some(Self::Int8),
+            _ => None,
+        }
+    }
+
+    /// `Auto` is int8 off macOS and float32 on it. Measured with ONNX Runtime
+    /// on the CPU (BlueTTS PR #67): the int8 vector estimator was about 1.7x
+    /// faster on an x86 Xeon and 2.5x on ARM Linux, with the same ASR error
+    /// and a speaker similarity to float32 no lower than another noise draw's.
+    /// macOS keeps float32: BlueTTS measured no gain on an Apple M5 (Python
+    /// ONNX Runtime), and there the flow runs on the GPU engine by default
+    /// (24.8x real time on an M5), which always reads float32. (blue-rs's own
+    /// ONNX Runtime 1.23.2 on the M5's CPU did run int8 1.8x faster: 17.0x
+    /// against 9.7x real time; `MAMBOTTS_PRECISION=int8` turns it on.)
+    pub fn resolve(self, macos: bool) -> Precision {
+        match self {
+            Self::Fp32 => Precision::Fp32,
+            Self::Int8 => Precision::Int8,
+            Self::Auto if macos => Precision::Fp32,
+            Self::Auto => Precision::Int8,
+        }
+    }
+}
+
+/// Open the vector estimator ONNX Runtime runs: the int8 graph when
+/// `precision` asks for it and the bundle has it, else float32. A missing or
+/// unloadable int8 graph is a warning, not an error.
+fn load_vector_estimator(dir: &Path, precision: Precision) -> Result<(Session, Precision)> {
+    let check = |session: Session, path: &Path| -> Result<Session> {
+        if !session.inputs().iter().any(|input| input.name() == "cfg_scale") {
+            bail!("{} is not a BlueV3 vector estimator: it has no `cfg_scale` input", path.display());
+        }
+        Ok(session)
+    };
+    if precision == Precision::Int8 {
+        let path = dir.join(INT8_VECTOR_ESTIMATOR);
+        if path.is_file() {
+            match load_session(&path).and_then(|session| check(session, &path)) {
+                Ok(session) => return Ok((session, Precision::Int8)),
+                Err(err) => eprintln!("BlueV3 vector estimator: the int8 graph did not load, using float32: {err:#}"),
+            }
+        } else {
+            eprintln!("BlueV3 vector estimator: no {INT8_VECTOR_ESTIMATOR} in the bundle, using float32");
+        }
+    }
+    let path = dir.join(FP32_VECTOR_ESTIMATOR);
+    Ok((check(load_session(&path)?, &path)?, Precision::Fp32))
 }
 
 /// Whether to open the GPU flow engine, from `MAMBOTTS_VE_BACKEND`: `ort`
@@ -270,7 +371,15 @@ impl Default for ReleasePoint {
 }
 
 impl BlueTts {
+    /// Opens a bundle, the vector estimator's precision from
+    /// `MAMBOTTS_PRECISION` (default auto: see [`PrecisionSetting::resolve`]).
     pub fn from_dir(dir: impl AsRef<Path>) -> Result<Self> {
+        Self::from_dir_with_precision(dir, PrecisionSetting::from_env())
+    }
+
+    /// Opens a bundle with the given vector estimator precision, whatever
+    /// the environment says (the parity checks need float32).
+    pub fn from_dir_with_precision(dir: impl AsRef<Path>, precision: PrecisionSetting) -> Result<Self> {
         let dir = dir.as_ref();
         let tokenizer = Tokenizer::from_json(dir.join("vocab.json"))?;
         if !tokenizer.is_tagged() {
@@ -279,17 +388,13 @@ impl BlueTts {
                 dir.display()
             );
         }
-        let vector_estimator = load_session(dir.join("vector_estimator.onnx"))?;
-        if !vector_estimator
-            .inputs()
-            .iter()
-            .any(|input| input.name() == "cfg_scale")
-        {
-            bail!(
-                "{} is not a BlueV3 vector estimator: it has no `cfg_scale` input",
-                dir.join("vector_estimator.onnx").display()
-            );
-        }
+        let (vector_estimator, precision) =
+            load_vector_estimator(dir, precision.resolve(cfg!(target_os = "macos")))?;
+        eprintln!(
+            "BlueV3 vector estimator on ONNX Runtime: {} ({} threads)",
+            precision.as_str(),
+            ort_threads()
+        );
         let vocoder = load_session(dir.join("vocoder.onnx"))?;
         let vocoder_input = vocoder
             .inputs()
@@ -297,7 +402,8 @@ impl BlueTts {
             .map(|input| input.name().to_owned())
             .unwrap_or_else(|| "latent".to_owned());
         let (geometry, release, model) = load_config(dir.join("tts.json"))?;
-        let gpu_path = dir.join("vector_estimator.onnx");
+        // The GPU engine runs the float32 graph whatever ONNX Runtime runs.
+        let gpu_path = dir.join(FP32_VECTOR_ESTIMATOR);
         let gpu_opening = if gpu_flow_wanted(std::env::var("MAMBOTTS_VE_BACKEND").ok().as_deref()) {
             std::thread::Builder::new()
                 .name("bluev3-gpu-open".into())
@@ -313,6 +419,7 @@ impl BlueTts {
             dp: load_session(dir.join("duration_predictor_style.onnx"))?,
             text_encoder: load_session(dir.join("text_encoder.onnx"))?,
             vector_estimator,
+            precision,
             vocoder,
             tokenizer,
             geometry,
@@ -349,6 +456,12 @@ impl BlueTts {
     /// a failure since, or still opening: see [`BlueTts::wait_for_gpu`]).
     pub fn gpu_adapter(&self) -> Option<&str> {
         self.gpu.as_ref().map(|gpu| gpu.adapter())
+    }
+
+    /// The vector estimator graph ONNX Runtime runs (the GPU engine, when
+    /// [`BlueTts::gpu_adapter`] names one, runs float32).
+    pub fn precision(&self) -> Precision {
+        self.precision
     }
 
     /// The checkpoint the bundle's graphs are (`tts.json` `"model"`).
@@ -764,13 +877,29 @@ struct ChunkAudio {
     requested_samples: usize,
 }
 
-/// ONNX Runtime's intra-op thread count: `MAMBOTTS_ORT_THREADS`, else 8.
+/// ONNX Runtime's intra-op thread count: `MAMBOTTS_ORT_THREADS`, else the
+/// CPUs this process may use ([`std::thread::available_parallelism`]: the
+/// affinity mask and, on Linux, the cgroup quota), at most 8.
+///
 /// Measured on an Apple M5 with ONNX Runtime 1.23.2 (57.7 s of English audio,
 /// flow on ONNX Runtime): 1 thread 3.2x real time, 2 5.7x, 4 8.8x, 6 8.6x,
-/// 8 10.2x, 10 9.0x. The variable is there to try other counts per machine
+/// 8 10.2x, 10 9.0x. More threads than CPUs is far worse than fewer: on an
+/// x86 Xeon limited to 2 CPUs, 8 threads ran 3x slower than 2 (BlueTTS PR
+/// #67). The variable is there to try other counts per machine
 /// (`examples/bench.rs`).
 fn ort_threads() -> usize {
-    std::env::var("MAMBOTTS_ORT_THREADS").ok().and_then(|v| v.trim().parse().ok()).filter(|n| *n > 0).unwrap_or(8)
+    let setting = std::env::var("MAMBOTTS_ORT_THREADS").ok();
+    let cpus = std::thread::available_parallelism().map(usize::from).ok();
+    threads_for(setting.as_deref(), cpus)
+}
+
+const MAX_DEFAULT_THREADS: usize = 8;
+
+fn threads_for(setting: Option<&str>, cpus: Option<usize>) -> usize {
+    setting
+        .and_then(|v| v.trim().parse().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or_else(|| cpus.unwrap_or(MAX_DEFAULT_THREADS).clamp(1, MAX_DEFAULT_THREADS))
 }
 
 fn load_session(path: impl AsRef<Path>) -> Result<Session> {
@@ -1118,6 +1247,66 @@ mod tests {
         let b = tts.create(&phonemes, &style, english()).unwrap();
         assert_eq!(a, b);
         assert_eq!(a, first, "the phoneme path speaks the text path's chunks");
+    }
+
+    #[test]
+    fn threads_default_to_the_usable_cpus_at_most_eight() {
+        assert_eq!(threads_for(None, Some(2)), 2);
+        assert_eq!(threads_for(None, Some(1)), 1);
+        assert_eq!(threads_for(None, Some(16)), 8);
+        assert_eq!(threads_for(None, None), 8);
+        assert_eq!(threads_for(Some(""), Some(4)), 4);
+        assert_eq!(threads_for(Some("0"), Some(4)), 4);
+        assert_eq!(threads_for(Some("x"), Some(4)), 4);
+        assert_eq!(threads_for(Some(" 12 "), Some(4)), 12, "the override is not capped");
+        assert!(ort_threads() >= 1);
+    }
+
+    #[test]
+    fn int8_is_the_default_off_macos_only() {
+        assert_eq!(PrecisionSetting::Auto.resolve(true), Precision::Fp32);
+        assert_eq!(PrecisionSetting::Auto.resolve(false), Precision::Int8);
+        assert_eq!(PrecisionSetting::Fp32.resolve(false), Precision::Fp32);
+        assert_eq!(PrecisionSetting::Int8.resolve(true), Precision::Int8);
+        assert_eq!(PrecisionSetting::parse(""), Some(PrecisionSetting::Auto));
+        assert_eq!(PrecisionSetting::parse(" AUTO "), Some(PrecisionSetting::Auto));
+        assert_eq!(PrecisionSetting::parse("FP32"), Some(PrecisionSetting::Fp32));
+        assert_eq!(PrecisionSetting::parse("int8"), Some(PrecisionSetting::Int8));
+        assert_eq!(PrecisionSetting::parse("fp16"), None);
+    }
+
+    /// A bundle without the int8 graph runs float32 even when int8 is asked
+    /// for (an install from before it was published).
+    #[test]
+    #[ignore = "requires MAMBOTTS_BLUE_MODEL_DIR pointing to an installed BlueV3 bundle"]
+    fn a_bundle_without_int8_runs_float32() {
+        let src = std::path::PathBuf::from(std::env::var("MAMBOTTS_BLUE_MODEL_DIR").unwrap());
+        let dir = tempfile_dir();
+        for name in [FP32_VECTOR_ESTIMATOR, "vocoder.onnx", "text_encoder.onnx", "duration_predictor_style.onnx", "vocab.json", "tts.json"] {
+            link_or_copy(&src.join(name), &dir.join(name));
+        }
+        let tts = BlueTts::from_dir_with_precision(&dir, PrecisionSetting::Int8).unwrap();
+        assert_eq!(tts.precision(), Precision::Fp32);
+        if src.join(INT8_VECTOR_ESTIMATOR).is_file() {
+            link_or_copy(&src.join(INT8_VECTOR_ESTIMATOR), &dir.join(INT8_VECTOR_ESTIMATOR));
+            let tts = BlueTts::from_dir_with_precision(&dir, PrecisionSetting::Int8).unwrap();
+            assert_eq!(tts.precision(), Precision::Int8);
+            let tts = BlueTts::from_dir_with_precision(&dir, PrecisionSetting::Fp32).unwrap();
+            assert_eq!(tts.precision(), Precision::Fp32);
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    fn tempfile_dir() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("blue-rs-precision-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn link_or_copy(from: &Path, to: &Path) {
+        if fs::hard_link(from, to).is_err() {
+            fs::copy(from, to).unwrap();
+        }
     }
 
     #[test]

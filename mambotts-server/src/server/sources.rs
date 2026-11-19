@@ -69,6 +69,10 @@ pub struct ModelSource {
     size: String,
     description: String,
     files: Vec<ModelSourceFile>,
+    /// Files the bundle runs without that make it faster on this server's
+    /// platform (the int8 vector estimator off macOS). Fetch them after
+    /// `files`; a failure is not fatal.
+    optional_files: Vec<ModelSourceFile>,
     /// The RenikudPlus variants, empty for a runtime without Hebrew G2P.
     hebrew_g2p: Vec<HebrewG2pSource>,
     hebrew_g2p_policy: Option<HebrewG2pPolicy>,
@@ -101,6 +105,7 @@ fn source_from_manifest(manifest: &RuntimeManifest) -> ModelSource {
         size: manifest.size.into(),
         description: manifest.description.into(),
         files: manifest.files.iter().map(ModelSourceFile::from).collect(),
+        optional_files: manifest.optional_files_here().iter().map(ModelSourceFile::from).collect(),
         hebrew_g2p: if manifest.hebrew_g2p {
             [HebrewG2pVariant::Fp32, HebrewG2pVariant::Int8]
                 .into_iter()
@@ -173,6 +178,11 @@ mod tests {
                     ),
                     (expected.name, expected.url, expected.size, expected.sha256)
                 );
+            }
+            let optional = manifest.optional_files_here();
+            assert_eq!(source.optional_files.len(), optional.len());
+            for (file, expected) in source.optional_files.iter().zip(&optional) {
+                assert_eq!((file.name.as_str(), file.sha256.as_str()), (expected.name, expected.sha256));
             }
             assert_eq!(
                 source.hebrew_g2p.len(),

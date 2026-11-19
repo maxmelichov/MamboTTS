@@ -47,6 +47,10 @@ pub struct RuntimeManifest {
     pub directory: &'static str,
     pub files: &'static [ModelFile],
     pub required_files: &'static [&'static str],
+    /// Files that make the bundle faster on some machines but that it runs
+    /// without: an install is complete without them, and the app fetches the
+    /// ones [`RuntimeManifest::optional_files_here`] names in the background.
+    pub optional_files: &'static [OptionalFile],
     /// Directories of earlier releases of this bundle, newest first. An
     /// install found in one keeps working while the background upgrade
     /// fills `directory`, copying every file whose bytes did not change.
@@ -57,7 +61,34 @@ pub struct RuntimeManifest {
     pub capabilities: RuntimeCapabilities,
 }
 
+/// A file the bundle runs without ([`RuntimeManifest::optional_files`]).
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+pub struct OptionalFile {
+    #[serde(flatten)]
+    pub file: ModelFile,
+    /// Whether to fetch it on macOS. The int8 vector estimator is not: on
+    /// Apple Silicon ONNX Runtime's float32 is as fast, and the engine keeps
+    /// float32 there.
+    pub macos: bool,
+}
+
+impl OptionalFile {
+    /// Whether a machine of this target fetches it.
+    pub fn wanted_on(&self, macos: bool) -> bool {
+        self.macos || !macos
+    }
+}
+
 impl RuntimeManifest {
+    /// The optional files this build fetches (see [`OptionalFile::wanted_on`]).
+    pub fn optional_files_here(&self) -> Vec<ModelFile> {
+        self.optional_files
+            .iter()
+            .filter(|optional| optional.wanted_on(cfg!(target_os = "macos")))
+            .map(|optional| optional.file)
+            .collect()
+    }
+
     /// Every file to download, the RenikudPlus variant included.
     pub fn files_for(&self, variant: HebrewG2pVariant) -> Vec<ModelFile> {
         let mut files = self.files.to_vec();
@@ -504,6 +535,22 @@ const BLUE_REQUIRED_FILES: &[&str] = &[
     "polyg2p/NOTICE",
 ];
 
+// The dynamic-int8 vector estimator (MatMul weights int8 per output channel,
+// reduce_range; BlueTTS blue_onnx/cpu.py) of the same v3.0.1 checkpoint,
+// published after the release at BlueV3-onnx f0db5595. blue-rs runs it on
+// ONNX Runtime's CPU path off macOS: about 1.7x faster on x86 and 2.5x on ARM
+// Linux than float32, with the same ASR error and speaker similarity.
+const BLUE_OPTIONAL_FILES: &[OptionalFile] = &[OptionalFile {
+    file: ModelFile {
+        name: "vector_estimator.int8.onnx",
+        url: "https://huggingface.co/notmax123/BlueV3-onnx/resolve/f0db5595f83dc3df0e46eb6d74f083a2b5ccd74d/onnx/vector_estimator.int8.onnx",
+        size: 66_080_072,
+        sha256: "0f9ac63e1e501a1b4996d508b2c3b1aeb5d4ff4b4e91aa5e46fdbe9dc967f61e",
+        shipped: None,
+    },
+    macos: false,
+}];
+
 /// Where polyg2p's data sits inside the bundle directory.
 pub const BLUE_POLYG2P_DIR: &str = "polyg2p";
 
@@ -518,6 +565,7 @@ const BLUE: RuntimeManifest = RuntimeManifest {
     directory: "bluev3-3.0.1",
     files: BLUE_FILES,
     required_files: BLUE_REQUIRED_FILES,
+    optional_files: BLUE_OPTIONAL_FILES,
     previous_directories: &["bluev3-3.0.0"],
     hebrew_g2p: true,
     capabilities: RuntimeCapabilities {
@@ -726,6 +774,19 @@ mod tests {
     }
 
     #[test]
+    fn the_int8_vector_estimator_is_optional_and_not_for_macos() {
+        let blue = runtime(DEFAULT_RUNTIME_ID).expect("Blue manifest");
+        let [int8] = blue.optional_files else { panic!("one optional file") };
+        assert_eq!(int8.file.name, "vector_estimator.int8.onnx");
+        assert!(!blue.required_files.contains(&int8.file.name));
+        assert!(!blue.files.iter().any(|file| file.name == int8.file.name));
+        assert!(int8.file.url.contains("/BlueV3-onnx/resolve/f0db5595f83dc3df0e46eb6d74f083a2b5ccd74d/"));
+        assert!(!int8.wanted_on(true));
+        assert!(int8.wanted_on(false));
+        assert_eq!(blue.optional_files_here().is_empty(), cfg!(target_os = "macos"));
+    }
+
+    #[test]
     fn the_release_is_v3_0_1_and_upgrades_from_v3_0_0() {
         let blue = runtime(DEFAULT_RUNTIME_ID).expect("Blue manifest");
         assert_eq!(blue.version, "bluev3-3.0.1");
@@ -909,6 +970,12 @@ mod tests {
             let path = dir.join(file.name);
             assert_eq!(std::fs::metadata(&path).unwrap().len(), file.size, "{}", file.name);
             assert_eq!(hash(&path), file.sha256, "{}", file.name);
+        }
+        for optional in blue.optional_files {
+            let path = dir.join(optional.file.name);
+            if path.is_file() {
+                assert_eq!(hash(&path), optional.file.sha256, "{}", optional.file.name);
+            }
         }
         let mut variants = 0;
         for variant in [HebrewG2pVariant::Fp32, HebrewG2pVariant::Int8] {
