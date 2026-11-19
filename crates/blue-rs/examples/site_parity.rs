@@ -12,7 +12,7 @@ use std::{fs, path::PathBuf};
 
 use anyhow::{Context, Result};
 use blue_rs::{
-    BlueTts,
+    BlueTts, PrecisionSetting,
     phonemize::{Language, Phonemizer},
 };
 use serde_json::{Value, json};
@@ -24,7 +24,8 @@ fn main() -> Result<()> {
         _ => anyhow::bail!("usage: site_parity <model_dir> <cases.json> <out.json>"),
     };
     let model_dir = PathBuf::from(model_dir);
-    let tts = BlueTts::from_dir(&model_dir).context("load model")?;
+    // The site runs the float32 graphs: bit parity needs them here too.
+    let tts = BlueTts::from_dir_with_precision(&model_dir, PrecisionSetting::Fp32).context("load model")?;
     let renikud = ["renikud-plus-fp32.onnx", "renikud-plus.onnx"]
         .map(|name| model_dir.join(name))
         .into_iter()

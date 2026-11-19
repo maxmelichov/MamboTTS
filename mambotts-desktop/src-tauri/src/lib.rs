@@ -29,6 +29,7 @@ pub fn run() {
             model::get_model_sources,
             model::download_model_bundle,
             model::upgrade_hebrew_g2p,
+            model::fetch_optional_files,
             model::upgrade_model_bundle,
             runner::start_runner,
             runner::stop_runner,

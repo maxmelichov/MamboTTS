@@ -95,6 +95,8 @@ function App() {
   // fetches the machine's RenikudPlus. Each download resumes after a failure
   // (retried with a growing pause) or a restart; once verified, the new
   // bundle replaces the old one and the next take's load_model switches to it.
+  // Last, off macOS, the int8 vector estimator (faster on the CPU), which the
+  // engine picks up the next time it loads the bundle.
   const upgradingRef = useRef(false);
   const pendingUpgrade = !bundle?.installed
     ? null
@@ -102,7 +104,9 @@ function App() {
       ? "bundle"
       : bundle.hebrew_g2p_upgrade
         ? "hebrew_g2p"
-        : null;
+        : bundle.optional_files_pending?.length
+          ? "optional"
+          : null;
   useEffect(() => {
     if (!pendingUpgrade || upgradingRef.current) return;
     upgradingRef.current = true;
@@ -111,7 +115,11 @@ function App() {
     const attempt = async (failures: number) => {
       try {
         const upgraded = await invoke<ModelBundle>(
-          pendingUpgrade === "bundle" ? "upgrade_model_bundle" : "upgrade_hebrew_g2p",
+          pendingUpgrade === "bundle"
+            ? "upgrade_model_bundle"
+            : pendingUpgrade === "hebrew_g2p"
+              ? "upgrade_hebrew_g2p"
+              : "fetch_optional_files",
         );
         if (!stopped) setBundle(upgraded);
       } catch (err) {
