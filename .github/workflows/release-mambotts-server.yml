@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release tag (for example: mambotts-server-v0.1.0)"
+        description: "Release tag (for example: mambotts-server-v1.4.2)"
         required: true
         type: string
   push:

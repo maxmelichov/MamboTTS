@@ -33,10 +33,13 @@ def latest_desktop_release() -> dict[str, Any]:
         "--limit",
         "100",
         "--json",
-        "tagName,publishedAt,name,isPrerelease",
+        "tagName,publishedAt,name,isPrerelease,isDraft",
     )
     for release in releases:
         tag = release.get("tagName", "")
+        # A draft's assets are not public yet: the site would link to 404s.
+        if release.get("isDraft"):
+            continue
         if DESKTOP_TAG_RE.match(tag):
             return gh_json(
                 "release",
