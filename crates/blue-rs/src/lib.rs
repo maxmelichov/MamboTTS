@@ -28,7 +28,10 @@ mod ipa;
 pub mod numpy_rng;
 pub mod phonemize;
 mod text;
+pub mod gpu_flow;
+pub mod gpu_verdict;
 pub mod ve_gpu;
+pub mod ve_worker;
 
 use std::{collections::BTreeMap, fs, path::Path};
 
@@ -152,15 +155,17 @@ pub struct BlueTts {
     /// `tts.json`'s `"model"`: the checkpoint the graphs are.
     model: Option<String>,
     last_chunks: Vec<ChunkInfo>,
-    /// The site's Rust engine for the flow (wgpu: Metal or Vulkan). `None`
-    /// on Windows unless asked for (see [`gpu_flow_wanted`]), without a
-    /// usable GPU, with `MAMBOTTS_VE_BACKEND=ort`, or after it failed once;
-    /// the ONNX Runtime graph runs the flow then.
-    gpu: Option<ve_gpu::GpuVectorEstimator>,
+    /// The site's Rust engine for the flow (wgpu: Metal, Vulkan or DX12),
+    /// in-process or in a worker process (see `gpu_flow.rs`). `None` on
+    /// Windows unless asked for (see [`gpu_flow_wanted`]), without a usable
+    /// GPU, with `MAMBOTTS_VE_BACKEND=ort`, when it failed before on this
+    /// adapter and driver, or after it failed once; the ONNX Runtime graph
+    /// runs the flow then.
+    gpu: Option<gpu_flow::GpuFlow>,
     /// The GPU engine while it is still opening. Compiling its kernels can
     /// take half a minute, so the model loads and speaks on
     /// ONNX Runtime meanwhile and switches at the next chunk once it is ready.
-    gpu_opening: Option<std::thread::JoinHandle<Option<ve_gpu::GpuVectorEstimator>>>,
+    gpu_opening: Option<std::thread::JoinHandle<Option<gpu_flow::GpuFlow>>>,
 }
 
 /// The bundle's dynamic-int8 vector estimator (BlueV3-onnx f0db559, BlueTTS
@@ -272,29 +277,15 @@ fn load_vector_estimator(dir: &Path, precision: Precision) -> Result<(Session, P
 /// many minutes, and a driver that crashes or hangs takes the whole server
 /// down with it, so generation stops working instead of falling back. The CPU
 /// path is the one every Windows machine could already fall back to.
-fn gpu_flow_wanted(setting: Option<&str>) -> bool {
+///
+/// The engine now runs in a worker process by default (`gpu_flow.rs`), where a
+/// driver crash or hang costs only the GPU; once that is verified on Windows,
+/// the GPU becomes the default there by replacing `!cfg!(windows)` with `true`.
+pub(crate) fn gpu_flow_wanted(setting: Option<&str>) -> bool {
     match setting.map(str::trim) {
         Some(value) if value.eq_ignore_ascii_case("ort") => false,
         Some(value) if value.eq_ignore_ascii_case("gpu") => true,
         _ => !cfg!(windows),
-    }
-}
-
-/// Open the GPU flow engine; any failure means ONNX Runtime.
-fn open_gpu_flow(path: &Path) -> Option<ve_gpu::GpuVectorEstimator> {
-    match ve_gpu::GpuVectorEstimator::open(path) {
-        Ok(Some(engine)) => {
-            eprintln!("BlueV3 flow on the GPU engine ({})", engine.adapter());
-            Some(engine)
-        }
-        Ok(None) => {
-            eprintln!("BlueV3 flow on ONNX Runtime: no GPU adapter");
-            None
-        }
-        Err(err) => {
-            eprintln!("BlueV3 flow on ONNX Runtime: the GPU engine did not open: {err:#}");
-            None
-        }
     }
 }
 
@@ -371,15 +362,32 @@ impl Default for ReleasePoint {
 }
 
 impl BlueTts {
-    /// Opens a bundle, the vector estimator's precision from
-    /// `MAMBOTTS_PRECISION` (default auto: see [`PrecisionSetting::resolve`]).
+    /// The bundle in `dir`, with the GPU flow engine as the environment
+    /// says (see [`gpu_flow::GpuOptions::from_env`]) and the vector
+    /// estimator's precision from `MAMBOTTS_PRECISION` (default auto: see
+    /// [`PrecisionSetting::resolve`]).
     pub fn from_dir(dir: impl AsRef<Path>) -> Result<Self> {
-        Self::from_dir_with_precision(dir, PrecisionSetting::from_env())
+        Self::from_dir_with_options(dir, gpu_flow::GpuOptions::from_env(), PrecisionSetting::from_env())
+    }
+
+    /// [`BlueTts::from_dir`] with the GPU flow engine opened as `gpu` says.
+    pub fn from_dir_with(dir: impl AsRef<Path>, gpu: gpu_flow::GpuOptions) -> Result<Self> {
+        Self::from_dir_with_options(dir, gpu, PrecisionSetting::from_env())
     }
 
     /// Opens a bundle with the given vector estimator precision, whatever
     /// the environment says (the parity checks need float32).
     pub fn from_dir_with_precision(dir: impl AsRef<Path>, precision: PrecisionSetting) -> Result<Self> {
+        Self::from_dir_with_options(dir, gpu_flow::GpuOptions::from_env(), precision)
+    }
+
+    /// Opens a bundle with the GPU flow engine as `gpu` says and the given
+    /// vector estimator precision for ONNX Runtime.
+    pub fn from_dir_with_options(
+        dir: impl AsRef<Path>,
+        gpu: gpu_flow::GpuOptions,
+        precision: PrecisionSetting,
+    ) -> Result<Self> {
         let dir = dir.as_ref();
         let tokenizer = Tokenizer::from_json(dir.join("vocab.json"))?;
         if !tokenizer.is_tagged() {
@@ -404,10 +412,10 @@ impl BlueTts {
         let (geometry, release, model) = load_config(dir.join("tts.json"))?;
         // The GPU engine runs the float32 graph whatever ONNX Runtime runs.
         let gpu_path = dir.join(FP32_VECTOR_ESTIMATOR);
-        let gpu_opening = if gpu_flow_wanted(std::env::var("MAMBOTTS_VE_BACKEND").ok().as_deref()) {
+        let gpu_opening = if gpu.wanted {
             std::thread::Builder::new()
                 .name("bluev3-gpu-open".into())
-                .spawn(move || open_gpu_flow(&gpu_path))
+                .spawn(move || gpu_flow::open(&gpu_path, &gpu))
                 .map_err(|err| eprintln!("BlueV3 flow on ONNX Runtime: could not start the GPU engine: {err}"))
                 .ok()
         } else {
@@ -456,6 +464,11 @@ impl BlueTts {
     /// a failure since, or still opening: see [`BlueTts::wait_for_gpu`]).
     pub fn gpu_adapter(&self) -> Option<&str> {
         self.gpu.as_ref().map(|gpu| gpu.adapter())
+    }
+
+    /// Whether the GPU engine in use runs in this process or a worker.
+    pub fn gpu_isolation(&self) -> Option<gpu_flow::Isolation> {
+        self.gpu.as_ref().map(|gpu| gpu.isolation())
     }
 
     /// The vector estimator graph ONNX Runtime runs (the GPU engine, when
@@ -692,8 +705,9 @@ impl BlueTts {
         let cfg_scale = Array1::from_vec(vec![opts.cfg_scale]);
 
         // The site's engine runs the whole flow in one go; the same latent
-        // as the graph's to ~1e-5. If it fails, ONNX Runtime takes over for
-        // this chunk and every later one.
+        // as the graph's to ~1e-5. If it fails (in a worker: crashes, hangs,
+        // answers wrongly), ONNX Runtime takes over for this chunk and every
+        // later one, from the same noise.
         let mut gpu_done = false;
         self.adopt_gpu(false);
         if let Some(engine) = self.gpu.as_mut() {
@@ -713,7 +727,7 @@ impl BlueTts {
                     gpu_done = true;
                 }
                 Err(err) => {
-                    eprintln!("GPU flow failed, using ONNX Runtime from now on: {err:#}");
+                    eprintln!("GPU flow failed, this chunk and the rest on ONNX Runtime: {err:#}");
                     self.gpu = None;
                 }
             }
@@ -1207,8 +1221,12 @@ mod tests {
             .filter_map(|entry| entry.ok().map(|entry| entry.path()))
             .find(|path| path.extension().is_some_and(|ext| ext == "json"))
             .expect("a voice in the bundle");
+        let mut tts = BlueTts::from_dir(&dir).unwrap();
+        // Every run on one engine: otherwise the GPU engine, opening in the
+        // background, takes over between two runs and they differ by its ~1e-5.
+        tts.wait_for_gpu();
         (
-            BlueTts::from_dir(&dir).unwrap(),
+            tts,
             Phonemizer::open(None::<&Path>, Some(dir.join("polyg2p")), Language::English).unwrap(),
             VoiceStyle::from_json(voice).unwrap(),
         )
