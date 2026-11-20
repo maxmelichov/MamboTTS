@@ -285,6 +285,9 @@ fn to_py_err(err: anyhow::Error) -> PyErr {
 #[pymodule]
 fn mambotts(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<BlueTtsEngine>()?;
+    // The app release these bindings were built from (Cargo.toml; the wheel
+    // takes the same version through maturin).
+    module.add("__version__", env!("CARGO_PKG_VERSION"))?;
     module.add("DEFAULT_VOICE", DEFAULT_BLUE_VOICE)?;
     module.add("DEFAULT_SPEED", blue_rs::DEFAULT_SPEED)?;
     // The bundle these bindings read: its release, directory name and every

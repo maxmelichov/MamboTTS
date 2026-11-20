@@ -2748,7 +2748,7 @@ dependencies = [
 
 [[package]]
 name = "mambotts-py"
-version = "0.1.0"
+version = "1.4.2"
 dependencies = [
  "anyhow",
  "blue-rs",
@@ -2768,7 +2768,7 @@ dependencies = [
 
 [[package]]
 name = "mambotts-server"
-version = "0.1.0"
+version = "1.4.2"
 dependencies = [
  "anyhow",
  "axum",

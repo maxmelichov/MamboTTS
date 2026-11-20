@@ -35,7 +35,7 @@ import mambotts
 MODEL_DIR = os.environ.get("MAMBOTTS_MODEL_DIR")
 RENIKUD_PATH = os.environ.get("MAMBOTTS_RENIKUD_PATH")
 
-app = FastAPI(title="MamboTTS", version="0.1.0")
+app = FastAPI(title="MamboTTS", version=mambotts.__version__)
 
 _engine: mambotts.BlueTtsEngine | None = None
 # Guards construction only. Holding it across a request would deadlock,
