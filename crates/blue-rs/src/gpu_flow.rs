@@ -17,7 +17,12 @@
 //! worker when one is available, and counts as failed when not. A crash
 //! in-process after the probe still takes the process down.
 
-use std::{path::Path, time::Duration};
+use std::{
+    collections::HashSet,
+    path::Path,
+    sync::{Mutex, OnceLock},
+    time::Duration,
+};
 
 use anyhow::Result;
 
@@ -217,6 +222,11 @@ fn decide(opts: &GpuOptions, key: &str, in_process: bool) -> Decision {
     if opts.reprobe {
         return Decision::Try;
     }
+    // Another thread of this process is probing the same key in-process
+    // right now: its `probing` entry is live, not left behind by a death.
+    if in_flight().contains(key) {
+        return Decision::Try;
+    }
     match opts.verdicts.get(key) {
         Some(State::Failed { reason }) => Decision::Skip(reason),
         // The process died while probing in-process: maybe the driver, maybe
@@ -228,6 +238,32 @@ fn decide(opts: &GpuOptions, key: &str, in_process: bool) -> Decision {
         // A worker probe the app did not see to its end (the app was quit):
         // nothing is known, so try again.
         _ => Decision::Try,
+    }
+}
+
+/// The keys this process is probing in-process at the moment.
+fn in_flight() -> std::sync::MutexGuard<'static, HashSet<String>> {
+    static KEYS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    KEYS.get_or_init(Default::default).lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Marks keys as probed in-process by this process until it drops.
+#[derive(Default)]
+struct InFlight(Vec<String>);
+
+impl InFlight {
+    fn add(&mut self, key: &str) {
+        in_flight().insert(key.to_owned());
+        self.0.push(key.to_owned());
+    }
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        let mut keys = in_flight();
+        for key in &self.0 {
+            keys.remove(key);
+        }
     }
 }
 
@@ -289,6 +325,8 @@ fn open_in_process(model: &Path, backend: &str, opts: &GpuOptions) -> Option<Gpu
         }
         Decision::Try => {}
     }
+    let mut probing = InFlight::default();
+    probing.add(&bkey);
     opts.verdicts.set(&bkey, &State::Probing { isolated: false });
     let mut key = None;
     let mut isolate = false;
@@ -308,6 +346,7 @@ fn open_in_process(model: &Path, backend: &str, opts: &GpuOptions) -> Option<Gpu
                     false
                 }
                 Decision::Try => {
+                    probing.add(&k);
                     opts.verdicts.set(&k, &State::Probing { isolated: false });
                     true
                 }
