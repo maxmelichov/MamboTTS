@@ -5,7 +5,8 @@
 //! degrees, units, Russian ordinals, dates, years, currency and spaced
 //! thousands, leading zeros, digits glued to Latin letters, "פרק 1",
 //! URLs, @/# handles, Markdown and bullets, typographic quotes and Cyrillic
-//! inside Hebrew.
+//! inside Hebrew; Latin all-caps acronyms read as letters
+//! (`spell_acronyms`, on the whole prepared text).
 //!
 //! The regexes are the reference's, copied as written. The reference runs
 //! Python's `regex` module, whose `\d`, `\w` and `\s` are Unicode, as the
@@ -1025,6 +1026,177 @@ pub fn normalize_after(text: &str, lang: &str) -> String {
         &text,
         |c| format!("<ru>{}</ru>", &c[0]),
     )
+}
+
+/// `spell_acronyms` (NOT the site's): Latin all-caps acronyms read as
+/// letters, on the whole prepared text, outside every span and tag.
+/// polyg2p already spells a bare all-caps token with the language's own
+/// letter names, so a bare token in en/de/es/it/he is left to it. What this
+/// fixes: dotted initialisms ("U.S.A."), plurals and possessives ("GPUs",
+/// "GPU's"), Russian (whose G2P lower-cases Latin: every token goes to
+/// English polyg2p in an `<en>` span), the English function words "US",
+/// "IT" and "AM" after a number, acronyms said as words, and the letters of
+/// a Russian code ("<en>A B</en>"). A sentence written in capitals
+/// (`is_caps_text`) is left alone. English letter names are forced by
+/// joining the letters with "-" ("G-P-U").
+pub fn spell_acronyms(text: &str, lang: &str) -> String {
+    let lang = crate::handling::canonical_lang(lang);
+    let lang = lang.as_str();
+    if lang == "ru" {
+        let text = regex!(r"<en>([A-Z](?: [A-Z])+)</en>").replace_all(text, |c: &regex::Captures| {
+            format!("<en>{}</en>", acronym_letters(&c[1].replace(' ', "")))
+        });
+        let text = outside_spans(&text, |t| acronym_piece(t, lang));
+        // a quote mark touching an <en> span was left as a segment of its
+        // own, and "«" reached the model as a symbol
+        return regex!(r#"[«»„“”"]?(<en>[^<]*</en>)[«»„“”"]?"#)
+            .replace_all(&text, "$1")
+            .into_owned();
+    }
+    outside_spans(text, |t| acronym_piece(t, lang))
+}
+
+const ACR_SAY_AS_WORD: [&str; 6] = ["COVID", "RAM", "ROM", "PIN", "SIM", "GIF"];
+const ACR_WORDS: [&str; 8] = ["NASA", "NATO", "UNESCO", "UNICEF", "LASER", "RADAR", "FIFA", "IKEA"];
+const ACR_CODES: [&str; 14] = [
+    "USD", "EUR", "GBP", "ILS", "NIS", "RUB", "CHF", "JPY", "CNY", "KB", "MB", "GB", "TB", "PB",
+];
+const ACR_EN_FUNCTION: [&str; 2] = ["US", "IT"];
+
+/// One stretch outside spans: dotted initialisms, then each sentence's
+/// tokens; in Russian a `,;:` right after a new span goes inside it.
+fn acronym_piece(t: &str, lang: &str) -> String {
+    let english = matches!(lang, "en" | "he");
+    let dotted = fregex!(r"(?<![\p{L}\p{N}_.])((?:[A-Z]\.)+[A-Z])(\.)?(?![\p{L}\p{N}_])");
+    let t = freplace_all(dotted, t, |c| {
+        let letters = c[1].replace('.', "");
+        let end = c.get(0).expect("whole match").end();
+        let keep = c.get(2).is_some() && regex!(r"^(?:[ \t]*(?:\z|\n)|[ \t]+\p{Lu})").is_match(&t[end..]);
+        let dot = if keep { "." } else { "" };
+        if lang == "ru" {
+            format!("<en>{}</en>{dot}", acronym_letters(&letters))
+        } else if english {
+            format!("{}{dot}", acronym_letters(&letters))
+        } else {
+            format!("{letters}{dot}")
+        }
+    });
+    // `re.split` at sentence ends and newlines, the separators kept
+    let mut out = String::with_capacity(t.len());
+    let mut last = 0;
+    for m in fregex!(r"(?<=[.!?…])[ \t]+|\n").find_iter(&t).filter_map(Result::ok) {
+        out.push_str(&acronym_sentence(&t[last..m.start()], lang, english));
+        out.push_str(m.as_str());
+        last = m.end();
+    }
+    out.push_str(&acronym_sentence(&t[last..], lang, english));
+    if lang == "ru" {
+        return regex!(r"(<en>[^<]*)</en>([,;:]+)").replace_all(&out, "$1$2</en>").into_owned();
+    }
+    out
+}
+
+fn acronym_sentence(s: &str, lang: &str, english: bool) -> String {
+    let caps_text = is_caps_text(s);
+    let token = fregex!(concat!(
+        r"(?<![\p{L}\p{N}_])(?<![\p{L}\p{N}][.'’])(?<![A-Za-z0-9\x{400}-\x{4FF}]-)",
+        r"([A-Z]{2,})(s['’]|['’]s|s)?",
+        r"(?![\p{L}\p{N}_])(?![.'’][\p{L}\p{N}])(?!-[A-Za-z0-9])"
+    ));
+    freplace_all(token, s, |c| {
+        let whole = c.get(0).expect("whole match");
+        let (base, suffix) = (&c[1], c.get(2).is_some());
+        if ACR_CODES.contains(&base) {
+            return whole.as_str().to_owned();
+        }
+        if ACR_SAY_AS_WORD.contains(&base) && english && !suffix {
+            return format!("{}{}", &base[..1], base[1..].to_lowercase());
+        }
+        if caps_text || ACR_WORDS.contains(&base) || ACR_SAY_AS_WORD.contains(&base) {
+            return whole.as_str().to_owned();
+        }
+        if suffix {
+            return match lang {
+                "ru" => format!("<en>{}</en>", acronym_plural(base)),
+                _ if english => acronym_plural(base),
+                "es" | "it" => base.to_owned(),
+                _ => whole.as_str().to_owned(),
+            };
+        }
+        if lang == "ru" {
+            if is_roman_numeral(base, &s[whole.end()..]) {
+                return whole.as_str().to_owned();
+            }
+            let inner = if base.len() <= 3 { acronym_letters(base) } else { base.to_owned() };
+            return format!("<en>{inner}</en>");
+        }
+        if english
+            && (ACR_EN_FUNCTION.contains(&base)
+                || base == "AM" && regex!(r"\d[ \t]?\z").is_match(&s[..whole.start()]))
+        {
+            return acronym_letters(base);
+        }
+        whole.as_str().to_owned()
+    })
+}
+
+/// `is_caps_text`: a sentence written in capitals (shouting, a headline): at
+/// least three all-caps words (2+ letters, an upper-case letter, no
+/// lower-case one; any script), two of them of 4+ letters, and more than 2/3
+/// of its words all-caps.
+pub fn is_caps_text(sentence: &str) -> bool {
+    let words: Vec<&str> = regex!(r"\p{L}+(?:['’\-]\p{L}+)*")
+        .find_iter(sentence)
+        .map(|m| m.as_str())
+        .collect();
+    let letters = |w: &str| regex!(r"\p{L}").find_iter(w).count();
+    let caps: Vec<&str> = words
+        .iter()
+        .copied()
+        .filter(|w| letters(w) >= 2 && regex!(r"\p{Lu}").is_match(w) && !regex!(r"\p{Ll}").is_match(w))
+        .collect();
+    let long_caps = caps.iter().filter(|w| letters(w) >= 4).count();
+    caps.len() >= 3 && long_caps >= 2 && 3 * caps.len() > 2 * words.len()
+}
+
+/// English letter names, forced: "GPU" -> "G-P-U"; over 5 letters,
+/// near-equal groups of at most 5 (the first groups one longer).
+pub fn acronym_letters(letters: &str) -> String {
+    let chars: Vec<char> = letters.chars().collect();
+    let n = chars.len();
+    if n == 0 {
+        return String::new();
+    }
+    let groups = n.div_ceil(5);
+    let (size, extra) = (n / groups, n % groups);
+    let mut out = Vec::with_capacity(groups);
+    let mut i = 0;
+    for g in 0..groups {
+        let k = size + usize::from(g < extra);
+        out.push(chars[i..i + k].iter().map(char::to_string).collect::<Vec<_>>().join("-"));
+        i += k;
+    }
+    out.join(" ")
+}
+
+/// English plural/possessive of an acronym: "GPUs" -> "G-P U's"; "TVs" ->
+/// "T V's"; a lone "A" is the article, so "AIs" stays "A-I".
+fn acronym_plural(base: &str) -> String {
+    let n = base.len();
+    if n >= 3 {
+        return format!("{} {}'s", acronym_letters(&base[..n - 1]), &base[n - 1..]);
+    }
+    if !base.starts_with('A') {
+        return format!("{} {}'s", &base[..1], &base[1..]);
+    }
+    acronym_letters(base)
+}
+
+fn is_roman_numeral(token: &str, after: &str) -> bool {
+    if !regex!(r"^M{0,3}(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3})$").is_match(token) {
+        return false;
+    }
+    !token.contains(['C', 'D', 'M']) || token.len() >= 3 || regex!(r"(?i)^[ \t]+(?:век|столети)").is_match(after)
 }
 
 /// `split_long_words`: polyg2p's English model stops after about 20 letters
