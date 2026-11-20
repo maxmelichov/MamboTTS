@@ -229,6 +229,20 @@ until its driver or the app changes. On an Apple M5 the boundary costs about
 | `MAMBOTTS_GPU_WORKER=<exe>` | another worker executable (`bluev3-gpu-worker`, built from `crates/blue-rs`) |
 | `MAMBOTTS_GPU_WORKER_FAULT=<abort,hang,exit,wrong>@<adapter,open,flow:N>` | test hook: the worker fails that way at that point |
 
+ONNX Runtime's CPU path has two speed settings:
+
+- Threads: `min(8, usable CPUs)` (the affinity mask and, on Linux, the cgroup
+  quota). `MAMBOTTS_ORT_THREADS=<n>` overrides it. More threads than CPUs is
+  much slower: 8 threads on 2 usable x86 CPUs ran 3x slower than 2.
+- The vector estimator graph: off macOS, ONNX Runtime runs
+  `vector_estimator.int8.onnx` (dynamic int8 MatMuls, BlueV3-onnx f0db559) when
+  the bundle has it, and `vector_estimator.onnx` otherwise. That is about 1.7x
+  faster on x86 and 2.5x on ARM Linux, with the same ASR error and speaker
+  similarity. The file is optional: the desktop app fetches it in the
+  background off macOS (`optional_files` in the registry), and `install.ps1`
+  fetches it after the bundle. macOS and the GPU engine keep float32.
+  `MAMBOTTS_PRECISION=fp32|int8|auto` overrides the choice.
+
 ### Cross-compile the Windows sidecar from macOS or Linux
 
 The installer has to be produced on Windows, but the sidecar can be

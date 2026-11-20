@@ -62,6 +62,11 @@ pub struct ModelBundle {
     /// the release it is being upgraded to. The app keeps running on this
     /// one while `upgrade_model_bundle` fills the new directory.
     pub bundle_upgrade: Option<String>,
+    /// The registry's optional files this machine would run faster with but
+    /// does not have yet (the int8 vector estimator, off macOS):
+    /// `fetch_optional_files` fetches them in the background. The bundle is
+    /// installed and runs without them.
+    pub optional_files_pending: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -182,6 +187,45 @@ pub async fn upgrade_model_bundle(app: tauri::AppHandle) -> Result<ModelBundle, 
             serde_json::json!({"operation": "upgrade_model_bundle", "runtime": "blue"}),
         )
     })
+}
+
+/// Fetch the optional files this machine runs faster with (see
+/// [`ModelBundle::optional_files_pending`]) in the background, resumable and
+/// verified like any download. No progress events: nothing waits for them,
+/// and the engine picks them up the next time it loads the bundle.
+#[tauri::command]
+pub async fn fetch_optional_files(app: tauri::AppHandle) -> Result<ModelBundle, String> {
+    let inner = async {
+        let _guard = download_lock().lock().await;
+        let dir = blue_dir(&app)?;
+        fetch_optional_files_in(&http_client()?, &dir).await?;
+        blue_bundle(&app)
+    };
+    inner.await.map_err(|err| {
+        analytics::track_error(
+            &app,
+            analytics::events::ERROR_MODEL_DOWNLOAD_FAILED,
+            err,
+            serde_json::json!({"operation": "fetch_optional_files", "runtime": "blue"}),
+        )
+    })
+}
+
+/// The optional files of the current release this build wants, fetched into
+/// an installed bundle directory, for the command and the tests.
+pub(crate) async fn fetch_optional_files_in(client: &reqwest::Client, dir: &Path) -> Result<(), String> {
+    let blue = mambotts_registry::runtime("blue").expect("the Blue manifest");
+    fetch_missing(client, dir, &blue.optional_files_here()).await
+}
+
+async fn fetch_missing(client: &reqwest::Client, dir: &Path, files: &[ModelFile]) -> Result<(), String> {
+    for file in files {
+        let destination = dir.join(file.name);
+        if !has_expected_size(&destination, file) {
+            fetch_verified(client, file, &destination, |_| {}).await?;
+        }
+    }
+    Ok(())
 }
 
 async fn upgrade_model_bundle_inner(app: &tauri::AppHandle) -> Result<ModelBundle, String> {
@@ -439,6 +483,8 @@ pub(crate) fn blue_bundle_at(root: &Path, policy: HebrewG2pVariant) -> ModelBund
             previous.bundle_upgrade = Some(blue.version.into());
             // RenikudPlus is upgraded in the new directory, after the bundle.
             previous.hebrew_g2p_upgrade = None;
+            // ...and so are the optional files.
+            previous.optional_files_pending.clear();
             return previous;
         }
     }
@@ -487,6 +533,12 @@ pub(crate) fn blue_bundle_in(dir: &Path, policy: HebrewG2pVariant, version: Stri
         hebrew_g2p: plan.load,
         hebrew_g2p_upgrade: plan.upgrade,
         bundle_upgrade: None,
+        optional_files_pending: blue
+            .optional_files_here()
+            .iter()
+            .filter(|file| !has_expected_size(&dir.join(file.name), file))
+            .map(|file| file.name.to_string())
+            .collect(),
     }
 }
 
@@ -906,6 +958,39 @@ mod tests {
         assert_eq!(std::fs::read(old.path().join("vocoder.onnx")).unwrap(), same);
         assert!(stages.iter().all(|(stage, _)| *stage == "upgrading"));
         assert_eq!(stages.last().unwrap().1, 4_000 + 3_500 + 2_000);
+    }
+
+    /// An install without the int8 vector estimator is complete; off macOS
+    /// it asks for the file in the background, and once it is there, not.
+    #[test]
+    fn an_install_without_the_optional_files_is_installed_and_asks_for_them_off_macos() {
+        let dir = bundle_dir(&[Fp32]);
+        let blue = mambotts_registry::runtime("blue").unwrap();
+        let bundle = blue_bundle_in(dir.path(), Fp32, "v".into());
+        assert!(bundle.installed);
+        if cfg!(target_os = "macos") {
+            assert!(bundle.optional_files_pending.is_empty());
+            return;
+        }
+        assert_eq!(bundle.optional_files_pending, ["vector_estimator.int8.onnx"]);
+        for file in blue.optional_files_here() {
+            std::fs::File::create(dir.path().join(file.name)).unwrap().set_len(file.size).unwrap();
+        }
+        assert!(blue_bundle_in(dir.path(), Fp32, "v".into()).optional_files_pending.is_empty());
+    }
+
+    #[tokio::test]
+    async fn optional_files_are_fetched_verified_and_kept() {
+        let bytes = body(6_000);
+        let server = serve(bytes.clone(), ServerOptions::default()).await;
+        let mut file = model_file(&server.url, &bytes);
+        file.name = "vector_estimator.int8.onnx";
+        let dir = tempfile::tempdir().unwrap();
+        let client = reqwest::Client::new();
+        fetch_missing(&client, dir.path(), &[file]).await.unwrap();
+        fetch_missing(&client, dir.path(), &[file]).await.unwrap();
+        assert_eq!(std::fs::read(dir.path().join(file.name)).unwrap(), bytes);
+        assert_eq!(server.requests.load(std::sync::atomic::Ordering::SeqCst), 1, "a complete file is kept");
     }
 
     #[tokio::test]

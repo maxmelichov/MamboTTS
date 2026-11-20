@@ -59,7 +59,7 @@ fn site_parity_dump() {
         // The Quality slider's steps, as a request carries them (absent: 8).
         let steps = case["steps"].as_u64().unwrap_or(0) as u32;
         let plan = runtime.tts.plan_text(&mut runtime.phonemizer, text, lang).unwrap();
-        // The request: no voice, no speed, no niqqud flag (the defaults), and
+        // The request: no voice and no speed (the defaults), and
         // the case's steps if it sets them.
         let mut streamed = Vec::new();
         let audio = runtime

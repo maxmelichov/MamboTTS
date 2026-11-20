@@ -90,7 +90,7 @@ if (!process.env.SKIP_CARGO) {
     execFileSync('cargo', ['test', '-p', 'mambotts-server', '--release', 'site_parity', '--', '--ignored', '--nocapture'], {
         cwd: REPO, stdio: 'inherit',
         env: {
-            ...process.env, MAMBOTTS_VE_BACKEND: 'ort', MAMBOTTS_PARITY_OUT: OUT, MAMBOTTS_PARITY_RENIKUD: RENIKUD,
+            ...process.env, MAMBOTTS_VE_BACKEND: 'ort', MAMBOTTS_PRECISION: 'fp32', MAMBOTTS_PARITY_OUT: OUT, MAMBOTTS_PARITY_RENIKUD: RENIKUD,
             MAMBOTTS_PARITY_CASES: CASES, MAMBOTTS_PARITY_FILTER: filter,
         },
     });

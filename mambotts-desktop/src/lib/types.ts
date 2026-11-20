@@ -18,6 +18,8 @@ export type ModelBundle = {
    * the background upgrade is moving it to. The app keeps running on it.
    */
   bundle_upgrade?: string | null;
+  /** Optional files this machine runs faster with (the int8 vector estimator, off macOS), fetched in the background. */
+  optional_files_pending?: string[];
 };
 
 export type ModelSourceFile = {

@@ -87,7 +87,7 @@ $TagPrefix = 'mambotts-desktop-'
 # Used when the GitHub API cannot be reached, which is common enough from a
 # shared address that a hard failure would be the wrong default. Keep this in
 # step with the newest published desktop release.
-$FallbackVersion = '1.4.1'
+$FallbackVersion = '1.4.2'
 # The registry's directory for this bundle (RuntimeManifest.directory).
 $ModelSubDir = 'models\bluev3-3.0.1'
 
@@ -139,6 +139,12 @@ $FallbackModelFiles = @(
     @{ name = 'polyg2p/ru_yo_homographs.lex';  size =     19043; sha256 = '057cddf02713732706127274c796a6f418ad7096679ac532f7c31cf7c9266064'; url = "$BlueBase/frontend/polyg2p_data/ru_yo_homographs.lex" },
     @{ name = 'polyg2p/LICENSE';               size =     11357; sha256 = 'c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4'; url = "$BlueBase/frontend/polyg2p_data/LICENSE" },
     @{ name = 'polyg2p/NOTICE';                size =      2734; sha256 = '1a5544c762f18316b934e03db8ced24931f752f5332aa70c3bb15ca1ba92a114'; url = "$BlueBase/frontend/polyg2p_data/NOTICE" }
+)
+# Optional: the int8 vector estimator (registry optional_files), faster on
+# ONNX Runtime's CPU path, which Windows runs. The server runs float32
+# without it, so a failed download is only a warning.
+$FallbackOptionalFiles = @(
+    @{ name = 'vector_estimator.int8.onnx'; size = 66080072; sha256 = '0f9ac63e1e501a1b4996d508b2c3b1aeb5d4ff4b4e91aa5e46fdbe9dc967f61e'; url = 'https://huggingface.co/notmax123/BlueV3-onnx/resolve/f0db5595f83dc3df0e46eb6d74f083a2b5ccd74d/onnx/vector_estimator.int8.onnx' }
 )
 $RenikudBase = 'https://huggingface.co/notmax123/RenikudPlus/resolve/679c56ca449d41873fb8ff7711ddf7563d28198f'
 $FallbackHebrewG2p = @(
@@ -418,8 +424,13 @@ function Get-ModelFileList {
                         })
                     $keep = $process
                     $process = $null
+                    # A server from before optional files lists none: use the
+                    # built in list then.
+                    $optional = $FallbackOptionalFiles
+                    if ($blue.PSObject.Properties.Name -contains 'optional_files') { $optional = @($blue.optional_files) }
                     return @{
                         Files = $files
+                        OptionalFiles = $optional
                         HebrewG2p = @($blue.hebrew_g2p)
                         Int8MaxMemory = [long]$blue.hebrew_g2p_policy.int8_max_memory
                         Server = $keep
@@ -437,7 +448,7 @@ function Get-ModelFileList {
             Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
         }
     }
-    return @{ Files = $FallbackModelFiles; HebrewG2p = $FallbackHebrewG2p; Int8MaxMemory = $FallbackInt8MaxMemory }
+    return @{ Files = $FallbackModelFiles; OptionalFiles = $FallbackOptionalFiles; HebrewG2p = $FallbackHebrewG2p; Int8MaxMemory = $FallbackInt8MaxMemory }
 }
 
 # The desktop app's choice (registry hebrew_g2p_variant, bluetts.com's
@@ -495,6 +506,21 @@ function Install-Models {
         }
         Write-Detail "[$index/$total] $($file.name)"
         Get-Verified -Uri $file.url -OutFile $dest -ExpectedBytes ([long]$file.size) -Sha256 $file.sha256 -TimeoutSec 0 | Out-Null
+    }
+
+    foreach ($file in @($List.OptionalFiles)) {
+        if (-not $file) { continue }
+        $dest = Join-Path $modelDir ($file.name -replace '/', '\')
+        if (Test-ModelFile -Path $dest -File $file) {
+            Write-Detail "$($file.name) (optional) is already here and verified, keeping it."
+            continue
+        }
+        Write-Detail "$($file.name) (optional, faster on the CPU)"
+        try {
+            Get-Verified -Uri $file.url -OutFile $dest -ExpectedBytes ([long]$file.size) -Sha256 $file.sha256 -TimeoutSec 0 | Out-Null
+        } catch {
+            Write-Warn "Could not download $($file.name) ($($_.Exception.Message)). The server runs without it, only slower."
+        }
     }
 
     # One RenikudPlus on disk, as in the desktop app: the variant this machine

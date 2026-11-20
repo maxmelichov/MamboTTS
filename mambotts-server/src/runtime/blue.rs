@@ -196,10 +196,6 @@ impl Runtime for BlueRuntime {
         self.phonemizer.set_speakers(speaker, target_speaker);
     }
 
-    fn set_honor_niqqud(&mut self, on: bool) {
-        self.phonemizer.set_honor_niqqud(on);
-    }
-
     fn supported_phonemes(&self) -> Vec<char> {
         self.tts.supported_phonemes()
     }
