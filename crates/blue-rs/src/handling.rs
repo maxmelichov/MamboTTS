@@ -102,7 +102,8 @@ pub fn prepare(text: &str, lang: &str, bot_rules: bool) -> String {
 /// marks out, tags flattened and a one-line Hebrew list broken into lines;
 /// then [`crate::bot::normalize_before`] on every piece in its own
 /// language, [`prepare_text`] with spans prepared in their own language,
-/// and [`crate::bot::normalize_after`] on every piece.
+/// and [`crate::bot::normalize_after`] on every piece; last
+/// [`crate::bot::spell_acronyms`] on the whole text.
 pub fn bot_prepare(text: &str, lang: &str) -> String {
     let lang = model_lang(lang).unwrap_or("en");
     let raw = break_inline_lists(
@@ -110,7 +111,8 @@ pub fn bot_prepare(text: &str, lang: &str) -> String {
         lang,
     );
     let before = per_span(&raw, lang, crate::bot::normalize_before);
-    per_span(&prepare_text_protected(&before, lang), lang, crate::bot::normalize_after)
+    let prepared = per_span(&prepare_text_protected(&before, lang), lang, crate::bot::normalize_after);
+    crate::bot::spell_acronyms(&prepared, lang)
 }
 
 /// `per_span`: `f(piece, lang)` on the text outside inline spans and
