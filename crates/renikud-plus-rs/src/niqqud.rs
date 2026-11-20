@@ -153,6 +153,8 @@ fn has_vowel_sign(entry: &Pointed) -> bool {
 /// 7. a bare vav in a pointed word is the consonant (`v`/`w`) only right after
 ///    an adjacent letter with a vowel sign (upstream: any bare vav, which reads
 ///    partially pointed שָׁלום as ʃalˈovm).
+/// 8. a yod with shva, with or without dagesh, is the consonant `j` (וְיְהִי,
+///    בַּיְת); its vowel stays shva's (∅ or `e`).
 ///
 /// Only vowel signs make a word pointed, and a letter whose only mark is the
 /// hatama counts as unmarked.
@@ -259,6 +261,8 @@ pub fn parse_niqqud(text: &str, phonikud: bool) -> (String, Constraints) {
                 // Pointed, yet no dagesh: in pointed text that is the fricative.
                 cons.insert(idx, vec![dagesh_soft(letter).expect("paired table")]);
             }
+        } else if phonikud && letter == 'י' && signs.contains(&SHEVA) {
+            cons.insert(idx, vec!["j"]); // rule 8: a yod with shva is the consonant
         }
 
         if letter == 'ו' && signs.is_empty() && dagesh {
@@ -549,6 +553,21 @@ mod tests {
         let nfd: String = unicode_normalization::UnicodeNormalization::nfd("שָׁלום").collect();
         let (_, up) = parse_niqqud(&nfd, false);
         assert_eq!(up[&2].consonants, Some(vec!["v", "w"]));
+    }
+
+    #[test]
+    fn a_yod_with_shva_is_the_consonant_j() {
+        // בַּיְת: the yod closes the syllable, /bajt/.
+        let (_, c) = phonikud("בַּיְת");
+        assert_eq!(at(&c, 1).consonants, Some(vec!["j"]));
+        assert_eq!(at(&c, 1).vowels, Some(vec!["e", NONE]));
+        // With dagesh too: הַיְּלָדִים.
+        let (_, c) = phonikud("הַיְּלָדִים");
+        assert_eq!(at(&c, 1).consonants, Some(vec!["j"]));
+        // Upstream leaves it open.
+        let nfd: String = unicode_normalization::UnicodeNormalization::nfd("בַּיְת").collect();
+        let (_, up) = parse_niqqud(&nfd, false);
+        assert_eq!(up.get(&1).and_then(|c| c.consonants.clone()), None);
     }
 
     #[test]

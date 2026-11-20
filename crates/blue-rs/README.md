@@ -42,11 +42,12 @@ bluetts.com applies the same rules (LightBlue-site `golden-parity`);
 Pointed Hebrew is read with its points, as the reference reads it
 (`site_flow.parse_points`, tests/golden/README.md "Pointed Hebrew"): vowel
 signs, dagesh, shin/sin dots and phonikud's marks (hatama, meteg, nikud haser,
-the prefix bar) are hard constraints on RenikudPlus's decode, so בַּר and בֶּר
-differ. Hebrew without points reads exactly as before.
+the prefix bar) are hard constraints on RenikudPlus's decode, and a yod with
+shva is the consonant /j/ (בַּיְת), so בַּר and בֶּר differ. Hebrew without
+points reads exactly as before.
 
 `tests/golden.rs` checks every case of `tests/golden/cases.jsonl`, stage by
-stage (637 cases: `plan`, `compact` plans of 2k-50k characters compared by
+stage (641 cases: `plan`, `compact` plans of 2k-50k characters compared by
 digest, `pack`, `geometry`, and `duration`, which also runs the bundle's
 duration predictor for each voice when a v3.0.1 bundle is at hand). It is
 vendored, with `vocab.json`, from BlueV3 `tests/golden/`: after the
