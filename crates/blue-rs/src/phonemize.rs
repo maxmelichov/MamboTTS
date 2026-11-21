@@ -385,6 +385,23 @@ impl Phonemizer {
             .collect())
     }
 
+    /// Whether the bot's additions to the site's text handling are on.
+    pub(crate) fn bot_rules(&self) -> bool {
+        self.bot_rules
+    }
+
+    /// One sentence of a streamed run ([`crate::stream_text_chunks`]),
+    /// phonemized as [`Self::phonemize_units`] phonemizes a unit but without
+    /// its letterless rule: whether a unit with no letter is spoken depends on
+    /// the whole text, which the caller decides.
+    pub(crate) fn phonemize_stream_unit(&mut self, unit: &str, language: Language) -> Result<String> {
+        let ipa = self.phonemize_prepared(unit, language.code())?;
+        if !self.bot_rules {
+            return Ok(ipa);
+        }
+        Ok(regex!(r"[ \t]+([.,!?;:…])").replace_all(&ipa, "$1").into_owned())
+    }
+
     /// `Text.phonemize(text, lang, g2p)` with a release bundle: Hebrew text
     /// first gets its Latin runs tagged ([`tag_latin_runs`]). With inline
     /// `<xx>…</xx>` spans (`_phonemize_mixed_release`, BlueTTS a6cc157) each
