@@ -41,7 +41,7 @@ use ort::{session::Session, value::Tensor};
 use serde_json::Value;
 
 use crate::{
-    chunking::{pack_chunks, silence_samples},
+    chunking::{ChunkPacker, pack_chunks, silence_samples, split_sentences},
     phonemize::{Language, Phonemizer, strip_lang_tags},
     text::Tokenizer,
 };
@@ -615,8 +615,15 @@ impl BlueTts {
         F: FnMut(&[f32]) -> Result<()>,
     {
         let opts = canonical_options(opts)?;
-        let plan = self.plan_text(phonemizer, text, &opts.lang)?;
-        self.speak_chunks(&plan.chunks, style, &opts, SEED, on_chunk)
+        // Each chunk is spoken as soon as it is cut, so the first one plays
+        // while the rest of a long Hebrew text is still in the G2P.
+        let mut speech = self.start_speech(style, &opts)?;
+        let max_ids = self.release.max_chunk_tokens;
+        let mut on_chunk = on_chunk;
+        stream_text_chunks(phonemizer, text, &opts.lang, max_ids, |chunk| {
+            self.speak_next(&mut speech, &chunk, style, &opts, SEED, &mut on_chunk)
+        })?;
+        self.finish_speech(speech)
     }
 
     /// Every chunk through the graphs, in order, each after the join
@@ -632,28 +639,60 @@ impl BlueTts {
     where
         F: FnMut(&[f32]) -> Result<()>,
     {
+        let mut speech = self.start_speech(style, opts)?;
+        for chunk in chunks {
+            self.speak_next(&mut speech, chunk, style, opts, seed, &mut on_chunk)?;
+        }
+        self.finish_speech(speech)
+    }
+
+    /// A run about to speak with `style` and `opts`, checked first.
+    fn start_speech(&mut self, style: &VoiceStyle, opts: &SynthesisOptions) -> Result<Speech> {
         self.check_voice(style)?;
         if !(opts.speed.is_finite() && opts.speed > 0.0) {
             bail!("speed must be a positive number, got {}", opts.speed);
         }
         self.last_chunks.clear();
-        let mut ledger = ChunkLedger::default();
-        ledger.expect(chunks.len());
-        let gap = silence_samples(self.sample_rate(), self.release.join_silence);
-        let mut audio = Vec::new();
-        for (idx, chunk) in chunks.iter().enumerate() {
-            let mut piece = Vec::new();
-            if idx != 0 {
-                piece.resize(gap, 0.0);
-            }
-            let spoken = self.synthesize_chunk(chunk, style, opts, seed)?;
-            ledger.spoken_chunk(spoken.requested_samples, spoken.samples.len());
-            piece.extend(spoken.samples);
-            on_chunk(&piece)?;
-            audio.extend(piece);
+        Ok(Speech {
+            ledger: ChunkLedger::default(),
+            gap: silence_samples(self.sample_rate(), self.release.join_silence),
+            chunks: 0,
+            audio: Vec::new(),
+        })
+    }
+
+    /// The run's next chunk through the graphs, after the join silence (none
+    /// before the first), handed to `on_chunk` as it is made.
+    fn speak_next<F>(
+        &mut self,
+        speech: &mut Speech,
+        chunk: &str,
+        style: &VoiceStyle,
+        opts: &SynthesisOptions,
+        seed: u64,
+        on_chunk: &mut F,
+    ) -> Result<()>
+    where
+        F: FnMut(&[f32]) -> Result<()>,
+    {
+        speech.ledger.expect(1);
+        let mut piece = Vec::new();
+        if speech.chunks != 0 {
+            piece.resize(speech.gap, 0.0);
         }
-        ledger.verify(self.sample_rate())?;
-        Ok(audio)
+        speech.chunks += 1;
+        let spoken = self.synthesize_chunk(chunk, style, opts, seed)?;
+        speech.ledger.spoken_chunk(spoken.requested_samples, spoken.samples.len());
+        piece.extend(spoken.samples);
+        on_chunk(&piece)?;
+        speech.audio.extend(piece);
+        Ok(())
+    }
+
+    /// The run's recording, once it accounts for all of its chunks.
+    fn finish_speech(&self, speech: Speech) -> Result<Vec<f32>> {
+        speech.ledger.verify(self.sample_rate())?;
+        Ok(speech.audio)
     }
 
     /// `inferChunk`: `chunkFront` (ids, duration, text encoder, noise), the
@@ -970,6 +1009,107 @@ pub fn plan_text(
     })
 }
 
+/// Hebrew G2P windows of a streamed run: whole sentences of the prepared
+/// text, packed up to this many characters ([`stream_text_chunks`]).
+///
+/// Measured on the golden 10k-character Hebrew texts (laptop CPU, fp32
+/// RenikudPlus): the whole-text pass gave its first chunk after 81-99 s.
+/// With one sentence per window the first chunk came at 0.3 s but 2.2-2.8% of
+/// the words read differently, and one-word sentences lost their context
+/// (`1. אפו. 2. הגישו.` became "his nose" and "they served"); 600 gave it at
+/// 2.7-3.4 s with 0.6-0.9% (borderline readings at window edges, such as
+/// bevoker / beboker) and every shorter golden case identical; 1200 gave
+/// 5.3-7.9 s for 0.35-0.84%. Smaller windows are also cheaper for the model:
+/// all 10k characters took 60-64 s at 600 against 81-99 s in one pass.
+pub const STREAM_G2P_WINDOW_CHARS: usize = 600;
+
+/// The chunks [`plan_text`] cuts `text` into, each handed to `on_chunk` as
+/// soon as it is complete, so speech can start before the text is through
+/// the G2P.
+///
+/// NOT the site's, for Hebrew: RenikudPlus reads the text in windows of
+/// whole sentences up to [`STREAM_G2P_WINDOW_CHARS`] instead of in one pass.
+/// That pass cost about 0.6 s a sentence, all before the first chunk, so a
+/// page of text was a minute of silence that looked like a hang. Windows are
+/// cut at the sentences the chunk packer cuts the phonemes at
+/// ([`split_sentences`]), so the packer sees the same sentences in the same
+/// order; a sentence with no letter ("?!") is held until one with a letter
+/// comes, as the whole-text unit is spoken only when it has one. A text that
+/// fits one window is read exactly as by the whole-text pass; a longer one can
+/// read a word near a window edge differently, as RenikudPlus's own
+/// 2046-character windows already do in the whole-text pass. Other languages
+/// are phonemized as `plan_text` phonemizes them (their G2P is fast), then
+/// cut as they are.
+pub fn stream_text_chunks(
+    phonemizer: &mut Phonemizer,
+    text: &str,
+    lang: &str,
+    max_ids: usize,
+    mut on_chunk: impl FnMut(String) -> Result<()>,
+) -> Result<()> {
+    let language = Language::try_from(lang)?;
+    let prepared = phonemizer.prepare(text, language);
+    let mut packer = ChunkPacker::new(language.code(), max_ids);
+    let mut produced = false;
+    if language == Language::Hebrew {
+        let letter = regex!(r"\p{L}");
+        let mut letterless: Vec<String> = Vec::new();
+        let window = STREAM_G2P_WINDOW_CHARS;
+        // Windows are slices of the prepared text itself, whitespace between
+        // sentences included, so the model reads exactly what it would read
+        // in the whole-text pass.
+        let mut spans: Vec<(usize, usize)> = Vec::new();
+        let mut cursor = 0;
+        for sentence in split_sentences(&prepared) {
+            let start = cursor + prepared[cursor..].find(sentence.as_str()).expect("a sentence of the text");
+            let end = start + sentence.len();
+            cursor = end;
+            match spans.last_mut() {
+                Some(last) if prepared[last.0..end].chars().count() <= window => last.1 = end,
+                _ => spans.push((start, end)),
+            }
+        }
+        for &(start, end) in &spans {
+            let ipa = phonemizer.phonemize_stream_unit(&prepared[start..end], language)?;
+            if ipa.is_empty() {
+                continue;
+            }
+            if phonemizer.bot_rules() && !letter.is_match(&ipa) {
+                letterless.push(ipa);
+                continue;
+            }
+            produced = true;
+            for held in letterless.drain(..).chain(std::iter::once(ipa)) {
+                for chunk in packer.add(&held) {
+                    on_chunk(chunk)?;
+                }
+            }
+        }
+        // Trailing marks ("... ?!") belong to a text that has letters.
+        if produced {
+            for held in letterless {
+                for chunk in packer.add(&held) {
+                    on_chunk(chunk)?;
+                }
+            }
+        }
+    } else {
+        for unit in phonemizer.phonemize_units(&prepared, language)? {
+            produced |= !unit.is_empty();
+            for chunk in packer.add(&unit) {
+                on_chunk(chunk)?;
+            }
+        }
+    }
+    if !produced && regex!(r"\p{L}").is_match(&prepared) {
+        bail!("no phonemes were produced for this text, so it cannot be spoken: {:?}", prepared);
+    }
+    for chunk in packer.end() {
+        on_chunk(chunk)?;
+    }
+    Ok(())
+}
+
 /// `ChunkPacker` over G2P units (each the phonemes of a whole text or, for
 /// Russian, of one sentence): chunks of at most `max_ids` ids.
 pub fn chunk_phonemes<'a>(
@@ -1077,6 +1217,15 @@ fn limit_peak(audio: &mut [f32], limit: f64) {
     for sample in audio {
         *sample *= gain;
     }
+}
+
+/// A run in progress: its chunks spoken so far and the recording they make.
+struct Speech {
+    ledger: ChunkLedger,
+    /// The join silence before every chunk but the first, in samples.
+    gap: usize,
+    chunks: usize,
+    audio: Vec<f32>,
 }
 
 /// Chunks the text asked for against the audio the model gave back.

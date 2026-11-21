@@ -34,13 +34,19 @@ use blue_rs::{
     DurationModel, TokenEncoder, VoiceStyle, chunk_duration, chunk_phonemes,
     handling::tag_latin_runs, latent_geometry, parse_speed_scale, plan_text,
     phonemize::{Language, Phonemizer},
-    speed_divisor, speed_scale_for,
+    speed_divisor, speed_scale_for, stream_text_chunks,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 const REFERENCE: &str = "/Users/maxm/Documents/Project Blue/BlueV3/tests/golden/cases.jsonl";
 const MAX_CHUNK_TOKENS: usize = 300;
+/// What a streamed run of a `compact` (very long) case has to match: the
+/// chunk count. Its Hebrew G2P reads windows of
+/// [`blue_rs::STREAM_G2P_WINDOW_CHARS`], so a word near a window edge can read
+/// differently and the ids digests differ (measured 0.6-0.9% of the words on
+/// the 10k cases); the full cases are short enough to match exactly.
+const STREAMED_DIGEST_KEYS: [&str; 1] = ["chunk_count"];
 
 fn vendored(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden").join(name)
@@ -249,7 +255,7 @@ fn golden_cases() {
                     continue;
                 }
                 let text = case["text"].as_str().unwrap();
-                match plan_text(&mut phonemizer, text, lang, MAX_CHUNK_TOKENS) {
+                let whole = match plan_text(&mut phonemizer, text, lang, MAX_CHUNK_TOKENS) {
                     Err(error) if expect.get("error").is_some() => {
                         let _ = error;
                         None
@@ -267,7 +273,37 @@ fn golden_cases() {
                         ("chunks", format!("{:?}", plan.chunks), format!("{:?}", strings(&expect["chunks"]))),
                         ("token_ids", format!("{:?}", ids(&plan.chunks)), format!("{:?}", id_rows(&expect["token_ids"]))),
                     ]),
-                }
+                };
+                // The streamed run (what synthesis speaks) has to cut the same
+                // chunks, although its Hebrew G2P reads a sentence at a time.
+                whole.or_else(|| {
+                    let mut chunks = Vec::new();
+                    let streamed = stream_text_chunks(&mut phonemizer, text, lang, MAX_CHUNK_TOKENS, |chunk| {
+                        chunks.push(chunk);
+                        Ok(())
+                    });
+                    match streamed {
+                        Err(_) if expect.get("error").is_some() => None,
+                        Err(error) => Some(format!("streamed plan failed: {error:#}")),
+                        Ok(()) if expect.get("error").is_some() => Some("streamed plan should have failed".into()),
+                        Ok(()) if case["compact"].as_bool() == Some(true) => {
+                            let got = plan_digest("", &[], &chunks, &ids(&chunks));
+                            let want: serde_json::Map<String, Value> = expect
+                                .as_object()
+                                .unwrap()
+                                .iter()
+                                .filter(|(key, _)| STREAMED_DIGEST_KEYS.contains(&key.as_str()))
+                                .map(|(key, value)| (key.clone(), value.clone()))
+                                .collect();
+                            digest_difference(&got, &Value::Object(want)).map(|d| format!("streamed {d}"))
+                        }
+                        Ok(()) => first_difference(&[(
+                            "streamed chunks",
+                            format!("{chunks:?}"),
+                            format!("{:?}", strings(&expect["chunks"])),
+                        )]),
+                    }
+                })
             }
             other => Some(format!("unknown kind {other:?}")),
         };
